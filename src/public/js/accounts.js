@@ -102,6 +102,8 @@ function openAddAccountModal() {
     chooseAccount = null
     const modal = document.getElementById('addAccountModal');
     modal.style.display = 'block';
+    document.getElementById('account-captcha').style.display = 'none';
+    document.getElementById('captchaImage').src = '';
     document.getElementById('accountType').value = 'personal';
     document.getElementById('familyId').value = '';
     toggleFamilyIdField();
