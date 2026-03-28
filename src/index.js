@@ -327,7 +327,8 @@ AppDataSource.initialize().then(async () => {
             },
             select: {
                 account: {
-                    username: true
+                    username: true,
+                    accountType: true
                 }
             },
             where: whereClause
@@ -335,6 +336,7 @@ AppDataSource.initialize().then(async () => {
         // username脱敏
         tasks.forEach(task => {
             task.account.username = task.account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
+            task.account.accountType = task.account.accountType || 'personal';
         });
         res.json({ success: true, data: tasks });
     });

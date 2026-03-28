@@ -62,6 +62,7 @@ async function fetchTasks() {
             const progressRing = task.totalEpisodes ? createProgressRing(task.currentEpisodes || 0, task.totalEpisodes) : '';
             const taskName = task.shareFolderName?(task.resourceName + '/' + task.shareFolderName): task.resourceName || '未知'
             const cronIcon = task.enableCron ? '<span class="cron-icon" title="已开启自定义定时任务">⏰</span>' : '';
+            const accountLabel = `${task.account.username}${task.account.accountType === 'family' ? ' [家庭云]' : ' [个人云]'}`;
             tbody.innerHTML += `
                 <tr data-status='${task.status}' data-task-id='${task.id}' data-name='${taskName}'>
                     <td>
@@ -70,7 +71,7 @@ async function fetchTasks() {
                         <button onclick="showEditTaskModal(${task.id})">修改</button>
                     </td>
                     <td data-label="资源名称">${cronIcon}<a href="${task.shareLink}" target="_blank" class='ellipsis' title="${taskName}">${taskName}</a></td>
-                    <td data-label="账号">${task.account.username}</td>
+                    <td data-label="账号">${accountLabel}</td>
                     <td data-label="分组">${task.taskGroup || '-'}</td>
                     <!--<td data-label="首次保存目录"><a href="https://cloud.189.cn/web/main/file/folder/${task.targetFolderId}" target="_blank">${task.targetFolderId}</a></td>-->
                     <td data-label="更新目录"><a href="javascript:void(0)" onclick="showFileListModal('${task.id}')" class='ellipsis'>${task.realFolderName || task.realFolderId}</a></td>
