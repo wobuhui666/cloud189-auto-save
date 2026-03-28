@@ -100,6 +100,7 @@ class ConfigService {
         baseUrl: '',
         apiKey: ''
       },
+      regexPresets: [],
       customPush: [] // 自定义推送
     };
     this._init();

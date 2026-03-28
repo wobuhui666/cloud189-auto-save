@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { AppDataSource } = require('./database');
-const { Account, Task, CommonFolder } = require('./entities');
+const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig } = require('./entities');
 const { TaskService } = require('./services/task');
 const { Cloud189Service } = require('./services/cloud189');
 const { MessageUtil } = require('./services/message');
@@ -22,6 +22,9 @@ const { EmbyService } = require('./services/emby');
 const { StrmService } = require('./services/strm');
 const AIService = require('./services/ai');
 const CustomPushService = require('./services/message/CustomPushService');
+const { SubscriptionService } = require('./services/subscription');
+const { StrmConfigService } = require('./services/strmConfig');
+const { TMDBService } = require('./services/tmdb');
 
 const app = express();
 app.use(cors({
@@ -131,7 +134,13 @@ AppDataSource.initialize().then(async () => {
     const accountRepo = AppDataSource.getRepository(Account);
     const taskRepo = AppDataSource.getRepository(Task);
     const commonFolderRepo = AppDataSource.getRepository(CommonFolder);
+    const subscriptionRepo = AppDataSource.getRepository(Subscription);
+    const subscriptionResourceRepo = AppDataSource.getRepository(SubscriptionResource);
+    const strmConfigRepo = AppDataSource.getRepository(StrmConfig);
     const taskService = new TaskService(taskRepo, accountRepo);
+    const subscriptionService = new SubscriptionService(subscriptionRepo, subscriptionResourceRepo, accountRepo);
+    const strmConfigService = new StrmConfigService(strmConfigRepo, accountRepo, subscriptionRepo, subscriptionResourceRepo);
+    const tmdbService = new TMDBService();
     const embyService = new EmbyService(taskService)
     const messageUtil = new MessageUtil();
     // 机器人管理
@@ -146,6 +155,7 @@ AppDataSource.initialize().then(async () => {
     const folderCache = new CacheManager(parseInt(600));
     // 初始化任务定时器
     await SchedulerService.initTaskJobs(taskRepo, taskService);
+    await SchedulerService.initStrmConfigJobs(strmConfigRepo, strmConfigService);
     
     // 账号相关API
     app.get('/api/accounts', async (req, res) => {
@@ -167,6 +177,9 @@ AppDataSource.initialize().then(async () => {
                 }
             }
             account.original_username = account.username;
+            account.accountType = account.accountType || 'personal';
+            account.familyId = account.familyId || '';
+            account.driveLabel = account.accountType === 'family' ? '家庭云' : '个人云';
             // username脱敏
             account.username = account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
         }
@@ -176,6 +189,9 @@ AppDataSource.initialize().then(async () => {
     app.post('/api/accounts', async (req, res) => {
         try {
             const account = accountRepo.create(req.body);
+            account.accountType = account.accountType || 'personal';
+            account.familyId = account.accountType === 'family' ? (account.familyId || '') : null;
+            Cloud189Service.invalidateByUsername(account.username);
             // 尝试登录, 登录成功写入store, 如果需要验证码, 则返回用户验证码图片
             if (!account.username.startsWith('n_') && account.password) {
                 // 尝试登录
@@ -195,6 +211,10 @@ AppDataSource.initialize().then(async () => {
                     res.json({ success: false, error: loginResult.message });
                     return;
                 }
+            }
+            if (!account.username.startsWith('n_') && account.accountType === 'family') {
+                const cloud189 = Cloud189Service.getInstance(account);
+                account.familyId = await cloud189.resolveFamilyId(account.familyId || null);
             }
             await accountRepo.save(account);
             res.json({ success: true, data: null });
@@ -217,6 +237,7 @@ AppDataSource.initialize().then(async () => {
         try {
             const account = await accountRepo.findOneBy({ id: parseInt(req.params.id) });
             if (!account) throw new Error('账号不存在');
+            Cloud189Service.invalidateByUsername(account.username);
             await accountRepo.remove(account);
             res.json({ success: true });
         } catch (error) {
@@ -287,6 +308,7 @@ AppDataSource.initialize().then(async () => {
             const searchConditions = [
                 { realFolderName: Like(`%${search}%`) },
                 { remark: Like(`%${search}%`) },
+                { taskGroup: Like(`%${search}%`) },
                 { account: { username: Like(`%${search}%`) } }
             ];
             if (Object.keys(whereClause).length > 0) {
@@ -323,6 +345,15 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: true, data: task });
         } catch (error) {
             console.log(error)
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/tasks/batch-create', async (req, res) => {
+        try {
+            const result = await taskService.createTasksBatch(req.body.tasks);
+            res.json({ success: true, data: result });
+        } catch (error) {
             res.json({ success: false, error: error.message });
         }
     });
@@ -569,6 +600,100 @@ AppDataSource.initialize().then(async () => {
         res.json({ success: true, data: null });
     });
 
+    app.get('/api/subscriptions', async (req, res) => {
+        try {
+            const subscriptions = await subscriptionService.listSubscriptions();
+            res.json({ success: true, data: subscriptions });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/subscriptions/preview', async (req, res) => {
+        try {
+            const preview = await subscriptionService.previewSubscriptionCreation(req.query);
+            res.json({ success: true, data: preview });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/subscriptions', async (req, res) => {
+        try {
+            const subscription = await subscriptionService.createSubscription(req.body);
+            res.json({ success: true, data: subscription });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/subscriptions/:id', async (req, res) => {
+        try {
+            const subscription = await subscriptionService.updateSubscription(parseInt(req.params.id), req.body);
+            res.json({ success: true, data: subscription });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/subscriptions/:id/refresh', async (req, res) => {
+        try {
+            const result = await subscriptionService.refreshSubscription(parseInt(req.params.id));
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/subscriptions/:id', async (req, res) => {
+        try {
+            await subscriptionService.deleteSubscription(parseInt(req.params.id));
+            res.json({ success: true, data: null });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/subscriptions/:id/resources', async (req, res) => {
+        try {
+            const resources = await subscriptionService.listResources(parseInt(req.params.id));
+            res.json({ success: true, data: resources });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/subscriptions/:id/resources', async (req, res) => {
+        try {
+            const resource = await subscriptionService.createResource(parseInt(req.params.id), req.body);
+            res.json({ success: true, data: resource });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/subscriptions/resources/:id', async (req, res) => {
+        try {
+            await subscriptionService.deleteResource(parseInt(req.params.id));
+            res.json({ success: true, data: null });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/subscriptions/resources/:id/browse', async (req, res) => {
+        try {
+            const entries = await subscriptionService.browseResource(
+                parseInt(req.params.id),
+                req.query.folderId,
+                req.query.keyword
+            );
+            res.json({ success: true, data: entries });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     // 系统设置
     app.get('/api/settings', async (req, res) => {
         res.json({success: true, data: ConfigService.getConfig()})
@@ -602,6 +727,16 @@ AppDataSource.initialize().then(async () => {
         }
         ConfigService.setConfig(settings)
         res.json({success: true, data: null})
+    })
+
+    app.post('/api/settings/regex-presets', async (req, res) => {
+        try {
+            const regexPresets = Array.isArray(req.body.regexPresets) ? req.body.regexPresets : [];
+            ConfigService.setConfigValue('regexPresets', regexPresets);
+            res.json({ success: true, data: null });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
     })
 
     app.get('/api/version', (req, res) => {
@@ -725,6 +860,83 @@ AppDataSource.initialize().then(async () => {
             const strmService = new StrmService();
             const files = await strmService.listStrmFiles(path);
             res.json({ success: true, data: files });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/strm/configs', async (req, res) => {
+        try {
+            const configs = await strmConfigService.listConfigs();
+            res.json({ success: true, data: configs });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/strm/configs', async (req, res) => {
+        try {
+            const config = await strmConfigService.createConfig(req.body);
+            await SchedulerService.refreshStrmConfigJob(config, strmConfigService);
+            res.json({ success: true, data: config });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/strm/configs/:id', async (req, res) => {
+        try {
+            const config = await strmConfigService.updateConfig(parseInt(req.params.id), req.body);
+            await SchedulerService.refreshStrmConfigJob(config, strmConfigService);
+            res.json({ success: true, data: config });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/strm/configs/:id', async (req, res) => {
+        try {
+            await strmConfigService.deleteConfig(parseInt(req.params.id));
+            SchedulerService.removeTaskJob(`strm-config-${parseInt(req.params.id)}`);
+            res.json({ success: true, data: null });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/strm/configs/:id/run', async (req, res) => {
+        try {
+            const result = await strmConfigService.runConfig(parseInt(req.params.id));
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/strm/configs/:id/reset', async (req, res) => {
+        try {
+            const config = await strmConfigService.resetSubscriptionConfig(parseInt(req.params.id));
+            res.json({ success: true, data: config });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/tmdb/search', async (req, res) => {
+        try {
+            const keyword = req.query.keyword?.trim();
+            const year = req.query.year?.trim() || '';
+            if (!keyword) {
+                throw new Error('搜索关键字不能为空');
+            }
+            const result = await tmdbService.search(keyword, year);
+            res.json({
+                success: true,
+                data: [
+                    ...(result.movies || []),
+                    ...(result.tvShows || [])
+                ].slice(0, 10)
+            });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }

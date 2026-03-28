@@ -95,6 +95,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 初始化数据
     fetchAccounts(true);
     fetchTasks();
+    fetchSubscriptions();
+    fetchStrmConfigs();
 
     // 定时刷新数据
     // setInterval(() => {

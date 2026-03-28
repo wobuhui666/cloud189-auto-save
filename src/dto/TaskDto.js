@@ -10,6 +10,7 @@ class CreateTaskDto {
         this.matchValue = data.matchValue;
         this.overwriteFolder = data.overwriteFolder;
         this.remark = data.remark;
+        this.taskGroup = data.taskGroup;
         this.enableCron = data.enableCron;
         this.cronExpression = data.cronExpression;
         this.realRootFolderId = data.realRootFolderId;
@@ -19,6 +20,7 @@ class CreateTaskDto {
         this.sourceRegex = data?.sourceRegex; // 源正则 (自动重命名)
         this.targetRegex = data?.targetRegex; // 目标正则 (自动重命名)
         this.taskName = data?.taskName; // 任务名称
+        this.tmdbId = data?.tmdbId; // TMDB ID
         this.enableTaskScraper = data?.enableTaskScraper; // 启用刮削
         this.enableSystemProxy = data?.enableSystemProxy; // 启用系统代理
         this.isFolder = data?.isFolder; // 是否是文件夹

@@ -43,6 +43,13 @@ class SchedulerService {
         }
     }
 
+    static async initStrmConfigJobs(strmConfigRepo, strmConfigService) {
+        const configs = await strmConfigRepo.find({ where: { enableCron: true, enabled: true } });
+        configs.forEach(config => {
+            this.refreshStrmConfigJob(config, strmConfigService);
+        });
+    }
+
     static saveTaskJob(task, taskService) {
         if (this.taskJobs.has(task.id)) {
             this.taskJobs.get(task.id).stop();
@@ -98,6 +105,28 @@ class SchedulerService {
             this.taskJobs.delete(taskId);
             logTaskEvent(`定时任务[${taskId}]已移除`);
         }
+    }
+
+    static refreshStrmConfigJob(config, strmConfigService) {
+        const jobId = `strm-config-${config.id}`;
+        this.removeTaskJob(jobId);
+        if (!config.enableCron || !config.enabled || !config.cronExpression) {
+            return;
+        }
+        if (!cron.validate(config.cronExpression)) {
+            logTaskEvent(`STRM配置[${config.name}] Cron 无效，跳过设置`);
+            return;
+        }
+        const job = cron.schedule(config.cronExpression, async () => {
+            logTaskEvent(`STRM配置[${config.name}]开始定时执行`);
+            try {
+                await strmConfigService.runConfig(config.id);
+            } catch (error) {
+                logTaskEvent(`STRM配置[${config.name}]执行失败: ${error.message}`);
+            }
+        });
+        this.taskJobs.set(jobId, job);
+        logTaskEvent(`STRM配置[${config.name}]定时任务已设置: ${config.cronExpression}`);
     }
 
     // 处理默认定时任务配置

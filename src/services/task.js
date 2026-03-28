@@ -66,6 +66,8 @@ class TaskService {
             matchOperator: taskDto.matchOperator,
             matchValue: taskDto.matchValue,
             remark: taskDto.remark,
+            taskGroup: taskDto.taskGroup,
+            tmdbId: taskDto.tmdbId,
             realRootFolderId: taskDto.realRootFolderId,
             enableCron: taskDto.enableCron,
             cronExpression: taskDto.cronExpression,
@@ -271,6 +273,29 @@ class TaskService {
         }
         return tasks;
     }
+
+    async createTasksBatch(taskList = []) {
+        if (!Array.isArray(taskList) || taskList.length === 0) {
+            throw new Error('批量任务不能为空');
+        }
+        const createdTasks = [];
+        const failedTasks = [];
+        for (const taskParams of taskList) {
+            try {
+                const tasks = await this.createTask(taskParams);
+                createdTasks.push(...tasks);
+            } catch (error) {
+                failedTasks.push({
+                    shareLink: taskParams.shareLink,
+                    error: error.message
+                });
+            }
+        }
+        return {
+            createdTasks,
+            failedTasks
+        };
+    }
     async increaseShareFileAccessCount(cloud189, shareId ) {
         await cloud189.increaseShareFileAccessCount(shareId)
     }
@@ -445,7 +470,10 @@ class TaskService {
             case 'lt': operatorText = '小于'; break;
             case 'eq': operatorText = '等于'; break;
             case 'contains': operatorText = '包含'; break;
-            case 'not contains': operatorText = '不包含'; break;
+            case 'notContains':
+            case 'not contains':
+                operatorText = '不包含';
+                break;
             default:
                 logTaskEvent(`任务 ${task.id}: 未知的过滤操作符 "${operator}"，跳过 AI 过滤。`);
                 return null;
@@ -653,7 +681,7 @@ class TaskService {
             new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
         }
         // 只允许更新特定字段
-        const allowedFields = ['resourceName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'matchPattern','matchOperator','matchValue','remark', 'enableCron', 'cronExpression', 'enableTaskScraper'];
+        const allowedFields = ['resourceName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'enableCron', 'cronExpression', 'enableTaskScraper'];
         for (const field of allowedFields) {
             if (updates[field] !== undefined) {
                 task[field] = updates[field];
@@ -894,7 +922,7 @@ class TaskService {
         }
         // 如果status == 2 说明有冲突
         if (task.taskStatus == 2) {
-            const conflictTaskInfo = await cloud189.getConflictTaskInfo(taskId);
+            const conflictTaskInfo = await cloud189.getConflictTaskInfo(taskId, batchTaskDto);
             if (!conflictTaskInfo) {
                 return false
             }
@@ -903,7 +931,7 @@ class TaskService {
             for (const taskInfo of taskInfos) {
                 taskInfo.dealWay = 1;
             }
-            await cloud189.manageBatchTask(taskId, conflictTaskInfo.targetFolderId, taskInfos);
+            await cloud189.manageBatchTask(taskId, conflictTaskInfo.targetFolderId, taskInfos, batchTaskDto);
             await new Promise(resolve => setTimeout(resolve, 200));
             return await this.checkTaskStatus(cloud189, taskId, count++, batchTaskDto)
         }

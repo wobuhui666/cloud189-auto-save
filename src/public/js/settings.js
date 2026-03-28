@@ -95,6 +95,13 @@ async function loadSettings() {
             document.getElementById('pushplusTo').value = settings.pushplus?.to || '';
 
             customPushConfigs = settings.customPush || [];
+            window.regexPresets = Array.isArray(settings.regexPresets) ? settings.regexPresets : [];
+            if (typeof renderRegexPresetOptions === 'function') {
+                renderRegexPresetOptions();
+            }
+            if (typeof renderRegexPresetTable === 'function') {
+                renderRegexPresetTable();
+            }
         }
     } catch (error) {
         console.error('加载设置失败:', error);

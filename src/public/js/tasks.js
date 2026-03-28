@@ -3,6 +3,8 @@ let taskFilterParams = {
     status: 'all',
     search: ''
 };
+let pendingShareFolderSelection = null;
+let selectedTmdbType = '';
 
 
 // 任务相关功能
@@ -69,8 +71,9 @@ async function fetchTasks() {
                     </td>
                     <td data-label="资源名称">${cronIcon}<a href="${task.shareLink}" target="_blank" class='ellipsis' title="${taskName}">${taskName}</a></td>
                     <td data-label="账号">${task.account.username}</td>
+                    <td data-label="分组">${task.taskGroup || '-'}</td>
                     <!--<td data-label="首次保存目录"><a href="https://cloud.189.cn/web/main/file/folder/${task.targetFolderId}" target="_blank">${task.targetFolderId}</a></td>-->
-                     <td data-label="更新目录"><a href="javascript:void(0)" onclick="showFileListModal('${task.id}')" class='ellipsis'>${task.realFolderName || task.realFolderId}</a></td>
+                    <td data-label="更新目录"><a href="javascript:void(0)" onclick="showFileListModal('${task.id}')" class='ellipsis'>${task.realFolderName || task.realFolderId}</a></td>
                     <td data-label="更新数/总数">${task.currentEpisodes || 0}/${task.totalEpisodes || '未知'}${progressRing}</td>
                     <td data-label="转存时间">${formatDateTime(task.lastFileUpdateTime)}</td>
                     <td data-label="备注">${task.remark?task.remark:''}</td>
@@ -78,6 +81,7 @@ async function fetchTasks() {
                 </tr>
             `;
         });
+        renderTaskGroupOptions();
     }
 }
 
@@ -163,15 +167,35 @@ function openCreateTaskModal() {
         document.getElementById('targetFolder').value = lastTargetFolderName; 
     }
     document.getElementsByClassName('cronExpression-box')[0].style.display = 'none';
+    document.getElementById('batchModeToggle').checked = false;
+    toggleTaskCreateMode();
+    clearTaskShareParseState();
     document.getElementById('createTaskModal').style.display = 'block';
 }
 
+async function openCreateTaskModalWithPrefill({ shareLink, accessCode = '', taskName = '', shareFolderId = null }) {
+    const taskTab = document.querySelector('.tab[data-tab="task"]');
+    taskTab?.click();
+    openCreateTaskModal();
+    document.getElementById('shareLink').value = shareLink || '';
+    document.getElementById('accessCode').value = accessCode || '';
+    document.getElementById('taskName').value = taskName || '';
+    document.getElementById('taskName').readOnly = false;
+    pendingShareFolderSelection = shareFolderId !== null && shareFolderId !== undefined ? String(shareFolderId) : null;
+    await parseShareLink();
+    if (taskName) {
+        document.getElementById('taskName').value = taskName;
+    }
+}
+
 function closeCreateTaskModal() {
-    document.querySelector('.share-folders-group').style.display = 'none';
-    document.getElementById('shareFoldersList').innerHTML = '';;
+    clearTaskShareParseState();
+    clearTmdbSelection();
     document.getElementById('createTaskModal').style.display = 'none';
     document.getElementById('taskName').readOnly = true
     document.getElementById('taskForm').reset();
+    document.getElementById('batchModeToggle').checked = false;
+    toggleTaskCreateMode();
 }
 
 // 初始化任务表单
@@ -183,10 +207,21 @@ function initTaskForm() {
     shareInputs.forEach(input => {
         input.addEventListener('blur', debouncedHandleShare);
     });
+    document.getElementById('batchModeToggle').addEventListener('change', toggleTaskCreateMode);
+    document.getElementById('tmdbKeyword').addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            searchTmdbForTask();
+        }
+    });
 
     // 修改原有的表单提交处理
     document.getElementById('taskForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (isBatchTaskMode()) {
+            await submitBatchTasks(e);
+            return;
+        }
         const accountId = document.getElementById('accountId').value;
         const shareLink = document.getElementById('shareLink').value;
         const totalEpisodes = document.getElementById('totalEpisodes').value;
@@ -197,11 +232,13 @@ function initTaskForm() {
         const matchOperator = document.getElementById('matchOperator').value;
         const matchValue = document.getElementById('matchValue').value;
         const remark = document.getElementById('remark').value;
+        const taskGroup = document.getElementById('taskGroup').value.trim();
         const enableCron = document.getElementById('enableCron').checked;
         const cronExpression = document.getElementById('cronExpression').value;
         const sourceRegex = document.getElementById('ctSourceRegex').value;
         const targetRegex = document.getElementById('ctTargetRegex').value;
         const taskName = document.getElementById('taskName').value.trim();
+        const tmdbId = document.getElementById('selectedTmdbId').value || null;
         const enableTaskScraper = document.getElementById('enableTaskScraper').checked;
         if (!taskName) {
             message.warning('任务名称不能为空');
@@ -228,7 +265,7 @@ function initTaskForm() {
             message.warning('至少选择一个分享目录');
             return;
         }
-        const body = { accountId, shareLink, totalEpisodes, targetFolderId, accessCode, matchPattern, matchOperator, matchValue, overwriteFolder: 0, remark, enableCron, cronExpression, targetFolder, selectedFolders, sourceRegex, targetRegex, taskName, enableTaskScraper };
+        const body = { accountId, shareLink, totalEpisodes, targetFolderId, accessCode, matchPattern, matchOperator, matchValue, overwriteFolder: 0, remark, taskGroup, enableCron, cronExpression, targetFolder, selectedFolders, sourceRegex, targetRegex, taskName, tmdbId, enableTaskScraper };
         await createTask(e,body)
             
     });
@@ -264,6 +301,8 @@ function initTaskForm() {
                 saveToCache('lastTargetFolder', JSON.stringify({ lastTargetFolderId: body.targetFolderId, lastTargetFolderName:  targetFolderName}));
                 document.getElementById('taskForm').reset();
                 document.getElementById('targetFolderId').value = body.targetFolderId;
+                clearTmdbSelection();
+                toggleTaskCreateMode();
                 const ids = data.data.map(item => item.id);
                 Promise.all(ids.map(id => executeTask(id, false)));
                 message.success('任务创建完成, 正在执行中, 请稍后查看结果');
@@ -271,8 +310,7 @@ function initTaskForm() {
                     fetchTasks(); 
                 }, 2500);
                 closeCreateTaskModal();
-                // 触发任务页签的切换 .tab且data-tab='tasks'
-                const tasksTab = document.querySelector('.tab[data-tab="tasks"]');
+                const tasksTab = document.querySelector('.tab[data-tab="task"]');
                 if (tasksTab) {
                     tasksTab.click();
                 }
@@ -293,6 +331,348 @@ function initTaskForm() {
             submitBtn.disabled = false;
             loading.hide();
         }
+    }
+}
+
+function isBatchTaskMode() {
+    return document.getElementById('batchModeToggle')?.checked;
+}
+
+function toggleTaskCreateMode() {
+    const isBatch = isBatchTaskMode();
+    document.querySelectorAll('.single-share-group').forEach(element => {
+        element.style.display = isBatch ? 'none' : '';
+    });
+    document.querySelectorAll('.batch-share-group').forEach(element => {
+        element.style.display = isBatch ? '' : 'none';
+    });
+    const shareLinkInput = document.getElementById('shareLink');
+    const taskNameInput = document.getElementById('taskName');
+    const batchShareInput = document.getElementById('batchShareLinks');
+    if (shareLinkInput) {
+        shareLinkInput.required = !isBatch;
+    }
+    if (taskNameInput) {
+        taskNameInput.required = !isBatch;
+    }
+    if (batchShareInput) {
+        batchShareInput.required = isBatch;
+    }
+    if (isBatch) {
+        clearTaskShareParseState();
+        clearTmdbSelection();
+    }
+}
+
+function clearTaskShareParseState() {
+    const shareFoldersGroup = document.querySelector('.share-folders-group');
+    const shareFoldersList = document.getElementById('shareFoldersList');
+    const shareParseError = document.getElementById('shareParseError');
+    const selectAllFolders = document.getElementById('selectAllFolders');
+    if (shareFoldersGroup) {
+        shareFoldersGroup.style.display = 'none';
+    }
+    if (shareFoldersList) {
+        shareFoldersList.innerHTML = '';
+    }
+    if (shareParseError) {
+        shareParseError.textContent = '';
+    }
+    if (selectAllFolders) {
+        selectAllFolders.checked = true;
+    }
+    pendingShareFolderSelection = null;
+}
+
+function clearTmdbSelection() {
+    selectedTmdbType = '';
+    const selectedTmdbId = document.getElementById('selectedTmdbId');
+    const tmdbKeyword = document.getElementById('tmdbKeyword');
+    const tmdbYear = document.getElementById('tmdbYear');
+    const tmdbResults = document.getElementById('tmdbSearchResults');
+    if (selectedTmdbId) {
+        selectedTmdbId.value = '';
+    }
+    if (tmdbKeyword) {
+        tmdbKeyword.value = '';
+    }
+    if (tmdbYear) {
+        tmdbYear.value = '';
+    }
+    if (tmdbResults) {
+        tmdbResults.innerHTML = '';
+    }
+}
+
+async function searchTmdb(options) {
+    const { keyword, year, resultContainer, onSelect } = options;
+    if (!keyword) {
+        message.warning('请先输入 TMDB 搜索关键字');
+        return;
+    }
+    resultContainer.innerHTML = '<div style="color: #666;">搜索中...</div>';
+    try {
+        const response = await fetch(`/api/tmdb/search?keyword=${encodeURIComponent(keyword)}&year=${encodeURIComponent(year)}`);
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error);
+        }
+        const results = data.data || [];
+        if (!results.length) {
+            resultContainer.innerHTML = '<div style="color: #999;">未找到匹配结果</div>';
+            return;
+        }
+        resultContainer.innerHTML = '';
+        results.forEach(item => {
+            const releaseYear = item.releaseDate ? new Date(item.releaseDate).getFullYear() : '';
+            const title = `${item.title}${releaseYear ? ` (${releaseYear})` : ''}`;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn-default';
+            button.style.textAlign = 'left';
+            button.style.display = 'flex';
+            button.style.justifyContent = 'space-between';
+            button.style.alignItems = 'center';
+            button.style.gap = '12px';
+            button.innerHTML = `
+                <span>${title}</span>
+                <span style="font-size: 12px; color: #666;">${item.type === 'movie' ? '电影' : '剧集'}</span>
+            `;
+            button.addEventListener('click', () => onSelect(item, title));
+            resultContainer.appendChild(button);
+        });
+    } catch (error) {
+        resultContainer.innerHTML = `<div style="color: #ff4d4f;">搜索失败: ${error.message}</div>`;
+    }
+}
+
+async function searchTmdbForTask() {
+    await searchTmdb({
+        keyword: document.getElementById('tmdbKeyword').value.trim(),
+        year: document.getElementById('tmdbYear').value.trim(),
+        resultContainer: document.getElementById('tmdbSearchResults'),
+        onSelect: (item, title) => selectTmdbResult(String(item.id), item.type, title)
+    });
+}
+
+function selectTmdbResult(id, type, title) {
+    selectedTmdbType = type;
+    document.getElementById('selectedTmdbId').value = id;
+    document.getElementById('taskName').value = title;
+    document.getElementById('tmdbSearchResults').innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <div style="color: #52c41a;">已关联 TMDB: ${title}</div>
+            <button type="button" class="btn-default" onclick="clearTmdbSelection()">清空</button>
+        </div>
+    `;
+}
+
+function extractTaskNameFromShareBlock(shareBlock) {
+    const lines = shareBlock
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+    const titleLine = lines
+        .map(line => {
+            const parsed = parseCloudShare(line);
+            return line
+                .replace(parsed.url || '', '')
+                .replace(/[（(]?(访问码|提取码)[：:]\s*[a-zA-Z0-9]{4}[)）]?/gi, '')
+                .trim();
+        })
+        .find(Boolean);
+    if (!titleLine) {
+        return '';
+    }
+    return titleLine;
+}
+
+function parseBatchShareBlocks(rawText) {
+    const lines = rawText
+        .replace(/\r\n/g, '\n')
+        .split('\n');
+    const blocks = [];
+    let currentLines = [];
+    let hasShareLink = false;
+
+    const pushCurrentBlock = () => {
+        if (!currentLines.length || !hasShareLink) {
+            currentLines = [];
+            hasShareLink = false;
+            return;
+        }
+        const block = currentLines.join('\n').trim();
+        if (block) {
+            blocks.push({
+                shareText: block,
+                taskName: extractTaskNameFromShareBlock(block)
+            });
+        }
+        currentLines = [];
+        hasShareLink = false;
+    };
+
+    lines.forEach(rawLine => {
+        const line = rawLine.trim();
+        if (!line) {
+            pushCurrentBlock();
+            return;
+        }
+
+        const hasUrlInLine = !!parseCloudShare(line).url;
+        if (hasUrlInLine && hasShareLink) {
+            pushCurrentBlock();
+        }
+
+        currentLines.push(line);
+        if (hasUrlInLine) {
+            hasShareLink = true;
+        }
+    });
+
+    pushCurrentBlock();
+    return blocks;
+}
+
+function showBatchTaskResultModal(createdTasks, failedTasks) {
+    const modal = document.createElement('div');
+    modal.className = 'modal batch-task-result-modal';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 760px;">
+            <div class="modal-header">
+                <h3>批量创建结果</h3>
+            </div>
+            <div class="form-body">
+                <div style="margin-bottom: 12px;">
+                    成功 <strong>${createdTasks.length}</strong> 个，失败 <strong>${failedTasks.length}</strong> 个
+                </div>
+                ${failedTasks.length ? `
+                    <div style="max-height: 320px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>分享内容</th>
+                                    <th>失败原因</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${failedTasks.map(item => `
+                                    <tr>
+                                        <td style="max-width: 280px; word-break: break-all;">${item.shareLink}</td>
+                                        <td style="max-width: 320px; word-break: break-all;">${item.error}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                ` : '<div style="color: #52c41a;">全部任务创建成功，已开始执行。</div>'}
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn-default" onclick="closeBatchTaskResultModal()">关闭</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.style.display = 'flex';
+}
+
+function closeBatchTaskResultModal() {
+    document.querySelector('.batch-task-result-modal')?.remove();
+}
+
+async function submitBatchTasks(event) {
+    const accountId = document.getElementById('accountId').value;
+    const targetFolderId = document.getElementById('targetFolderId').value;
+    const targetFolder = document.getElementById('targetFolder').value;
+    const totalEpisodes = document.getElementById('totalEpisodes').value;
+    const remark = document.getElementById('remark').value;
+    const taskGroup = document.getElementById('taskGroup').value.trim();
+    const matchPattern = document.getElementById('matchPattern').value;
+    const matchOperator = document.getElementById('matchOperator').value;
+    const matchValue = document.getElementById('matchValue').value;
+    const enableCron = document.getElementById('enableCron').checked;
+    const cronExpression = document.getElementById('cronExpression').value;
+    const sourceRegex = document.getElementById('ctSourceRegex').value;
+    const targetRegex = document.getElementById('ctTargetRegex').value;
+    const enableTaskScraper = document.getElementById('enableTaskScraper').checked;
+    const batchTaskBlocks = parseBatchShareBlocks(document.getElementById('batchShareLinks').value);
+
+    if (!batchTaskBlocks.length) {
+        message.warning('请至少输入一条可识别的分享内容');
+        return;
+    }
+    if (matchPattern && !matchValue) {
+        message.warning('填了匹配模式, 那么匹配值就必须填');
+        return;
+    }
+    if (enableCron && !cronExpression) {
+        message.warning('开启了自定义定时任务, 那么定时表达式就必须填');
+        return;
+    }
+    if (targetRegex && !sourceRegex) {
+        message.warning('填了目标正则, 那么源正则就必须填');
+        return;
+    }
+
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    submitBtn.classList.add('loading');
+    submitBtn.disabled = true;
+    try {
+        loading.show();
+        const tasks = batchTaskBlocks.map(item => ({
+            accountId,
+            shareLink: item.shareText,
+            totalEpisodes,
+            targetFolderId,
+            matchPattern,
+            matchOperator,
+            matchValue,
+            overwriteFolder: 0,
+            remark,
+            taskGroup,
+            enableCron,
+            cronExpression,
+            targetFolder,
+            selectedFolders: [],
+            sourceRegex,
+            targetRegex,
+            taskName: item.taskName || '',
+            enableTaskScraper
+        }));
+        const response = await fetch('/api/tasks/batch-create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tasks })
+        });
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error);
+        }
+        const createdTasks = data.data?.createdTasks || [];
+        const failedTasks = data.data?.failedTasks || [];
+        if (!createdTasks.length && failedTasks.length) {
+            throw new Error(failedTasks.map(item => `${item.shareLink}: ${item.error}`).join('\n'));
+        }
+        saveToCache('lastTargetFolder', JSON.stringify({ lastTargetFolderId: targetFolderId, lastTargetFolderName: targetFolder }));
+        document.getElementById('taskForm').reset();
+        document.getElementById('targetFolderId').value = targetFolderId;
+        toggleTaskCreateMode();
+        const ids = createdTasks.map(item => item.id);
+        Promise.all(ids.map(id => executeTask(id, false)));
+        await fetchTasks();
+        closeCreateTaskModal();
+        if (failedTasks.length) {
+            message.warning(`批量创建完成，成功 ${createdTasks.length} 个，失败 ${failedTasks.length} 个`);
+            showBatchTaskResultModal(createdTasks, failedTasks);
+        } else {
+            message.success(`批量创建完成，共 ${createdTasks.length} 个任务，已开始执行`);
+        }
+    } catch (error) {
+        message.warning('批量创建失败: ' + error.message);
+    } finally {
+        submitBtn.classList.remove('loading');
+        submitBtn.disabled = false;
+        loading.hide();
     }
 }
 
@@ -827,6 +1207,19 @@ function formatDateTime(dateStr) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
+function renderTaskGroupOptions() {
+    const datalist = document.getElementById('taskGroupOptions');
+    if (!datalist) {
+        return;
+    }
+    const groups = Array.from(new Set(
+        taskList
+            .map(task => task.taskGroup?.trim())
+            .filter(Boolean)
+    )).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    datalist.innerHTML = groups.map(group => `<option value="${group}"></option>`).join('');
+}
+
 const statusOptions = {
     pending: '等待中',
     processing: '追剧中',
@@ -878,6 +1271,9 @@ async function generateStrm() {
 
 // 解析分享链接获取分享目录组合
 async function parseShareLink() {
+    if (isBatchTaskMode()) {
+        return;
+    }
     const shareParseError = document.getElementById('shareParseError');
     shareParseError.textContent = ''; // 清除之前的错误信息
     let shareLink = document.getElementById('shareLink')?.value?.trim();
@@ -914,12 +1310,22 @@ async function parseShareLink() {
                     </label>
                 </div>
             `).join('');
-             // 如果有分享目录数据，使用第一个目录名称作为任务名称
-            if (data.data && data.data.length > 0) {
+             // 如果尚未手动绑定 TMDB，则使用第一个目录名称作为任务名称
+            if (data.data && data.data.length > 0 && !document.getElementById('selectedTmdbId').value) {
                 const taskName = document.getElementById('taskName')
                 taskName.value = data.data[0].name;
                 // 移除taskName的只读
                 taskName.readOnly = false;
+            }
+            if (pendingShareFolderSelection !== null) {
+                const checkboxes = Array.from(document.querySelectorAll('input[name="chooseShareFolder"]'));
+                const targetCheckbox = checkboxes.find(checkbox => checkbox.value === pendingShareFolderSelection);
+                if (targetCheckbox) {
+                    checkboxes.forEach(checkbox => {
+                        checkbox.checked = checkbox === targetCheckbox;
+                    });
+                }
+                pendingShareFolderSelection = null;
             }
         } else {
             shareFoldersGroup.style.display = 'none';
@@ -964,6 +1370,11 @@ async function copyDirectLink(fileId, taskId) {
 
 function parseCloudShare(shareText) {
     // 移除所有空格
+    try {
+        shareText = decodeURIComponent(shareText);
+    } catch (error) {
+        // 保持原始文本继续解析，兼容包含非法转义字符的粘贴内容
+    }
     shareText = shareText.replace(/\s/g, '');
     
     // 提取基本URL和访问码

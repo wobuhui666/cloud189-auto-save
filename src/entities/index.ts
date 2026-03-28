@@ -49,6 +49,12 @@ export class Account {
     @Column('text', { nullable: true, default: '' })
     alias!: string;
 
+    @Column('text', { nullable: true, default: 'personal' })
+    accountType!: string;
+
+    @Column('text', { nullable: true })
+    familyId!: string;
+
     // 默认账号
     @Column('boolean', { nullable: true, default: false })
     isDefault!: boolean;
@@ -166,6 +172,9 @@ export class Task {
     @Column('text', { nullable: true })
     remark!: string;
 
+    @Column('text', { nullable: true })
+    taskGroup!: string;
+
     @Column({ nullable: true })
     cronExpression!: string;
 
@@ -208,5 +217,204 @@ export class CommonFolder {
     name!: string;
 }
 
+@Entity()
+export class Subscription {
+    @PrimaryGeneratedColumn()
+    id!: number;
 
-export default { Account, Task, CommonFolder };
+    @Column('text', { unique: true })
+    uuid!: string;
+
+    @Column('text')
+    name!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    remark!: string;
+
+    @Column('boolean', { default: true })
+    enabled!: boolean;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    lastRefreshTime!: Date;
+
+    @Column('text', { nullable: true, default: 'unknown' })
+    lastRefreshStatus!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    lastRefreshMessage!: string;
+
+    @Column('integer', { nullable: true, default: 0 })
+    validResourceCount!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    invalidResourceCount!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    availableAccountCount!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    totalAccountCount!: number;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+@Entity()
+export class SubscriptionResource {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('integer')
+    subscriptionId!: number;
+
+    @ManyToOne(() => Subscription, { nullable: true })
+    @JoinColumn({ name: 'subscriptionId' })
+    subscription!: Subscription;
+
+    @Column('text')
+    title!: string;
+
+    @Column('text')
+    shareLink!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    accessCode!: string;
+
+    @Column('text', { nullable: true })
+    shareId!: string;
+
+    @Column('text', { nullable: true })
+    shareMode!: string;
+
+    @Column('text', { nullable: true })
+    shareFileId!: string;
+
+    @Column('text', { nullable: true })
+    shareFileName!: string;
+
+    @Column('boolean', { default: true })
+    isFolder!: boolean;
+
+    @Column('text', { nullable: true, default: 'unknown' })
+    verifyStatus!: string;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    lastVerifiedAt!: Date;
+
+    @Column('text', { nullable: true, default: '' })
+    lastVerifyError!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    availableAccountIds!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    verifyDetails!: string;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+@Entity()
+export class StrmConfig {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    name!: string;
+
+    @Column('text', { default: 'normal' })
+    type!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    accountIds!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    directories!: string;
+
+    @Column('integer', { nullable: true })
+    subscriptionId!: number | null;
+
+    @Column('text', { nullable: true, default: '' })
+    resourceIds!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    localPathPrefix!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    excludePattern!: string;
+
+    @Column('boolean', { default: false })
+    overwriteExisting!: boolean;
+
+    @Column('boolean', { default: false })
+    enableCron!: boolean;
+
+    @Column('text', { nullable: true, default: '' })
+    cronExpression!: string;
+
+    @Column('boolean', { default: true })
+    enabled!: boolean;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    lastRunAt!: Date | null;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    lastCheckTime!: Date | null;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+
+export default { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig };

@@ -64,6 +64,8 @@
         <div class="tabs">
             <div class="tab" data-tab="account">账号</div>
             <div class="tab active" data-tab="task">任务</div>
+            <div class="tab" data-tab="subscription">订阅</div>
+            <div class="tab" data-tab="strmConfig">STRM</div>
             <div class="tab" data-tab="media">媒体</div>
             <div class="tab" data-tab="settings">系统</div>
         </div>
@@ -114,6 +116,19 @@
                                 <input type="text" id="alias">
                             </div>
                             <div class="form-group">
+                                <label for="accountType">账号类型</label>
+                                <select id="accountType">
+                                    <option value="personal">个人云</option>
+                                    <option value="family">家庭云</option>
+                                </select>
+                                <small class="form-text">家庭云账号会使用家庭盘目录浏览、保存目录创建、重命名和直链接口。</small>
+                            </div>
+                            <div class="form-group" id="familyIdGroup" style="display: none;">
+                                <label for="familyId">家庭ID(可选)</label>
+                                <input type="text" id="familyId" placeholder="留空则自动识别">
+                                <small class="form-text">可以留空，保存账号时会尝试自动识别家庭ID；如果自动识别失败，再手动填写。</small>
+                            </div>
+                            <div class="form-group">
                                 <label for="alias">媒体目录(可选)</label>
                                 <input type="text" id="cloudStrmPrefix" placeholder="http://alist:5244/d/天翼云盘">
                                 <small class="form-text">STRM文件内容前缀, 详情查看<a href='https://github.com/1307super/cloud189-auto-save/wiki/3.STRM%E4%B8%8EEmby' target="_blank">wiki</a></small>
@@ -141,9 +156,14 @@
                 <table id="accountTable">
                     <thead>
                         <tr>
-                            <th>用户名</th>
-                            <th>容量</th>
                             <th>操作</th>
+                            <th>用户名</th>
+                            <th>别名</th>
+                            <th>个人容量</th>
+                            <th>家庭容量</th>
+                            <th>媒体目录</th>
+                            <th>本地目录</th>
+                            <th>Emby路径替换</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -211,6 +231,18 @@
                                 <select id="accountId" required></select>
                             </div>
                             <div class="form-group">
+                                <label style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" id="batchModeToggle">
+                                    批量任务模式
+                                </label>
+                                <small class="form-text">开启后可一次输入多条分享文本，统一套用下方账号、目录、正则和分组配置。</small>
+                            </div>
+                            <div class="form-group batch-share-group" style="display: none;">
+                                <label for="batchShareLinks">批量分享内容</label>
+                                <textarea id="batchShareLinks" rows="8" placeholder="每行一条，可直接粘贴包含标题、链接和访问码的整段文本"></textarea>
+                                <small class="form-text">支持直接粘贴“标题 + 链接 + 访问码”的混合文本，系统会自动按链接拆分批量任务。</small>
+                            </div>
+                            <div class="form-group single-share-group">
                                 <label for="shareLink">分享链接</label>
                                 <div class="share-input-group" style="display: flex; gap: 10px;">
                                     <input type="text" id="shareLink" required style="flex: 2;" data-share-input placeholder="可自动解析带访问码的链接">
@@ -218,12 +250,23 @@
                                 </div>
                                 <div id="shareParseError" style="color: #ff4d4f; font-size: 10px; margin-top: 2px; min-height: 12px;"></div>
                             </div>
-                            <div class="form-group">
+                            <div class="form-group single-share-group">
                                 <label for="taskName">任务名称</label>
                                 <input type="text" id="taskName" required readonly>
                                 <small class="form-text">默认使用分享目录第一个文件夹名称,识别完成后可更改</small>
                             </div>
-                            <div class="form-group share-folders-group" style="display: none;">
+                            <div class="form-group single-share-group">
+                                <label for="tmdbKeyword">关联TMDB</label>
+                                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                                    <input type="text" id="tmdbKeyword" placeholder="输入片名或剧名后搜索" style="flex: 2 1 220px;">
+                                    <input type="text" id="tmdbYear" placeholder="年份(可选)" style="flex: 1 1 120px;">
+                                    <button type="button" class="btn-default" onclick="searchTmdbForTask()">搜索</button>
+                                </div>
+                                <input type="hidden" id="selectedTmdbId">
+                                <div id="tmdbSearchResults" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;"></div>
+                                <small class="form-text">选择后会写入任务的 TMDB ID，方便后续刮削和识别。</small>
+                            </div>
+                            <div class="form-group share-folders-group single-share-group" style="display: none;">
                                 <label>分享目录</label>
                                 <div class="share-folders-list" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); padding: 0; border-radius: 4px;">
                                     <div class="folder-select-header">
@@ -257,6 +300,20 @@
                             <div class="form-group">
                                 <label for="remark">备注</label>
                                 <input type="text" id="remark" >
+                            </div>
+                            <div class="form-group">
+                                <label for="taskGroup">任务分组</label>
+                                <input type="text" id="taskGroup" list="taskGroupOptions" placeholder="例如：日更 / 电影 / 动画">
+                            </div>
+                            <div class="form-group">
+                                <label for="regexPresetSelect">正则预设</label>
+                                <div class="match-rule" style="display: flex; flex-wrap: wrap; gap: 10px;">
+                                    <select id="regexPresetSelect" style="flex: 2 1 200px;">
+                                        <option value="">不使用预设</option>
+                                    </select>
+                                    <button type="button" class="btn-default" onclick="openRegexPresetManagementModal()">管理预设</button>
+                                </div>
+                                <small class="form-text">选择后会自动填充当前任务的重命名和筛选规则。</small>
                             </div>
                             <div class="form-group">
                                 <label>文件名重命（可选）<span class="help-icon" data-tooltip="常用正则表达式示例">?</span></label>
@@ -315,11 +372,72 @@
                             <th>操作</th>
                             <th>资源名称</th>
                             <th>账号</th>
-                            <!-- <th>视频类型</th> -->
-                            <th>首次保存目录</th>
+                            <th>分组</th>
                             <th>更新目录</th>
                             <th>更新数/总数</th>
+                            <th>转存时间</th>
+                            <th>备注</th>
                             <th>状态</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="subscriptionTab" class="tab-content">
+            <div class="form-header">
+                <div class="task-operations">
+                    <div class="operation-group">
+                        <div class="button-group">
+                            <button type="button" onclick="openSubscriptionModal()" class="btn-primary">添加订阅</button>
+                            <button type="button" onclick="fetchSubscriptions()" class="btn-default">刷新列表</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="subscriptionTable">
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>UUID</th>
+                            <th>资源数</th>
+                            <th>校验结果</th>
+                            <th>账号覆盖</th>
+                            <th>上次校验</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="strmConfigTab" class="tab-content">
+            <div class="form-header">
+                <div class="task-operations">
+                    <div class="operation-group">
+                        <div class="button-group">
+                            <button type="button" onclick="openStrmConfigModal()" class="btn-primary">新建配置</button>
+                            <button type="button" onclick="fetchStrmConfigs()" class="btn-default">刷新列表</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="table-container">
+                <table id="strmConfigTable">
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>类型</th>
+                            <th>目标</th>
+                            <th>定时</th>
+                            <th>状态</th>
+                            <th>上次检查</th>
+                            <th>上次执行</th>
+                            <th>操作</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -561,6 +679,16 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    <label>正则预设</label>
+                    <div class="push-settings">
+                        <div class="push-item">
+                            <button type="button" class="btn-default" onclick="openRegexPresetManagementModal()">管理正则预设</button>
+                            <small class="form-text">保存常用的文件筛选和重命名规则，创建任务时可以一键套用。</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
                     <label>STRM 设置</label>
                     <div class="push-settings">
                         <div class="push-item">
@@ -655,9 +783,12 @@
 <script src="/js/tabs.js"></script>
 <script src="/js/accounts.js"></script>
 <script src="/js/tasks.js"></script>
+<script src="/js/subscriptions.js"></script>
+<script src="/js/strmConfigs.js"></script>
 <script src="/js/edit-task.js"></script>
 <script src="/js/main.js"></script>
 <script src="/js/settings.js"></script>
+<script src="/js/regexPresets.js"></script>
 <script src="/js/media.js"></script>
 <script src="/js/logs.js"></script>
 <script src="/js/loading.js"></script>
@@ -724,6 +855,37 @@
                     <input type="text" id="editRemark">
                 </div>
                 <div class="form-group">
+                    <label for="editTaskGroup">任务分组</label>
+                    <input type="text" id="editTaskGroup" list="taskGroupOptions" placeholder="例如：日更 / 电影 / 动画">
+                </div>
+                <div class="form-group">
+                    <label for="editTmdbKeyword">关联TMDB</label>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <input type="text" id="editTmdbKeyword" placeholder="输入片名或剧名后搜索" style="flex: 2 1 220px;">
+                        <input type="text" id="editTmdbYear" placeholder="年份(可选)" style="flex: 1 1 120px;">
+                        <button type="button" class="btn-default" onclick="searchTmdbForEditTask()">搜索</button>
+                    </div>
+                    <input type="hidden" id="editSelectedTmdbId">
+                    <div id="editTmdbSearchResults" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;"></div>
+                    <small class="form-text">可重新关联或清空 TMDB ID，用于后续刮削和识别。</small>
+                </div>
+                <div class="form-group">
+                    <label for="editRegexPresetSelect">正则预设</label>
+                    <div class="match-rule" style="display: flex; flex-wrap: wrap; gap: 10px;">
+                        <select id="editRegexPresetSelect" style="flex: 2 1 200px;">
+                            <option value="">不使用预设</option>
+                        </select>
+                        <button type="button" class="btn-default" onclick="openRegexPresetManagementModal()">管理预设</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>文件名重命（可选）<span class="help-icon" data-tooltip="常用正则表达式示例">?</span></label>
+                    <div class="match-rule" style="display: flex; flex-wrap: wrap; gap: 10px;">
+                        <input type="text" id="editSourceRegex" placeholder="正则表达式 例如: .*(S\\d{1,3}E\\d{1,3}).*?(\\.\\w+)$" style="flex: 2 1 200px;">
+                        <input id="editTargetRegex" placeholder="例如: 沙尘暴.$1$2" style="flex: 1 1 100px;">
+                    </div>
+                </div>
+                <div class="form-group">
                     <label>文件名匹配规则（可选）<span class="help-icon" data-tooltip="常用正则表达式示例">?</span></label>
                     <div class="match-rule" style="display: flex; flex-wrap: wrap; gap: 10px;">
                         <input type="text" id="editMatchPattern" placeholder="正则表达式 例如: 第(\d+)集" style="flex: 2 1 200px;">
@@ -757,6 +919,196 @@
                 <button type="submit">保存</button>
                 <input type="hidden" id="editAccountId">
                 <button type="button" class="btn-default" onclick="closeEditTaskModal()">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="subscriptionModal" class="modal">
+    <div class="modal-content" style="max-width: 640px;">
+        <div class="modal-header">
+            <h3 id="subscriptionModalTitle">添加订阅</h3>
+        </div>
+        <form id="subscriptionForm">
+            <div class="form-body">
+                <input type="hidden" id="subscriptionId">
+                <div class="form-group">
+                    <label for="subscriptionUuid">UUID</label>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="text" id="subscriptionUuid" required style="flex: 1;">
+                        <button type="button" class="btn-default" onclick="previewSubscription()">预检查</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <div id="subscriptionPreviewPanel" style="display: none; border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; background: var(--card-background, #fafafa);"></div>
+                </div>
+                <div class="form-group">
+                    <label for="subscriptionName">名称</label>
+                    <input type="text" id="subscriptionName" placeholder="不填则自动使用 UUID 前缀">
+                </div>
+                <div class="form-group">
+                    <label for="subscriptionRemark">备注</label>
+                    <input type="text" id="subscriptionRemark">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="subscriptionEnabled" checked>
+                        启用订阅
+                    </label>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit">保存</button>
+                <button type="button" class="btn-default" onclick="closeSubscriptionModal()">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="subscriptionResourcesModal" class="modal">
+        <div class="modal-content" style="width: 85%; max-width: 1100px;">
+        <div class="modal-header">
+            <h3 id="subscriptionResourcesTitle">订阅资源</h3>
+            <button type="button" class="btn-default" onclick="refreshCurrentSubscriptionResources()">校验资源</button>
+            <button type="button" class="btn-default" onclick="openSubscriptionResourceModal()">添加资源</button>
+            <button class="close-btn" onclick="closeSubscriptionResourcesModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <table id="subscriptionResourceTable">
+                <thead>
+                    <tr>
+                        <th>标题</th>
+                        <th>分享链接</th>
+                        <th>类型</th>
+                        <th>校验状态</th>
+                        <th>可用账号</th>
+                        <th>上次校验</th>
+                        <th>更新时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="subscriptionResourceModal" class="modal">
+    <div class="modal-content" style="max-width: 720px;">
+        <div class="modal-header">
+            <h3>添加订阅资源</h3>
+        </div>
+        <form id="subscriptionResourceForm">
+            <div class="form-body">
+                <div class="form-group">
+                    <label for="subscriptionResourceTitle">标题</label>
+                    <input type="text" id="subscriptionResourceTitle" placeholder="不填则自动读取分享名">
+                </div>
+                <div class="form-group">
+                    <label for="subscriptionResourceShareLink">分享链接</label>
+                    <input type="text" id="subscriptionResourceShareLink" required placeholder="支持自动解析访问码">
+                </div>
+                <div class="form-group">
+                    <label for="subscriptionResourceAccessCode">访问码</label>
+                    <input type="text" id="subscriptionResourceAccessCode" placeholder="可选">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit">保存</button>
+                <button type="button" class="btn-default" onclick="closeSubscriptionResourceModal()">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="subscriptionBrowserModal" class="modal">
+    <div class="modal-content" style="width: 85%; max-width: 1100px;">
+        <div class="modal-header">
+            <h3 id="subscriptionBrowserTitle">资源浏览</h3>
+            <button class="close-btn" onclick="closeSubscriptionBrowserModal()">&times;</button>
+        </div>
+        <div class="form-body">
+            <div class="strm-browser-toolbar">
+                <button type="button" class="btn-default" onclick="goToSubscriptionBrowserParent()">返回上级</button>
+                <button type="button" class="btn-default" onclick="refreshSubscriptionBrowser()">刷新</button>
+                <input type="text" id="subscriptionBrowserKeyword" placeholder="搜索当前目录中的文件名" style="flex: 1;">
+                <button type="button" class="btn-default" onclick="searchSubscriptionBrowser()">搜索</button>
+            </div>
+            <div class="strm-browser-path" id="subscriptionBrowserPath">/</div>
+            <table id="subscriptionBrowserTable">
+                <thead>
+                    <tr>
+                        <th>名称</th>
+                        <th>类型</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="strmConfigModal" class="modal">
+    <div class="modal-content" style="max-width: 820px;">
+        <div class="modal-header">
+            <h3 id="strmConfigModalTitle">新建STRM配置</h3>
+        </div>
+        <form id="strmConfigForm">
+            <div class="form-body">
+                <input type="hidden" id="strmConfigId">
+                <div class="form-group">
+                    <label for="strmConfigName">配置名称</label>
+                    <input type="text" id="strmConfigName" required>
+                </div>
+                <div class="form-group">
+                    <label for="strmConfigType">配置类型</label>
+                    <select id="strmConfigType">
+                        <option value="normal">普通</option>
+                        <option value="subscription">订阅</option>
+                    </select>
+                </div>
+                <div class="form-group" id="strmConfigAccountsGroup">
+                    <label>普通配置账号</label>
+                    <div id="strmConfigAccounts" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+                    <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center;">
+                        <select id="strmConfigDirectoryAccountId" style="min-width: 180px;"></select>
+                        <button type="button" class="btn-default" onclick="openStrmConfigDirectoryPicker()">选择目录</button>
+                    </div>
+                    <div id="strmConfigDirectories" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px;"></div>
+                    <small class="form-text">不选目录时默认按账号媒体目录整体生成；选择后仅处理这些固定目录。</small>
+                </div>
+                <div class="form-group" id="strmConfigSubscriptionGroup" style="display: none;">
+                    <label for="strmConfigSubscriptionId">订阅</label>
+                    <select id="strmConfigSubscriptionId"></select>
+                </div>
+                <div class="form-group" id="strmConfigResourcesGroup" style="display: none;">
+                    <label>订阅资源</label>
+                    <div id="strmConfigResources" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px;"></div>
+                    <small class="form-text">不选则默认处理该订阅下的全部资源。</small>
+                </div>
+                <div class="form-group">
+                    <label for="strmConfigLocalPathPrefix">本地路径前缀</label>
+                    <input type="text" id="strmConfigLocalPathPrefix" placeholder="例如：订阅strm/用户A">
+                </div>
+                <div class="form-group">
+                    <label for="strmConfigExcludePattern">排除规则</label>
+                    <input type="text" id="strmConfigExcludePattern" placeholder="例如：短剧|预告|\\.mp3$">
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="strmConfigOverwriteExisting"> 覆盖已存在文件</label>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="strmConfigEnabled" checked> 启用配置</label>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="strmConfigEnableCron"> 启用定时</label>
+                    <input type="text" id="strmConfigCronExpression" placeholder="Cron 表达式，如 0 0 */6 * * *">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit">保存</button>
+                <button type="button" class="btn-default" onclick="closeStrmConfigModal()">取消</button>
             </div>
         </form>
     </div>
@@ -804,6 +1156,8 @@
         </tbody>
     </table>
 </div>
+
+<datalist id="taskGroupOptions"></datalist>
 
 <div class="floating-btn-group">
     <div class="floating-btns-container collapsed" id="floatingBtnsContainer">
@@ -905,9 +1259,110 @@
             </div>
             
             <div class="form-actions">
+                <button type="button" class="btn-default" onclick="openStrmBrowser()">浏览STRM</button>
                 <button type="button" onclick="generateAllStrm(false)">一键生成</button>
                 <button type="button" class="btn-warning" onclick="generateAllStrm(true)">覆盖生成</button>
                 <button type="button" class="btn-default" onclick="closeStrmModal()">取消</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="strmBrowserModal" class="modal">
+    <div class="modal-content" style="width: 80%; max-width: 900px;">
+        <div class="modal-header">
+            <h3>STRM 浏览器</h3>
+            <button class="close-btn" onclick="closeStrmBrowser()">&times;</button>
+        </div>
+        <div class="form-body">
+            <div class="strm-browser-toolbar">
+                <button type="button" class="btn-default" id="strmBrowserParentBtn" onclick="goToParentStrmPath()">返回上级</button>
+                <button type="button" class="btn-default" onclick="loadStrmEntries(currentStrmPath)">刷新</button>
+                <span class="strm-browser-path" id="strmBrowserPath">/</span>
+            </div>
+            <table class="table-view">
+                <thead>
+                    <tr>
+                        <th>名称</th>
+                        <th>类型</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="strmBrowserTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="regexPresetManagementModal" class="modal">
+    <div class="modal-content" style="width: 80%; max-width: 900px;">
+        <div class="modal-header">
+            <h3>正则预设管理</h3>
+            <button type="button" class="btn-default" onclick="openAddEditRegexPresetModal()">添加预设</button>
+            <button class="close-btn" onclick="closeRegexPresetManagementModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <table id="regexPresetTable" class="table-view">
+                <thead>
+                    <tr>
+                        <th>名称</th>
+                        <th>说明</th>
+                        <th>规则摘要</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="addEditRegexPresetModal" class="modal">
+    <div class="modal-content" style="max-width: 720px;">
+        <div class="modal-header">
+            <h3 id="regexPresetModalTitle">添加正则预设</h3>
+            <button class="close-btn" onclick="closeAddEditRegexPresetModal()">&times;</button>
+        </div>
+        <form id="regexPresetForm">
+            <div class="form-body">
+                <div class="form-group">
+                    <label for="regexPresetName">名称</label>
+                    <input type="text" id="regexPresetName" required>
+                </div>
+                <div class="form-group">
+                    <label for="regexPresetDescription">说明</label>
+                    <input type="text" id="regexPresetDescription" placeholder="例如：电视剧通用集数过滤">
+                </div>
+                <div class="form-group">
+                    <label for="regexPresetSourceRegex">重命名源正则</label>
+                    <input type="text" id="regexPresetSourceRegex" placeholder="例如：.*(S\\d{1,3}E\\d{1,3}).*?(\\.\\w+)$">
+                </div>
+                <div class="form-group">
+                    <label for="regexPresetTargetRegex">重命名目标正则</label>
+                    <input type="text" id="regexPresetTargetRegex" placeholder="例如：剧名.$1$2">
+                </div>
+                <div class="form-group">
+                    <label for="regexPresetMatchPattern">匹配正则</label>
+                    <input type="text" id="regexPresetMatchPattern" placeholder="例如：(?<=E)\\d+">
+                </div>
+                <div class="form-group">
+                    <label for="regexPresetMatchOperator">匹配条件</label>
+                    <select id="regexPresetMatchOperator">
+                        <option value="lt">小于</option>
+                        <option value="eq">等于</option>
+                        <option value="gt">大于</option>
+                        <option value="contains">包含</option>
+                        <option value="notContains">不包含</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="regexPresetMatchValue">匹配值</label>
+                    <input type="text" id="regexPresetMatchValue" placeholder="例如：8">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit">保存</button>
+                <button type="button" class="btn-default" onclick="closeAddEditRegexPresetModal()">取消</button>
             </div>
         </form>
     </div>

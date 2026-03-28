@@ -1,5 +1,27 @@
 let accountsList = []
 let chooseAccount = null
+
+function getAccountTypeLabel(accountType) {
+    return accountType === 'family' ? '家庭云' : '个人云';
+}
+
+function getAccountDisplayName(account) {
+    const typeLabel = getAccountTypeLabel(account.accountType);
+    if (account.alias) {
+        return `${account.username} [${typeLabel}] (${account.alias})`;
+    }
+    return `${account.username} [${typeLabel}]`;
+}
+
+function toggleFamilyIdField() {
+    const accountType = document.getElementById('accountType')?.value || 'personal';
+    const familyIdGroup = document.getElementById('familyIdGroup');
+    if (!familyIdGroup) {
+        return;
+    }
+    familyIdGroup.style.display = accountType === 'family' ? 'block' : 'none';
+}
+
 // 账号相关功能
 async function fetchAccounts(updateSelect = false) {
     const response = await fetch('/api/accounts');
@@ -27,7 +49,10 @@ async function fetchAccounts(updateSelect = false) {
                          <button class="btn-primary" onclick="editAccount(${account.id})">修改</button>
                         <button class="btn-danger" onclick="deleteAccount(${account.id})">删除</button>
                         </td>
-                    <td data-label='账户名'>${account.username}</td>
+                    <td data-label='账户名'>
+                        <div>${account.username}</div>
+                        <small>${getAccountTypeLabel(account.accountType)}${account.familyId ? ` / familyId: ${account.familyId}` : ''}</small>
+                    </td>
                     <td data-label='别名' onclick="updateAlias(${account.id}, '${account.alias || ''}')">${account.alias}</td>
                     <td data-label='个人容量'>${formatBytes(account.capacity.cloudCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.cloudCapacityInfo.totalSize)}</td>
                     <td data-label='家庭容量'>${formatBytes(account.capacity.familyCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.familyCapacityInfo.totalSize)}</td>
@@ -38,9 +63,9 @@ async function fetchAccounts(updateSelect = false) {
             `;
             if (updateSelect) {
                 // n_打头的账号不显示在下拉列表中
-                if (!account.username.startsWith('n_')) {
+                if (!account.original_username.startsWith('n_')) {
                     select.innerHTML += `
-                    <option value="${account.id}" ${account.isDefault?"selected":''}>${account.username}</option>
+                    <option value="${account.id}" ${account.isDefault?"selected":''}>${getAccountDisplayName(account)}</option>
                 `;
                 }
             }
@@ -70,12 +95,16 @@ function initAccountForm() {
         e.preventDefault();
         await createAccount();
     });
+    document.getElementById('accountType').addEventListener('change', toggleFamilyIdField);
 }
 
 function openAddAccountModal() {
     chooseAccount = null
     const modal = document.getElementById('addAccountModal');
     modal.style.display = 'block';
+    document.getElementById('accountType').value = 'personal';
+    document.getElementById('familyId').value = '';
+    toggleFamilyIdField();
 }
 
 function closeAddAccountModal() {
@@ -88,11 +117,11 @@ function closeAddAccountModal() {
     document.getElementById('username').removeAttribute('readonly')
     // 清空表单
     document.getElementById('accountForm').reset();
-    // 移除可能存在的验证码容器
-    const captchaContainer = document.querySelector('.captcha-container');
-    if (captchaContainer) {
-        captchaContainer.remove();
-    }
+    document.getElementById('account-captcha').style.display = 'none';
+    document.getElementById('captchaImage').src = '';
+    document.getElementById('accountType').value = 'personal';
+    document.getElementById('familyId').value = '';
+    toggleFamilyIdField();
     chooseAccount = null
 }
 
@@ -117,9 +146,12 @@ async function editAccount(id) {
     document.getElementById('password').value = chooseAccount.password; // 出于安全考虑，不填充密码
     document.getElementById('cookie').value = chooseAccount.cookies || '';
     document.getElementById('alias').value = chooseAccount.alias || '';
+    document.getElementById('accountType').value = chooseAccount.accountType || 'personal';
+    document.getElementById('familyId').value = chooseAccount.familyId || '';
     document.getElementById('cloudStrmPrefix').value = chooseAccount.cloudStrmPrefix || '';
     document.getElementById('localStrmPrefix').value = chooseAccount.localStrmPrefix || '';
     document.getElementById('embyPathReplace').value = chooseAccount.embyPathReplace || '';
+    toggleFamilyIdField();
     // 账号不允许修改
     document.getElementById('username').setAttribute('readonly', true )
     // 修改提交按钮文本
@@ -132,6 +164,8 @@ async function createAccount() {
     const password = document.getElementById('password').value;
     const cookies  = document.getElementById('cookie').value;
     const alias = document.getElementById('alias').value;
+    const accountType = document.getElementById('accountType').value;
+    const familyId = document.getElementById('familyId').value.trim();
     const validateCodeDom = document.getElementById('validateCode')
     const cloudStrmPrefix = document.getElementById('cloudStrmPrefix').value;
     const localStrmPrefix = document.getElementById('localStrmPrefix').value;
@@ -155,7 +189,19 @@ async function createAccount() {
     const response = await fetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: chooseAccount?.id, username, password, cookies, alias, validateCode, cloudStrmPrefix, localStrmPrefix, embyPathReplace })
+        body: JSON.stringify({
+            id: chooseAccount?.id,
+            username,
+            password,
+            cookies,
+            alias,
+            accountType,
+            familyId: accountType === 'family' ? familyId : '',
+            validateCode,
+            cloudStrmPrefix,
+            localStrmPrefix,
+            embyPathReplace
+        })
     });
     const data = await response.json();
     if (data.success) {

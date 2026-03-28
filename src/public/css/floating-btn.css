@@ -58,3 +58,16 @@
 #toggleIcon.expanded {
     transform: rotate(180deg);
 }
+
+.strm-browser-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.strm-browser-path {
+    font-size: 13px;
+    color: #666;
+    word-break: break-all;
+}

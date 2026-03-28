@@ -139,6 +139,118 @@ class StrmService {
         return message;
     }
 
+    async generateCustom(targetRoot, files, contentResolver, overwrite = false, compare = false) {
+        if (!this.enable) {
+            logTaskEvent('STRM生成未启用, 请启用后执行');
+            return;
+        }
+        const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
+        const targetDir = path.join(this.baseDir, targetRoot.replace(/^\/+|\/+$/g, ''));
+        let success = 0;
+        let failed = 0;
+        let skipped = 0;
+
+        if (compare) {
+            const strmFiles = await this.listStrmFiles(targetRoot);
+            for (const file of strmFiles.filter(item => item.type === 'file')) {
+                if (!files.some(entry => path.parse(entry.name).name === path.parse(file.name).name)) {
+                    await this.delete(file.path);
+                }
+            }
+        }
+
+        overwrite && await this._deleteDirAllStrm(targetDir);
+        await this._ensureDirectoryExists(targetDir);
+
+        for (const file of files) {
+            if (!this._checkFileSuffix(file, mediaSuffixs)) {
+                skipped++;
+                continue;
+            }
+            try {
+                const parsedPath = path.parse(file.name);
+                const strmPath = path.join(targetDir, `${parsedPath.name}.strm`);
+                try {
+                    await fs.access(strmPath);
+                    if (!overwrite) {
+                        skipped++;
+                        continue;
+                    }
+                } catch (error) {
+                }
+
+                const content = await contentResolver(file);
+                await fs.writeFile(strmPath, content, 'utf8');
+                if (process.getuid && process.getuid() === 0) {
+                    await fs.chown(strmPath, parseInt(this.puid), parseInt(this.pgid));
+                }
+                await fs.chmod(strmPath, 0o777);
+                success++;
+                logTaskEvent(`生成STRM文件成功: ${strmPath}`);
+            } catch (error) {
+                failed++;
+                logTaskEvent(`生成STRM文件失败: ${file.name}, 错误: ${error.message}`);
+            }
+        }
+
+        const message = `🎉自定义STRM生成完成, 总文件数: ${files.length}, 成功数: ${success}, 失败数: ${failed}, 跳过数: ${skipped}`;
+        logTaskEvent(message);
+        return message;
+    }
+
+    async generateSelectedDirectories(account, directories, options = {}) {
+        if (!alistService.Enable()) {
+            throw new Error('Alist功能未启用');
+        }
+        if (!account?.cloudStrmPrefix) {
+            throw new Error('账号未配置媒体目录');
+        }
+        const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
+        const excludeRegex = this._buildRegex(options.excludePattern);
+        const baseStartPath = account.cloudStrmPrefix.includes('/d/')
+            ? account.cloudStrmPrefix.split('/d/')[1]
+            : path.basename(account.cloudStrmPrefix);
+        const stats = {
+            success: 0,
+            failed: 0,
+            skipped: 0,
+            totalFiles: 0,
+            processedDirs: new Set()
+        };
+
+        for (const directory of directories) {
+            const relativeSourcePath = this._normalizeRelativePath(directory.path || directory.name);
+            if (!relativeSourcePath) {
+                continue;
+            }
+            const sourcePath = this._normalizeRelativePath(path.join(baseStartPath, relativeSourcePath));
+            const targetRoot = this._normalizeRelativePath(path.join(options.localPathPrefix || account.localStrmPrefix || '', relativeSourcePath));
+            if (options.overwriteExisting) {
+                await this.deleteDir(targetRoot);
+            }
+            await this._processConfiguredDirectory(
+                sourcePath,
+                account,
+                targetRoot,
+                relativeSourcePath,
+                stats,
+                mediaSuffixs,
+                !!options.overwriteExisting,
+                excludeRegex
+            );
+        }
+
+        const username = account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
+        const message = `🎉账号: ${username} 指定目录STRM生成完成\n` +
+            `处理目录数: ${stats.processedDirs.size}\n` +
+            `总文件数: ${stats.totalFiles}\n` +
+            `成功数: ${stats.success}\n` +
+            `失败数: ${stats.failed}\n` +
+            `跳过数: ${stats.skipped}`;
+        logTaskEvent(message);
+        return message;
+    }
+
     /**
      * 批量生成STRM文件 根据Alist目录
      * @param {string} startPath - 起始目录路径
@@ -262,6 +374,76 @@ class StrmService {
         }
     }
 
+    async _processConfiguredDirectory(sourcePath, account, targetRelativeRoot, relativeContentRoot, stats, mediaSuffixs, overwrite, excludeRegex) {
+        const alistResponse = await alistService.listFiles(sourcePath);
+        if (!alistResponse || !alistResponse.data) {
+            throw new Error(`获取Alist文件列表失败: ${sourcePath}`);
+        }
+        if (!alistResponse.data.content) {
+            return;
+        }
+
+        const files = alistResponse.data.content;
+        stats.processedDirs.add(sourcePath);
+        logTaskEvent(`开始处理指定目录 ${sourcePath}, 文件数量: ${files.length}`);
+
+        for (const file of files) {
+            try {
+                if (excludeRegex && excludeRegex.test(file.name)) {
+                    stats.skipped++;
+                    continue;
+                }
+                if (file.is_dir) {
+                    const nextSourcePath = this._normalizeRelativePath(path.join(sourcePath, file.name));
+                    const nextTargetRoot = this._normalizeRelativePath(path.join(targetRelativeRoot, file.name));
+                    const nextContentRoot = this._normalizeRelativePath(path.join(relativeContentRoot, file.name));
+                    await this._processConfiguredDirectory(
+                        nextSourcePath,
+                        account,
+                        nextTargetRoot,
+                        nextContentRoot,
+                        stats,
+                        mediaSuffixs,
+                        overwrite,
+                        excludeRegex
+                    );
+                    continue;
+                }
+
+                stats.totalFiles++;
+                if (!this._checkFileSuffix(file, mediaSuffixs)) {
+                    stats.skipped++;
+                    continue;
+                }
+
+                const targetDir = path.join(this.baseDir, targetRelativeRoot);
+                const parsedPath = path.parse(file.name);
+                const strmPath = path.join(targetDir, `${parsedPath.name}.strm`);
+                try {
+                    await fs.access(strmPath);
+                    if (!overwrite) {
+                        stats.skipped++;
+                        continue;
+                    }
+                } catch (error) {
+                }
+
+                await this._ensureDirectoryExists(targetDir);
+                const content = this._joinUrl(account.cloudStrmPrefix, path.join(relativeContentRoot, file.name));
+                await fs.writeFile(strmPath, content, 'utf8');
+                if (process.getuid && process.getuid() === 0) {
+                    await fs.chown(strmPath, parseInt(this.puid), parseInt(this.pgid));
+                }
+                await fs.chmod(strmPath, 0o777);
+                stats.success++;
+                logTaskEvent(`生成STRM文件成功: ${strmPath}`);
+            } catch (error) {
+                stats.failed++;
+                logTaskEvent(`处理文件失败: ${file.name}, 错误: ${error.message}`);
+            }
+        }
+    }
+
     async listStrmFiles(dirPath = '') {
         try {
             const targetPath = path.join(this.baseDir, dirPath);
@@ -278,16 +460,31 @@ class StrmService {
             for (const item of items) {
                 const fullPath = path.join(targetPath, item.name);
                 const relativePath = path.relative(this.baseDir, fullPath);
-                if (item.isFile() && !item.name.startsWith('.') && path.extname(item.name) === '.strm') {
-                    // 读取STRM文件内容
+                if (item.isDirectory() && !item.name.startsWith('.')) {
                     results.push({
-                        id: item.name,
+                        id: relativePath,
                         name: item.name,
-                        path: relativePath
+                        path: relativePath,
+                        type: 'directory'
+                    });
+                }
+                if (item.isFile() && !item.name.startsWith('.') && path.extname(item.name) === '.strm') {
+                    results.push({
+                        id: relativePath,
+                        name: item.name,
+                        path: relativePath,
+                        type: 'file'
                     });
                 }
             }
-            
+
+            results.sort((a, b) => {
+                if (a.type !== b.type) {
+                    return a.type === 'directory' ? -1 : 1;
+                }
+                return a.name.localeCompare(b.name, 'zh-CN');
+            });
+
             return results;
         } catch (error) {
             throw new Error(`列出STRM文件失败: ${error.message}`);
@@ -417,8 +614,27 @@ class StrmService {
         // 移除 base 末尾的斜杠（如果有）
         base = base.replace(/\/$/, '');
         // 移除 path 开头的斜杠（如果有）
-        path = path.replace(/^\//, '');
+        path = path.replace(/\\/g, '/').replace(/^\//, '');
         return `${base}/${path}`;
+    }
+
+    _buildRegex(pattern) {
+        if (!pattern) {
+            return null;
+        }
+        try {
+            return new RegExp(pattern, 'i');
+        } catch (error) {
+            logTaskEvent(`STRM排除规则无效，已忽略: ${pattern}`);
+            return null;
+        }
+    }
+
+    _normalizeRelativePath(targetPath = '') {
+        return targetPath
+            .replace(/\\/g, '/')
+            .replace(/^\/+|\/+$/g, '')
+            .replace(/\/{2,}/g, '/');
     }
 
     // 根据文件名获取STRM文件路径
