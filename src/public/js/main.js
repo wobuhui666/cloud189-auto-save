@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 初始化所有功能
     initTabs();
     initAccountForm();
+    initFileManager();
     initTaskForm();
     initEditTaskForm();
     // 初始化主题

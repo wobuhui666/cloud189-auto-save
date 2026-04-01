@@ -542,6 +542,206 @@ AppDataSource.initialize().then(async () => {
             res.status(500).json({ success: false, error: error.message });
         }
     });
+
+    app.get('/api/file-manager/list', async (req, res) => {
+        try {
+            const accountId = parseInt(req.query.accountId);
+            const folderId = req.query.folderId || '-11';
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            const result = await cloud189.listFiles(folderId);
+            if (!result?.fileListAO) {
+                return res.json({
+                    success: true,
+                    data: {
+                        currentFolderId: folderId,
+                        entries: []
+                    }
+                });
+            }
+
+            const folderList = (result.fileListAO.folderList || []).map((folder) => ({
+                id: String(folder.id),
+                name: folder.name,
+                isFolder: true,
+                size: Number(folder.size || 0),
+                lastOpTime: folder.lastOpTime || folder.lastModifyTime || folder.createDate || ''
+            }));
+            const fileList = (result.fileListAO.fileList || []).map((file) => ({
+                id: String(file.id),
+                name: file.name,
+                isFolder: false,
+                size: Number(file.size || 0),
+                lastOpTime: file.lastOpTime || file.lastModifyTime || file.createDate || '',
+                ext: path.extname(file.name || '').toLowerCase()
+            }));
+            const entries = [...folderList, ...fileList].sort((left, right) => {
+                if (left.isFolder !== right.isFolder) {
+                    return left.isFolder ? -1 : 1;
+                }
+                return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN');
+            });
+
+            res.json({
+                success: true,
+                data: {
+                    currentFolderId: folderId,
+                    accountType: account.accountType || 'personal',
+                    driveLabel: account.accountType === 'family' ? '家庭云' : '个人云',
+                    entries
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/file-manager/folder', async (req, res) => {
+        try {
+            const accountId = parseInt(req.body.accountId);
+            const parentFolderId = req.body.parentFolderId || '-11';
+            const folderName = String(req.body.folderName || '').trim();
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            if (!folderName) {
+                throw new Error('目录名称不能为空');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            const createResult = await cloud189.createFolder(folderName, parentFolderId);
+            if (!createResult || createResult.res_code && createResult.res_code !== 0) {
+                throw new Error(createResult?.res_msg || '创建目录失败');
+            }
+            folderCache.clearPrefix('folders_');
+            res.json({ success: true, data: createResult });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/file-manager/rename', async (req, res) => {
+        try {
+            const accountId = parseInt(req.body.accountId);
+            const fileId = String(req.body.fileId || '').trim();
+            const destFileName = String(req.body.destFileName || '').trim();
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            if (!fileId) {
+                throw new Error('文件ID不能为空');
+            }
+            if (!destFileName) {
+                throw new Error('新名称不能为空');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            const renameResult = await cloud189.renameFile(fileId, destFileName);
+            if (!renameResult || renameResult.res_code && renameResult.res_code !== 0) {
+                throw new Error(renameResult?.res_msg || '重命名失败');
+            }
+            folderCache.clearPrefix('folders_');
+            res.json({ success: true, data: renameResult });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/file-manager/delete', async (req, res) => {
+        try {
+            const accountId = parseInt(req.body.accountId);
+            const entries = Array.isArray(req.body.entries) ? req.body.entries : [];
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            if (!entries.length) {
+                throw new Error('未选择需要删除的文件');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            const folders = entries.filter((entry) => entry.isFolder);
+            const files = entries.filter((entry) => !entry.isFolder);
+            if (folders.length) {
+                await taskService.deleteCloudFile(cloud189, folders, 1);
+            }
+            if (files.length) {
+                await taskService.deleteCloudFile(cloud189, files, 0);
+            }
+            folderCache.clearPrefix('folders_');
+            res.json({ success: true, data: null });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/file-manager/move', async (req, res) => {
+        try {
+            const accountId = parseInt(req.body.accountId);
+            const targetFolderId = String(req.body.targetFolderId || '').trim();
+            const entries = Array.isArray(req.body.entries) ? req.body.entries : [];
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            if (!targetFolderId) {
+                throw new Error('目标目录不能为空');
+            }
+            if (!entries.length) {
+                throw new Error('未选择需要移动的文件');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            await taskService.moveCloudFile(cloud189, entries.map((entry) => ({
+                id: entry.id,
+                name: entry.name,
+                isFolder: entry.isFolder
+            })), targetFolderId);
+            folderCache.clearPrefix('folders_');
+            res.json({ success: true, data: null });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/file-manager/download-link', async (req, res) => {
+        try {
+            const accountId = parseInt(req.query.accountId);
+            const fileId = String(req.query.fileId || '').trim();
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            if (!fileId) {
+                throw new Error('文件ID不能为空');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            const downloadUrl = await cloud189.getDownloadLink(fileId);
+            res.json({ success: true, data: { url: downloadUrl } });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.post('/api/files/rename', async (req, res) => {
         const {taskId, accountId, files, sourceRegex, targetRegex } = req.body;
         if (files.length == 0) {

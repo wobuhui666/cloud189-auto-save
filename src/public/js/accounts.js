@@ -70,6 +70,9 @@ async function fetchAccounts(updateSelect = false) {
                 }
             }
         });
+        if (typeof updateFileManagerAccountOptions === 'function') {
+            updateFileManagerAccountOptions();
+        }
     }
 }
 

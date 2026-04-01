@@ -670,6 +670,143 @@ small {
     padding: 0;
 }
 
+.file-manager-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.file-manager-toolbar-side {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.file-manager-breadcrumbs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    background: var(--md-sys-color-surface-container-low);
+}
+
+.file-manager-breadcrumb {
+    min-height: auto;
+    padding: 4px 10px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--md-sys-color-primary);
+    font-size: 0.86rem;
+    box-shadow: none;
+}
+
+.file-manager-breadcrumb:hover {
+    transform: none;
+    background: var(--md-sys-state-hover);
+    box-shadow: none;
+}
+
+.file-manager-breadcrumb.active {
+    background: var(--md-sys-color-primary-container);
+    color: var(--md-sys-color-on-primary-container);
+}
+
+.file-manager-separator {
+    color: var(--md-sys-color-on-surface-variant);
+    font-size: 0.82rem;
+}
+
+.file-manager-search {
+    width: min(280px, 100%);
+    min-width: 220px;
+    margin: 0;
+}
+
+.file-manager-summary {
+    color: var(--md-sys-color-on-surface-variant);
+    font-size: 0.88rem;
+    text-align: right;
+}
+
+#fileManagerAccountId {
+    width: min(340px, 100%);
+    min-width: 220px;
+}
+
+.file-manager-table-wrapper {
+    overflow: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 28px;
+    background: var(--md-sys-color-surface-container-lowest);
+    box-shadow: var(--md-elevation-1);
+}
+
+#fileManagerTable {
+    margin-top: 0;
+    border-collapse: collapse;
+}
+
+#fileManagerTable thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--md-sys-color-surface-container-low);
+}
+
+#fileManagerTable th,
+#fileManagerTable td {
+    padding: 14px 16px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+    vertical-align: middle;
+}
+
+#fileManagerTable tbody tr:hover {
+    background: var(--md-sys-state-hover);
+}
+
+#fileManagerTable tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.file-manager-name {
+    min-height: auto;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-color);
+    font-size: 0.94rem;
+    font-weight: 600;
+    justify-content: flex-start;
+    box-shadow: none;
+}
+
+.file-manager-name:hover {
+    transform: none;
+    color: var(--md-sys-color-primary);
+    box-shadow: none;
+}
+
+.file-manager-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.file-manager-empty {
+    padding: 24px !important;
+    text-align: center !important;
+    color: var(--md-sys-color-on-surface-variant);
+}
+
 #taskTable,
 #accountTable {
     display: contents;
@@ -1013,6 +1150,38 @@ pre {
 
     .proxy-settings {
         grid-template-columns: 1fr;
+    }
+
+    .file-manager-toolbar {
+        align-items: stretch;
+    }
+
+    .file-manager-toolbar-side,
+    .file-manager-breadcrumbs,
+    .file-manager-summary {
+        width: 100%;
+    }
+
+    .file-manager-toolbar-side {
+        justify-content: stretch;
+    }
+
+    .file-manager-search {
+        width: 100%;
+        min-width: 0;
+    }
+
+    #fileManagerAccountId {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .file-manager-table-wrapper {
+        border-radius: 22px;
+    }
+
+    #fileManagerTable {
+        min-width: 760px;
     }
 
     .modal {

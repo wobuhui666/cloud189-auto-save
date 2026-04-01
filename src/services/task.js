@@ -1208,6 +1208,37 @@ class TaskService {
         await this.createBatchTask(cloud189, batchTaskDto)
     }
 
+    // 移动网盘文件
+    async moveCloudFile(cloud189, file, targetFolderId) {
+        if (!file) return;
+        if (!targetFolderId) {
+            throw new Error('目标目录不能为空');
+        }
+        const taskInfos = [];
+        if (Array.isArray(file)) {
+            for (const f of file) {
+                taskInfos.push({
+                    fileId: f.id,
+                    fileName: f.name,
+                    isFolder: f.isFolder ? 1 : 0
+                });
+            }
+        } else {
+            taskInfos.push({
+                fileId: file.id,
+                fileName: file.name,
+                isFolder: file.isFolder ? 1 : 0
+            });
+        }
+
+        const batchTaskDto = new BatchTaskDto({
+            taskInfos: JSON.stringify(taskInfos),
+            type: 'MOVE',
+            targetFolderId
+        });
+        await this.createBatchTask(cloud189, batchTaskDto);
+    }
+
     // 根据任务创建STRM文件
     async createStrmFileByTask(taskIds, overwrite) {
         const tasks = await this.taskRepo.find({

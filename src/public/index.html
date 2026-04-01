@@ -71,6 +71,7 @@
     <div class="container">
         <div class="tabs">
             <div class="tab" data-tab="account">账号</div>
+            <div class="tab" data-tab="fileManager">文件</div>
             <div class="tab active" data-tab="task">任务</div>
             <div class="tab" data-tab="subscription">订阅</div>
             <div class="tab" data-tab="strmConfig">STRM</div>
@@ -172,6 +173,47 @@
                             <th>媒体目录</th>
                             <th>本地目录</th>
                             <th>Emby路径替换</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="fileManagerTab" class="tab-content">
+            <div class="form-header">
+                <div class="task-operations">
+                    <div class="operation-group">
+                        <div class="button-group">
+                            <select id="fileManagerAccountId"></select>
+                            <button type="button" class="btn-default" id="fileManagerBackBtn">返回上级</button>
+                            <button type="button" class="btn-default" id="fileManagerRefreshBtn">刷新</button>
+                            <button type="button" class="btn-primary" id="fileManagerCreateFolderBtn">新建目录</button>
+                            <button type="button" class="btn-default" id="fileManagerMoveBtn">移动选中</button>
+                            <button type="button" class="btn-danger" id="fileManagerDeleteBtn">删除选中</button>
+                        </div>
+                    </div>
+                    <div class="file-manager-toolbar">
+                        <div class="file-manager-breadcrumbs" id="fileManagerBreadcrumbs"></div>
+                        <div class="file-manager-toolbar-side">
+                            <input type="search" id="fileManagerSearch" class="file-manager-search" placeholder="筛选当前目录中的文件/文件夹">
+                            <div class="file-manager-summary" id="fileManagerSummary">请选择账号后开始浏览</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="file-manager-table-wrapper">
+                <table id="fileManagerTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 48px;">
+                                <input type="checkbox" id="fileManagerSelectAll">
+                            </th>
+                            <th>名称</th>
+                            <th>类型</th>
+                            <th>大小</th>
+                            <th>更新时间</th>
+                            <th>操作</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -802,6 +844,7 @@
 <script src="js/theme.js"></script>
 <script src="js/tabs.js"></script>
 <script src="js/accounts.js"></script>
+<script src="js/fileManager.js"></script>
 <script src="js/tasks.js"></script>
 <script src="js/subscriptions.js"></script>
 <script src="js/strmConfigs.js"></script>
