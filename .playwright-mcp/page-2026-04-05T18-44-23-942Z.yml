@@ -1,0 +1,66 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: Cloud189 Auto Save Console
+      - heading "天翼自动转存" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Material Design 3 风格控制台，统一账号、任务、订阅、STRM 与系统配置管理。
+    - generic [ref=e7]:
+      - link "v2.2.44" [ref=e9] [cursor=pointer]:
+        - /url: https://github.com/1307super/cloud189-auto-save
+        - generic [ref=e11]: v2.2.44
+      - button [ref=e13] [cursor=pointer]
+  - generic [ref=e15]:
+    - generic [ref=e16]:
+      - generic [ref=e17] [cursor=pointer]: 账 账号
+      - generic [ref=e18] [cursor=pointer]: 文 文件
+      - generic [ref=e19] [cursor=pointer]: 任 任务
+      - generic [ref=e20] [cursor=pointer]: 剧 自动追剧
+      - generic [ref=e21] [cursor=pointer]: 整 整理器
+      - generic [ref=e22] [cursor=pointer]: 订 订阅
+      - generic [ref=e23] [cursor=pointer]: 链 STRM
+      - generic [ref=e24] [cursor=pointer]: 媒 媒体
+      - generic [ref=e25] [cursor=pointer]: 系 系统
+    - text: 当前暂无数据，完成配置后这里会显示内容。
+    - generic [ref=e26]:
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - generic [ref=e30]:
+            - button "创建任务" [ref=e31] [cursor=pointer]
+            - button "更多操作 ▼" [ref=e33] [cursor=pointer]:
+              - text: 更多操作
+              - generic [ref=e34]: ▼
+          - generic [ref=e35]:
+            - combobox [ref=e37]:
+              - option "全部任务" [selected]
+              - option "追剧中"
+              - option "已完结"
+              - option "失败"
+              - option "等待中"
+            - generic [ref=e38]:
+              - textbox "搜索资源名称/账号/备注" [ref=e39]
+              - button "刷新" [ref=e40] [cursor=pointer]:
+                - img "刷新" [ref=e41]
+        - generic [ref=e42]:
+          - generic [ref=e43] [cursor=pointer]:
+            - checkbox "全选" [ref=e44]
+            - generic [ref=e45]: 全选
+          - generic [ref=e46] [cursor=pointer]:
+            - checkbox "同步删除网盘" [ref=e47]
+            - generic [ref=e48]: 同步删除网盘
+      - table [ref=e50]:
+        - rowgroup [ref=e51]: 当前还没有任务，点击上方“创建任务”开始使用。
+  - text: 当前暂无数据，完成配置后这里会显示内容。 当前暂无数据，完成配置后这里会显示内容。
+  - generic [ref=e52]:
+    - generic:
+      - generic "CloudSaver":
+        - img "CloudSaver"
+      - generic "AI助手":
+        - img "AI Chat"
+      - generic "STRM生成器":
+        - img "STRM"
+      - generic "自定义推送":
+        - img "自定义推送"
+      - generic "查看日志":
+        - img "查看日志"
+    - generic "更多" [ref=e53] [cursor=pointer]:
+      - img "更多" [ref=e54]

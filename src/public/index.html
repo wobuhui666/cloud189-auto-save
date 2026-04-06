@@ -32,8 +32,9 @@
     <link rel="stylesheet" href="css/floating-btn.css">
     <link rel="stylesheet" href="css/cloudsaver.css">
     <link rel="stylesheet" href="css/chat.css">
+    <link rel="stylesheet" href="css/redesign.css">
 </head>
-<body>
+<body class="dashboard-page">
     <div class="header">
         <div class="header-title-group">
             <div class="header-overline">Cloud189 Auto Save Console</div>
@@ -68,17 +69,17 @@
             </div>
         </div>
     </div>
-    <div class="container">
+    <div class="container app-shell">
         <div class="tabs">
-            <div class="tab" data-tab="account">账号</div>
-            <div class="tab" data-tab="fileManager">文件</div>
-            <div class="tab active" data-tab="task">任务</div>
-            <div class="tab" data-tab="autoSeries">自动追剧</div>
-            <div class="tab" data-tab="organizer">整理器</div>
-            <div class="tab" data-tab="subscription">订阅</div>
-            <div class="tab" data-tab="strmConfig">STRM</div>
-            <div class="tab" data-tab="media">媒体</div>
-            <div class="tab" data-tab="settings">系统</div>
+            <div class="tab" data-tab="account" data-icon="账">账号</div>
+            <div class="tab" data-tab="fileManager" data-icon="文">文件</div>
+            <div class="tab active" data-tab="task" data-icon="任">任务</div>
+            <div class="tab" data-tab="autoSeries" data-icon="剧">自动追剧</div>
+            <div class="tab" data-tab="organizer" data-icon="整">整理器</div>
+            <div class="tab" data-tab="subscription" data-icon="订">订阅</div>
+            <div class="tab" data-tab="strmConfig" data-icon="链">STRM</div>
+            <div class="tab" data-tab="media" data-icon="媒">媒体</div>
+            <div class="tab" data-tab="settings" data-icon="系">系统</div>
         </div>
 
         <div id="accountTab" class="tab-content">
@@ -1392,7 +1393,7 @@
         <div class="floating-btn" onclick="showCloudsaver()" title="CloudSaver">
             <img src="icons/cloudsaver.svg" alt="CloudSaver" style="filter:none">
         </div>
-        <div class="floating-btn" onclick="showAIChat()" title="AI助手" style="bottom: 100px;">
+        <div class="floating-btn" onclick="showAIChat()" title="AI助手">
             <img src="icons/ai.svg" alt="AI Chat">
         </div>
         <div class="floating-btn" onclick="openStrmModal()" title="STRM生成器">

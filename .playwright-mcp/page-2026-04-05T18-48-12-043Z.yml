@@ -1,0 +1,62 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: Cloud189 Auto Save Console
+      - heading "天翼自动转存" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Material Design 3 风格控制台，统一账号、任务、订阅、STRM 与系统配置管理。
+    - button [ref=e9] [cursor=pointer]
+  - generic [ref=e11]:
+    - generic [ref=e12]:
+      - generic [ref=e13] [cursor=pointer]: 账 账号
+      - generic [ref=e14] [cursor=pointer]: 文 文件
+      - generic [ref=e15] [cursor=pointer]: 任 任务
+      - generic [ref=e16] [cursor=pointer]: 剧 自动追剧
+      - generic [ref=e17] [cursor=pointer]: 整 整理器
+      - generic [ref=e18] [cursor=pointer]: 订 订阅
+      - generic [ref=e19] [cursor=pointer]: 链 STRM
+      - generic [ref=e20] [cursor=pointer]: 媒 媒体
+      - generic [ref=e21] [cursor=pointer]: 系 系统
+    - text: 当前暂无数据，完成配置后这里会显示内容。
+    - generic [ref=e22]:
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - generic [ref=e26]:
+            - button "创建任务" [ref=e27] [cursor=pointer]
+            - button "更多操作 ▼" [ref=e29] [cursor=pointer]:
+              - text: 更多操作
+              - generic [ref=e30]: ▼
+          - generic [ref=e31]:
+            - combobox [ref=e33]:
+              - option "全部任务" [selected]
+              - option "追剧中"
+              - option "已完结"
+              - option "失败"
+              - option "等待中"
+            - generic [ref=e34]:
+              - textbox "搜索资源名称/账号/备注" [ref=e35]
+              - button "刷新" [ref=e36] [cursor=pointer]:
+                - img "刷新" [ref=e37]
+        - generic [ref=e38]:
+          - generic [ref=e39] [cursor=pointer]:
+            - checkbox "全选" [ref=e40]
+            - generic [ref=e41]: 全选
+          - generic [ref=e42] [cursor=pointer]:
+            - checkbox "同步删除网盘" [ref=e43]
+            - generic [ref=e44]: 同步删除网盘
+      - table [ref=e46]:
+        - rowgroup [ref=e47]: 当前还没有任务，点击上方“创建任务”开始使用。
+  - text: 当前暂无数据，完成配置后这里会显示内容。 当前暂无数据，完成配置后这里会显示内容。
+  - generic [ref=e48]:
+    - generic:
+      - generic "CloudSaver":
+        - img "CloudSaver"
+      - generic "AI助手":
+        - img "AI Chat"
+      - generic "STRM生成器":
+        - img "STRM"
+      - generic "自定义推送":
+        - img "自定义推送"
+      - generic "查看日志":
+        - img "查看日志"
+    - generic "更多" [ref=e49] [cursor=pointer]:
+      - img "更多" [ref=e50]

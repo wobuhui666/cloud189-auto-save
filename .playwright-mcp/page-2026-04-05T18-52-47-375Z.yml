@@ -1,0 +1,200 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: Cloud189 Auto Save Console
+      - heading "天翼自动转存" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Material Design 3 风格控制台，统一账号、任务、订阅、STRM 与系统配置管理。
+    - generic [ref=e7]:
+      - link "v2.2.44" [ref=e9] [cursor=pointer]:
+        - /url: https://github.com/1307super/cloud189-auto-save
+        - generic [ref=e11]: v2.2.44
+      - generic [ref=e12]:
+        - button [active] [ref=e13] [cursor=pointer]
+        - generic [ref=e203]:
+          - generic [ref=e204]: 默认
+          - generic [ref=e206]: 暗黑
+          - generic [ref=e208]: 自动
+  - generic [ref=e14]:
+    - generic [ref=e15]:
+      - generic [ref=e16] [cursor=pointer]: 账 账号
+      - generic [ref=e17] [cursor=pointer]: 文 文件
+      - generic [ref=e18] [cursor=pointer]: 任 任务
+      - generic [ref=e19] [cursor=pointer]: 剧 自动追剧
+      - generic [ref=e20] [cursor=pointer]: 整 整理器
+      - generic [ref=e21] [cursor=pointer]: 订 订阅
+      - generic [ref=e22] [cursor=pointer]: 链 STRM
+      - generic [ref=e23] [cursor=pointer]: 媒 媒体
+      - generic [ref=e24] [cursor=pointer]: 系 系统
+    - text: 当前暂无数据，完成配置后这里会显示内容。 当前还没有任务，点击上方“创建任务”开始使用。
+    - generic [ref=e75]:
+      - generic [ref=e76]:
+        - generic [ref=e77]: 系统apiKey
+        - generic [ref=e78]:
+          - textbox "系统apiKey" [ref=e79]
+          - button "生成Key" [ref=e80] [cursor=pointer]
+        - text: 系统apiKey, 可用于第三方调用接口使用。生成后请及时保存设置。
+      - generic [ref=e81]:
+        - generic [ref=e82]: 任务设置
+        - generic [ref=e83]:
+          - generic [ref=e84]:
+            - generic [ref=e85]: 任务过期天数
+            - spinbutton "任务过期天数" [ref=e86]: "3"
+            - generic [ref=e87]: 超过指定天数未新增资源的任务将状态改为已完成
+          - generic [ref=e88]:
+            - generic [ref=e89]: 最大重试次数
+            - spinbutton "最大重试次数" [ref=e90]: "3"
+            - generic [ref=e91]: 任务执行失败时的最大重试次数
+          - generic [ref=e92]:
+            - generic [ref=e93]: 重试间隔（秒）
+            - spinbutton "重试间隔（秒）" [ref=e94]: "300"
+            - generic [ref=e95]: 任务重试的时间间隔
+          - generic [ref=e96]:
+            - generic [ref=e97]: 任务定时检查
+            - textbox "Cron表达式" [ref=e98]: 0 19-23 * * *
+            - generic [ref=e99]: "默认：0 19-23 * * * (每天19点到23点整点执行一次) 允许多个表达式, 使用|分隔, 例如: 0 19-23 * * *|0 16-23 * * *"
+          - generic [ref=e100]:
+            - generic [ref=e101]:
+              - checkbox "自动清空个人回收站" [ref=e102]
+              - text: 自动清空个人回收站
+            - generic [ref=e103]:
+              - checkbox "自动清空回家庭收站" [ref=e104]
+              - text: 自动清空回家庭收站
+            - textbox "Cron表达式" [ref=e105]: 0 */8 * * *
+            - generic [ref=e106]: 默认：0 */8 * * * (每8小时)
+          - generic [ref=e107]:
+            - generic [ref=e108]: 媒体文件后缀
+            - textbox "媒体文件后缀" [ref=e109]:
+              - /placeholder: "例如: .mp4, .mkv"
+              - text: .mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov
+            - generic [ref=e110]: 仅用于计算当前已转存集数,其他文件一样会转存。当任务总集数填写后,会根据当前填写的后缀匹配媒体文件,满足后缀的文件会计入已更新数。
+            - generic [ref=e111]:
+              - checkbox "仅转存指定后缀的媒体文件" [ref=e112]
+              - text: 仅转存指定后缀的媒体文件
+          - generic [ref=e113]:
+            - generic [ref=e114]:
+              - checkbox "云盘文件夹不存在时自动创建" [ref=e115]
+              - text: 云盘文件夹不存在时自动创建
+            - generic [ref=e116]: 当天翼云盘中任务更新目录不存在的时候, 自动创建文件夹, 仅会创建最后一级文件夹
+          - generic [ref=e117]:
+            - generic [ref=e118]: 自动追剧默认配置
+            - combobox [ref=e119]:
+              - option "请选择默认账号" [selected]
+            - generic [ref=e120]:
+              - textbox "请选择默认保存目录" [ref=e122]
+              - button "选择目录" [ref=e123] [cursor=pointer]
+            - generic [ref=e124]: “自动追剧”入口只输入剧名时，会直接使用这里配置的默认账号和保存目录。
+      - generic [ref=e125]:
+        - generic [ref=e126]: 消息推送设置
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - checkbox "企微 推送" [ref=e130]
+            - text: 企微 推送
+          - textbox "机器人webhook" [ref=e131]
+          - generic [ref=e132]:
+            - checkbox "Telegram 推送" [ref=e133]
+            - text: Telegram 推送
+          - textbox "反代地址, 选填" [ref=e134]
+          - generic [ref=e135]: Bot Token
+          - textbox "Bot Token" [ref=e136]
+          - generic [ref=e137]: Chat ID
+          - textbox "Chat ID Token Chat ID" [ref=e138]:
+            - /placeholder: Chat ID
+          - generic [ref=e139]:
+            - checkbox "WXPusher 推送" [ref=e140]
+            - text: WXPusher 推送
+          - textbox "WXPusher SPT" [ref=e141]
+          - generic [ref=e142]:
+            - checkbox "Bark 推送" [ref=e143]
+            - text: Bark 推送
+          - textbox "Bark serverUrl" [ref=e144]
+          - textbox "Bark key" [ref=e145]
+          - generic [ref=e146]:
+            - checkbox "PushPlus 推送" [ref=e147]
+            - text: PushPlus 推送
+          - generic [ref=e148]: Token
+          - textbox "Token" [ref=e149]:
+            - /placeholder: PushPlus Token
+          - generic [ref=e150]: 群组编码
+          - textbox "群组编码" [ref=e151]:
+            - /placeholder: 群组编码, 不填仅给自己发送
+          - generic [ref=e152]: 推送渠道
+          - combobox "推送渠道" [ref=e153]:
+            - option "微信公众号" [selected]
+            - option "WebHook"
+            - option "企业微信"
+            - option "短信"
+            - option "邮件"
+          - generic [ref=e154]: Webhook(选填)
+          - textbox "Webhook(选填)" [ref=e155]:
+            - /placeholder: 仅在选择 WebHook 渠道时需要填写
+          - generic [ref=e156]: 好友令牌(选填)
+          - textbox "好友令牌(选填)" [ref=e157]:
+            - /placeholder: 好友令牌
+      - generic [ref=e158]:
+        - generic [ref=e159]: Telegram 机器人
+        - generic [ref=e160]:
+          - generic [ref=e161]:
+            - checkbox "点亮 TG 创任务" [ref=e162]
+            - text: 点亮 TG 创任务
+          - generic [ref=e163]: Token
+          - textbox "Bot Token" [ref=e164]
+          - generic [ref=e165]: Chat ID
+          - textbox "Chat ID" [ref=e166]
+          - generic [ref=e167]: 点亮后即可通过TG机器人管理任务。
+      - generic [ref=e168]:
+        - generic [ref=e169]: 代理设置
+        - generic [ref=e170]:
+          - generic [ref=e171]:
+            - 'textbox "代理地址: 127.0.0.1" [ref=e172]'
+            - spinbutton [ref=e173]
+            - textbox "账号 如果有" [ref=e174]
+            - textbox "密码 如果有" [ref=e175]
+          - generic [ref=e176]:
+            - generic [ref=e177]: 启用代理的服务：
+            - generic [ref=e178]:
+              - generic [ref=e179] [cursor=pointer]:
+                - checkbox "Telegram" [checked] [ref=e180]
+                - generic [ref=e181]: Telegram
+              - generic [ref=e182] [cursor=pointer]:
+                - checkbox "TMDB" [checked] [ref=e183]
+                - generic [ref=e184]: TMDB
+              - generic [ref=e185] [cursor=pointer]:
+                - checkbox "OpenAI" [ref=e186]
+                - generic [ref=e187]: OpenAI
+              - generic [ref=e188] [cursor=pointer]:
+                - checkbox "天翼" [ref=e189]
+                - generic [ref=e190]: 天翼
+              - generic [ref=e191] [cursor=pointer]:
+                - checkbox "自定义推送" [ref=e192]
+                - generic [ref=e193]: 自定义推送
+      - generic [ref=e194]:
+        - generic [ref=e195]: 用户名密码设置
+        - generic [ref=e196]:
+          - textbox "登录账号" [ref=e197]: admin
+          - textbox "登录密码" [ref=e198]: admin
+      - generic [ref=e199]:
+        - generic [ref=e200]: 系统访问地址
+        - textbox "系统访问地址" [ref=e201]:
+          - /placeholder: "例如: http://192.168.1.10:3000"
+        - text: 用于生成系统中转型 STRM 链接，请填写播放器和媒体服务器实际能够访问到的地址。
+      - button "保存设置" [ref=e202] [cursor=pointer]
+  - text: 当前暂无数据，完成配置后这里会显示内容。 当前暂无数据，完成配置后这里会显示内容。
+  - generic [ref=e51]:
+    - generic:
+      - generic "CloudSaver":
+        - text: CloudSaver
+        - img "CloudSaver"
+      - generic "AI助手":
+        - text: AI助手
+        - img "AI Chat"
+      - generic "STRM生成器":
+        - text: STRM生成器
+        - img "STRM"
+      - generic "自定义推送":
+        - text: 自定义推送
+        - img "自定义推送"
+      - generic "查看日志":
+        - text: 查看日志
+        - img "查看日志"
+    - generic "更多" [ref=e52] [cursor=pointer]:
+      - img "更多" [ref=e53]
