@@ -1222,6 +1222,111 @@ class TaskService {
         }
     }
 
+    async cleanupLazyTransferredFiles() {
+        const enabled = ConfigService.getConfigValue('task.enableAutoCleanLazyFiles');
+        const retentionHours = Number(ConfigService.getConfigValue('task.lazyFileRetentionHours'));
+        if (!enabled) {
+            return [];
+        }
+        if (!Number.isFinite(retentionHours) || retentionHours <= 0) {
+            logTaskEvent('自动清理懒转存文件已跳过: 保留时长配置无效');
+            return [];
+        }
+
+        const tasks = await this.taskRepo.find({
+            where: {
+                enableLazyStrm: true
+            },
+        });
+        if (!tasks.length) {
+            return [];
+        }
+
+        const cutoffTime = Date.now() - retentionHours * 60 * 60 * 1000;
+        const messages = [];
+        logTaskEvent(`开始自动清理懒转存文件, 保留时长: ${retentionHours} 小时, 任务数: ${tasks.length}`);
+
+        for (const task of tasks) {
+            try {
+                const result = await this._cleanupLazyTransferredFilesByTask(task, cutoffTime);
+                if (result) {
+                    messages.push(result);
+                }
+            } catch (error) {
+                logTaskEvent(`任务[${task.resourceName}]自动清理懒转存文件失败: ${error.message}`);
+            }
+        }
+
+        if (messages.length > 0) {
+            this.messageUtil.sendMessage(messages.join('\n\n'));
+        }
+        return messages;
+    }
+
+    async _cleanupLazyTransferredFilesByTask(task, cutoffTime) {
+        if (!task?.enableLazyStrm || !task?.realFolderId) {
+            return '';
+        }
+        const account = await this._getAccountById(task.accountId);
+        if (!account) {
+            throw new Error('账号不存在');
+        }
+        task.account = account;
+        const cloud189 = Cloud189Service.getInstance(account);
+        const allFiles = await this.getAllFolderFiles(cloud189, task);
+        if (!allFiles.length) {
+            return '';
+        }
+
+        const expiredFiles = allFiles.filter(file => this._isLazyTransferredFileExpired(file, cutoffTime));
+        if (!expiredFiles.length) {
+            return '';
+        }
+
+        await this.deleteCloudFile(cloud189, expiredFiles, 0);
+        await this._cleanupEmptyLazyFolders(cloud189, task.realFolderId, true);
+        const taskName = task.shareFolderName ? `${task.resourceName}/${task.shareFolderName}` : task.resourceName;
+        const message = `任务[${taskName}]自动清理懒转存文件 ${expiredFiles.length} 个`;
+        logTaskEvent(message);
+        return message;
+    }
+
+    _isLazyTransferredFileExpired(file, cutoffTime) {
+        const timeValue = file.lastOpTime || file.lastUpdateTime || file.updateTime || file.createTime;
+        if (!timeValue) {
+            return false;
+        }
+        const fileTime = new Date(timeValue).getTime();
+        if (Number.isNaN(fileTime)) {
+            return false;
+        }
+        return fileTime < cutoffTime;
+    }
+
+    async _cleanupEmptyLazyFolders(cloud189, folderId, preserveCurrent = false) {
+        const folderInfo = await cloud189.listFiles(folderId);
+        if (!folderInfo?.fileListAO) {
+            return false;
+        }
+
+        const folders = folderInfo.fileListAO.folderList || [];
+        for (const folder of folders) {
+            await this._cleanupEmptyLazyFolders(cloud189, folder.id, false);
+        }
+
+        const refreshedInfo = await cloud189.listFiles(folderId);
+        if (!refreshedInfo?.fileListAO) {
+            return false;
+        }
+        const hasFiles = (refreshedInfo.fileListAO.fileList || []).length > 0;
+        const hasFolders = (refreshedInfo.fileListAO.folderList || []).length > 0;
+        if (!preserveCurrent && !hasFiles && !hasFolders) {
+            await this.deleteCloudFile(cloud189, { id: folderId, name: '' }, 1);
+            return true;
+        }
+        return false;
+    }
+
     // 执行清空回收站
     async _clearRecycleBin(cloud189, username, enableAutoClearRecycle, enableAutoClearFamilyRecycle) {
         const params = {

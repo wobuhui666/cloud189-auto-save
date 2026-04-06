@@ -10,10 +10,13 @@ class ConfigService {
         taskExpireDays: 3,
         taskCheckCron: '0 19-23 * * *',
         cleanRecycleCron: '0 */8 * * *',
+        lazyFileCleanupCron: '0 */6 * * *',
         maxRetries: 3,        // 最大重试次数
         retryInterval: 300,   // 重试间隔（秒）
         enableAutoClearRecycle: false,
         enableAutoClearFamilyRecycle: false,
+        enableAutoCleanLazyFiles: false,
+        lazyFileRetentionHours: 24,
         mediaSuffix: '.mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov', // 媒体文件后缀
         enableOnlySaveMedia: false, // 只保存媒体文件
         // 文件夹不存在时重新创建

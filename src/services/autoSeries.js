@@ -107,25 +107,48 @@ class AutoSeriesService {
             throw new Error('默认账号未配置本地STRM目录，无法执行懒转存模式');
         }
 
-        const result = await this.lazyShareStrmService.generateFromShare({
+        const autoCreateConfig = ConfigService.getConfigValue('task.autoCreate', {});
+        const targetFolder = String(autoCreateConfig.targetFolder || '').trim();
+        const totalEpisodes = tmdbInfo?.status === 'Ended'
+            ? Number(tmdbInfo?.lastEpisodeToAir?.episode_number || 0)
+            : 0;
+
+        const tasks = await this.taskService.createTask({
             accountId: account.id,
-            targetFolderId,
-            localPathPrefix: account.localStrmPrefix,
             shareLink: resource.cloudLinks[0].link,
-            accessCode: '',
-            overwriteExisting: false
+            totalEpisodes,
+            targetFolderId,
+            targetFolder,
+            matchPattern: '',
+            matchOperator: 'lt',
+            matchValue: '',
+            overwriteFolder: 0,
+            remark: '自动追剧',
+            taskGroup: '自动追剧',
+            enableCron: false,
+            cronExpression: '',
+            selectedFolders: [],
+            sourceRegex: '',
+            targetRegex: '',
+            taskName,
+            tmdbId: tmdbInfo?.id ? String(tmdbInfo.id) : null,
+            enableTaskScraper: false,
+            enableLazyStrm: true,
+            enableOrganizer: true
         });
 
+        for (const task of tasks || []) {
+            await this.taskService.processTask(task);
+        }
+
         return {
-            taskCount: 0,
+            taskCount: tasks?.length || 0,
             resourceTitle: resource.title,
             shareLink: resource.cloudLinks[0].link,
             taskName,
             tmdbId: tmdbInfo?.id || null,
             mode: 'lazy',
-            message: result.message,
-            fileCount: result.fileCount,
-            rootName: result.rootName
+            taskIds: (tasks || []).map(task => task.id)
         };
     }
 

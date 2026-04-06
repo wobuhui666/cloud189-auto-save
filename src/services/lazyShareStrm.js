@@ -6,6 +6,8 @@ const { Cloud189Service } = require('./cloud189');
 const { StrmService } = require('./strm');
 const { BatchTaskDto } = require('../dto/BatchTaskDto');
 const { StreamProxyService } = require('./streamProxy');
+const AIService = require('./ai');
+const { OrganizerService } = require('./organizer');
 
 class LazyShareStrmService {
     constructor(accountRepo, taskService) {
@@ -13,6 +15,7 @@ class LazyShareStrmService {
         this.taskService = taskService;
         this.strmService = new StrmService();
         this.streamProxyService = new StreamProxyService();
+        this.organizerService = new OrganizerService(taskService);
         this.cache = new Map();
         this.inflight = new Map();
         this.cacheTtlMs = 60 * 1000;
@@ -55,27 +58,32 @@ class LazyShareStrmService {
         }
 
         const rootName = shareData.shareInfo.isFolder ? shareData.shareInfo.fileName : '';
-        const groups = this._groupEntriesByRelativeDir(mediaEntries);
+        const organized = await this._buildStrmLayout({
+            localPathPrefix,
+            resourceName: params.resourceName || shareData.shareInfo.fileName,
+            rootName,
+            files: mediaEntries,
+            tmdbInfo: params.tmdbInfo || null,
+            enableOrganizer: !!params.enableOrganizer,
+            task: null
+        });
 
-        for (const [relativeDir, files] of groups.entries()) {
-            const targetRoot = this._normalizeRelativePath(path.join(localPathPrefix, rootName, relativeDir));
-            await this.strmService.generateCustom(
-                targetRoot,
-                files,
-                async (file) => this.streamProxyService.buildStreamUrl({
-                    type: 'lazyShare',
-                    accountId,
-                    shareId: shareData.shareInfo.shareId,
-                    fileId: file.id,
-                    fileName: file.name,
-                    targetFolderId,
-                    rootName,
-                    relativeDir
-                }),
-                overwriteExisting,
-                false
-            );
-        }
+        await this.strmService.generateCustom(
+            organized.targetRoot,
+            organized.files,
+            async (file) => this.streamProxyService.buildStreamUrl({
+                type: 'lazyShare',
+                accountId,
+                shareId: shareData.shareInfo.shareId,
+                fileId: file.id,
+                fileName: file.sourceFileName || file.name,
+                targetFolderId,
+                rootName,
+                relativeDir: file.sourceRelativeDir || ''
+            }),
+            overwriteExisting,
+            false
+        );
 
         const message = `懒转存STRM生成完成，资源: ${shareData.shareInfo.fileName}，文件数: ${mediaEntries.length}`;
         logTaskEvent(message);
@@ -119,18 +127,27 @@ class LazyShareStrmService {
             throw new Error('任务当前没有可生成懒转存STRM的媒体文件');
         }
 
-        await this.strmService.generateCustom(
+        const organized = await this._buildStrmLayout({
             localPathPrefix,
-            mediaEntries,
+            resourceName: task.resourceName,
+            rootName: '',
+            files: mediaEntries,
+            enableOrganizer: !!task.enableOrganizer,
+            task
+        });
+
+        await this.strmService.generateCustom(
+            organized.targetRoot,
+            organized.files,
             async (file) => this.streamProxyService.buildStreamUrl({
                 type: 'lazyShare',
                 accountId,
                 shareId,
                 fileId: file.id,
-                fileName: file.name,
+                fileName: file.sourceFileName || file.name,
                 targetFolderId,
                 rootName: '',
-                relativeDir: ''
+                relativeDir: file.sourceRelativeDir || ''
             }),
             overwriteExisting,
             true
@@ -279,6 +296,102 @@ class LazyShareStrmService {
             groups.get(relativeDir).push(entry);
         }
         return groups;
+    }
+
+    async _buildStrmLayout({ localPathPrefix, resourceName, rootName = '', files = [], tmdbInfo = null, enableOrganizer = false, task = null }) {
+        const normalizedLocalPathPrefix = this._normalizeRelativePath(localPathPrefix);
+        const fallbackRootName = this._normalizeRelativePath(rootName);
+        const normalizedResourceName = String(resourceName || rootName || '').trim();
+        const preparedFiles = files.map(file => ({
+            ...file,
+            relativeDir: this._normalizeRelativePath(file.relativeDir || ''),
+            sourceRelativeDir: this._normalizeRelativePath(file.relativeDir || ''),
+            sourceFileName: file.sourceFileName || file.name
+        }));
+
+        if (!enableOrganizer) {
+            return {
+                targetRoot: this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, fallbackRootName)),
+                files: preparedFiles
+            };
+        }
+
+        let resourceInfo = null;
+        if (AIService.isEnabled()) {
+            try {
+                resourceInfo = await this.taskService._analyzeResourceInfo(
+                    normalizedResourceName,
+                    preparedFiles.map(file => ({ id: file.id, name: file.name })),
+                    'file'
+                );
+            } catch (error) {
+                logTaskEvent(`懒转存整理分析失败，已回退基础分类: ${error.message}`);
+            }
+        }
+
+        let resolvedTmdbInfo = tmdbInfo || this._parseTaskTmdbContent(task?.tmdbContent);
+        if (!resolvedTmdbInfo && task?.tmdbId) {
+            try {
+                resolvedTmdbInfo = await this.organizerService._resolveTmdbInfo(task, resourceInfo || {
+                    name: normalizedResourceName,
+                    type: 'tv',
+                    year: ''
+                });
+            } catch (error) {
+                logTaskEvent(`懒转存整理获取TMDB失败，已回退基础分类: ${error.message}`);
+            }
+        }
+
+        if (!resourceInfo && !resolvedTmdbInfo) {
+            return {
+                targetRoot: this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, fallbackRootName)),
+                files: preparedFiles
+            };
+        }
+
+        const taskLike = {
+            resourceName: normalizedResourceName || fallbackRootName || task?.resourceName || ''
+        };
+        const libraryInfo = this.organizerService._resolveLibraryInfo(taskLike, resourceInfo || null, resolvedTmdbInfo || null);
+        const template = resourceInfo?.type === 'movie'
+            ? ConfigService.getConfigValue('openai.rename.movieTemplate') || '{name} ({year}){ext}'
+            : ConfigService.getConfigValue('openai.rename.template') || '{name} - {se}{ext}';
+        const episodeMap = new Map((resourceInfo?.episode || []).map(item => [String(item.id), item]));
+
+        const organizedFiles = preparedFiles.map(file => {
+            const aiFile = episodeMap.get(String(file.id));
+            const targetName = aiFile
+                ? this.taskService._generateFileName(file, aiFile, resourceInfo, template)
+                : file.name;
+            const targetRelativeDir = this.organizerService._buildTargetRelativeDir(
+                { ...file, name: targetName },
+                aiFile,
+                resourceInfo || { type: libraryInfo.mediaType || 'tv' },
+                libraryInfo
+            );
+            return {
+                ...file,
+                name: targetName,
+                relativeDir: this._normalizeRelativePath(targetRelativeDir)
+            };
+        });
+
+        return {
+            targetRoot: this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, libraryInfo.categoryName, libraryInfo.resourceFolderName)),
+            files: organizedFiles
+        };
+    }
+
+    _parseTaskTmdbContent(tmdbContent) {
+        if (!tmdbContent) {
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(tmdbContent);
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (error) {
+            return null;
+        }
     }
 
     _normalizeRelativePath(targetPath = '') {

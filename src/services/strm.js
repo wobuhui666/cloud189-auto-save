@@ -18,12 +18,45 @@ class StrmService {
         this.streamProxyService = new StreamProxyService();
     }
 
+    _normalizeBaseRelativePath(targetPath = '') {
+        const normalizedBaseDir = path.normalize(this.baseDir);
+        const normalizedTargetPath = path.normalize(String(targetPath || '').trim());
+        if (!normalizedTargetPath || normalizedTargetPath === '.') {
+            return '';
+        }
+
+        if (normalizedTargetPath === normalizedBaseDir) {
+            return '';
+        }
+
+        const baseWithSep = normalizedBaseDir.endsWith(path.sep)
+            ? normalizedBaseDir
+            : `${normalizedBaseDir}${path.sep}`;
+        if (normalizedTargetPath.startsWith(baseWithSep)) {
+            return path.relative(normalizedBaseDir, normalizedTargetPath);
+        }
+
+        const baseName = path.basename(normalizedBaseDir);
+        const marker = `${path.sep}${baseName}${path.sep}`;
+        const markerIndex = normalizedTargetPath.lastIndexOf(marker);
+        if (markerIndex >= 0) {
+            return normalizedTargetPath.substring(markerIndex + marker.length);
+        }
+        if (normalizedTargetPath.endsWith(`${path.sep}${baseName}`)) {
+            return '';
+        }
+
+        return normalizedTargetPath.replace(/^([/\\])+/, '');
+    }
+
+    _resolveBasePath(targetPath = '') {
+        return path.join(this.baseDir, this._normalizeBaseRelativePath(targetPath));
+    }
+
     // 确保目录存在并设置权限和组，递归创建的所有目录都设置为 777 权限
     async _ensureDirectoryExists(dirPath) {
         // 确保使用相对路径
-        const relativePath = dirPath.startsWith(this.baseDir) 
-            ? path.relative(this.baseDir, dirPath)
-            : dirPath;
+        const relativePath = this._normalizeBaseRelativePath(dirPath);
             
         const parts = relativePath.split(path.sep);
         let currentPath = this.baseDir;  // 从基础目录开始
@@ -69,13 +102,13 @@ class StrmService {
             let taskName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1)
             // 去掉头尾/
             taskName = taskName.replace(/^\/|\/$/g, '');
-            const targetDir = path.join(this.baseDir,task.account.localStrmPrefix, taskName);
+            const targetDir = this._resolveBasePath(path.join(task.account.localStrmPrefix, taskName));
             const mediaFiles = files.filter(file => this._checkFileSuffix(file, mediaSuffixs));
             const expectedStrmPaths = new Set(
                 mediaFiles.map(file => this._buildRelativeStrmPath(file.relativeDir || '', file.name))
             );
             if (compare) {
-                const strmFiles = await this._listStrmFilesRecursive(path.join(task.account.localStrmPrefix, taskName));
+                const strmFiles = await this._listStrmFilesRecursive(this._normalizeBaseRelativePath(path.join(task.account.localStrmPrefix, taskName)));
                 for (const file of strmFiles) {
                     if (!expectedStrmPaths.has(file.relativePath)) {
                         await this.delete(file.path);
@@ -175,15 +208,21 @@ class StrmService {
             return;
         }
         const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
-        const targetDir = path.join(this.baseDir, targetRoot.replace(/^\/+|\/+$/g, ''));
+        const normalizedTargetRoot = this._normalizeBaseRelativePath(targetRoot);
+        const targetDir = this._resolveBasePath(normalizedTargetRoot);
         let success = 0;
         let failed = 0;
         let skipped = 0;
 
+        const mediaFiles = files.filter(file => this._checkFileSuffix(file, mediaSuffixs));
+        const expectedStrmPaths = new Set(
+            mediaFiles.map(file => this._buildRelativeStrmPath(file.relativeDir || '', file.name))
+        );
+
         if (compare) {
-            const strmFiles = await this.listStrmFiles(targetRoot);
-            for (const file of strmFiles.filter(item => item.type === 'file')) {
-                if (!files.some(entry => path.parse(entry.name).name === path.parse(file.name).name)) {
+            const strmFiles = await this._listStrmFilesRecursive(normalizedTargetRoot);
+            for (const file of strmFiles) {
+                if (!expectedStrmPaths.has(file.relativePath)) {
                     await this.delete(file.path);
                 }
             }
@@ -198,8 +237,9 @@ class StrmService {
                 continue;
             }
             try {
-                const parsedPath = path.parse(file.name);
-                const strmPath = path.join(targetDir, `${parsedPath.name}.strm`);
+                const strmRelativePath = this._buildRelativeStrmPath(file.relativeDir || '', file.name);
+                const strmPath = path.join(targetDir, strmRelativePath);
+                await this._ensureDirectoryExists(path.dirname(strmPath));
                 try {
                     await fs.access(strmPath);
                     if (!overwrite) {
@@ -476,7 +516,7 @@ class StrmService {
 
     async listStrmFiles(dirPath = '') {
         try {
-            const targetPath = path.join(this.baseDir, dirPath);
+            const targetPath = this._resolveBasePath(dirPath);
             const results = [];
             
             // 检查目录是否存在
@@ -522,7 +562,9 @@ class StrmService {
     }
 
     async _listStrmFilesRecursive(dirPath = '', baseDirPath = dirPath) {
-        const targetPath = path.join(this.baseDir, dirPath);
+        const normalizedDirPath = this._normalizeBaseRelativePath(dirPath);
+        const normalizedBaseDirPath = this._normalizeBaseRelativePath(baseDirPath);
+        const targetPath = this._resolveBasePath(normalizedDirPath);
         const results = [];
         try {
             await fs.access(targetPath);
@@ -532,9 +574,9 @@ class StrmService {
 
         const items = await fs.readdir(targetPath, { withFileTypes: true });
         for (const item of items) {
-            const relativePath = path.join(dirPath, item.name);
+            const relativePath = path.join(normalizedDirPath, item.name);
             if (item.isDirectory()) {
-                const childItems = await this._listStrmFilesRecursive(relativePath, baseDirPath);
+                const childItems = await this._listStrmFilesRecursive(relativePath, normalizedBaseDirPath);
                 results.push(...childItems);
                 continue;
             }
@@ -542,7 +584,7 @@ class StrmService {
                 results.push({
                     name: item.name,
                     path: relativePath,
-                    relativePath: path.relative(baseDirPath, relativePath)
+                    relativePath: path.relative(normalizedBaseDirPath, relativePath)
                 });
             }
         }
@@ -556,11 +598,12 @@ class StrmService {
      */
     async delete(fileName) {
         const parsedPath = path.parse(fileName);
-        const dirPath = parsedPath.dir;
+        const dirPath = this._normalizeBaseRelativePath(parsedPath.dir);
         const fileNameWithoutExt = parsedPath.name;
-        const strmPath = path.join(this.baseDir, dirPath, `${fileNameWithoutExt}.strm`);
-        const nfoPath = path.join(this.baseDir, dirPath, `${fileNameWithoutExt}.nfo`);
-        const thumbPath = path.join(this.baseDir, dirPath, `${fileNameWithoutExt}-thumb.jpg`);
+        const targetDir = this._resolveBasePath(dirPath);
+        const strmPath = path.join(targetDir, `${fileNameWithoutExt}.strm`);
+        const nfoPath = path.join(targetDir, `${fileNameWithoutExt}.nfo`);
+        const thumbPath = path.join(targetDir, `${fileNameWithoutExt}-thumb.jpg`);
         try {
            // 删除 .strm 文件
            try {
@@ -596,7 +639,6 @@ class StrmService {
             }
             
             // 尝试删除空目录
-            const targetDir = path.join(this.baseDir, dirPath);
             const files = await fs.readdir(targetDir);
             if (files.length === 0) {
                 await fs.rmdir(targetDir);
@@ -611,7 +653,7 @@ class StrmService {
     // 删除目录
     async deleteDir(dirPath) {
         try {
-            const targetDir = path.join(this.baseDir, dirPath);
+            const targetDir = this._resolveBasePath(dirPath);
              // 检查目录是否存在
              try {
                 await fs.access(targetDir);

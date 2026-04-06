@@ -41,6 +41,13 @@ class SchedulerService {
                 await taskService.clearRecycleBin(enableAutoClearRecycle, enableAutoClearFamilyRecycle);
             })   
         }
+        // 4. 定时清理懒转存文件
+        const enableAutoCleanLazyFiles = ConfigService.getConfigValue('task.enableAutoCleanLazyFiles');
+        if (enableAutoCleanLazyFiles) {
+            this.saveDefaultTaskJob('自动清理懒转存文件', ConfigService.getConfigValue('task.lazyFileCleanupCron'), async () => {
+                await taskService.cleanupLazyTransferredFiles();
+            });
+        }
     }
 
     static async initStrmConfigJobs(strmConfigRepo, strmConfigService) {
@@ -165,6 +172,14 @@ class SchedulerService {
             settings.task.cleanRecycleCron,
             '自动清空回收站',
             async () => taskService.clearRecycleBin(enableAutoClearRecycle, enableAutoClearFamilyRecycle)
+        );
+        handleScheduleTask(
+            ConfigService.getConfigValue('task.enableAutoCleanLazyFiles'),
+            settings.task.enableAutoCleanLazyFiles,
+            ConfigService.getConfigValue('task.lazyFileCleanupCron'),
+            settings.task.lazyFileCleanupCron,
+            '自动清理懒转存文件',
+            async () => taskService.cleanupLazyTransferredFiles()
         );
         return true;
     }

@@ -679,6 +679,15 @@
                             <small class="form-text">默认：0 */8 * * * (每8小时)</small>
                         </div>
                         <div class="push-item">
+                            <label>
+                                <input type="checkbox" id="enableAutoCleanLazyFiles">
+                                自动清理懒转存文件
+                            </label>
+                            <input type="number" id="lazyFileRetentionHours" min="1" placeholder="默认24小时">
+                            <input type="text" id="lazyFileCleanupCron" placeholder="Cron表达式">
+                            <small class="form-text">按懒转存任务目录中文件的最后操作时间清理云盘缓存文件；不会删除本地 .strm。默认每6小时检查一次，删除超过保留时长的文件。</small>
+                        </div>
+                        <div class="push-item">
                             <label for="mediaSuffix">媒体文件后缀</label>
                             <input type="text" id="mediaSuffix" placeholder="例如: .mp4, .mkv">
                             <small class="form-text">仅用于计算当前已转存集数,其他文件一样会转存。当任务总集数填写后,会根据当前填写的后缀匹配媒体文件,满足后缀的文件会计入已更新数。</small>

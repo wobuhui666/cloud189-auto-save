@@ -24,8 +24,11 @@ async function createAutoSeries(event) {
         if (!data.success) {
             throw new Error(data.error || '自动追剧失败');
         }
+        const createdTaskCount = Number(data.data?.taskCount || 0);
         if (mode === 'lazy') {
-            message.success(`已生成懒转存STRM：${data.data.taskName}`);
+            message.success(createdTaskCount > 0
+                ? `已创建懒转存任务：${data.data.taskName}`
+                : `已生成懒转存STRM：${data.data.taskName}`);
         } else {
             message.success(`已自动创建并执行：${data.data.taskName}`);
         }
@@ -33,7 +36,7 @@ async function createAutoSeries(event) {
         document.getElementById('autoSeriesMode').value = mode;
         await fetchTasks();
         await fetchOrganizerTasks();
-        if (mode === 'lazy') {
+        if (mode === 'lazy' && createdTaskCount <= 0) {
             document.querySelector('.tab[data-tab="strmConfig"]')?.click();
         } else {
             document.querySelector('.tab[data-tab="task"]')?.click();

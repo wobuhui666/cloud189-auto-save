@@ -13,10 +13,13 @@ async function loadSettings() {
             document.getElementById('taskExpireDays').value = settings.task?.taskExpireDays || 3;
             document.getElementById('taskCheckCron').value = settings.task?.taskCheckCron || '0 19-23 * * *';
             document.getElementById('cleanRecycleCron').value = settings.task?.cleanRecycleCron || '0 */8 * * * ';
+            document.getElementById('lazyFileCleanupCron').value = settings.task?.lazyFileCleanupCron || '0 */6 * * *';
             document.getElementById('taskMaxRetries').value = settings.task?.maxRetries || 3;
             document.getElementById('taskRetryInterval').value = settings.task?.retryInterval || 300;
             document.getElementById('enableAutoClearRecycle').checked = settings.task?.enableAutoClearRecycle || false;
             document.getElementById('enableAutoClearFamilyRecycle').checked = settings.task?.enableAutoClearFamilyRecycle || false;
+            document.getElementById('enableAutoCleanLazyFiles').checked = settings.task?.enableAutoCleanLazyFiles || false;
+            document.getElementById('lazyFileRetentionHours').value = settings.task?.lazyFileRetentionHours || 24;
             document.getElementById('mediaSuffix').value = settings.task?.mediaSuffix || '.mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov';
             document.getElementById('enableOnlySaveMedia').checked = settings.task?.enableOnlySaveMedia || false;
             document.getElementById('enableAutoCreateFolder').checked = settings.task?.enableAutoCreateFolder || false;
@@ -136,10 +139,13 @@ async function saveSettings() {
             taskExpireDays: parseInt(document.getElementById('taskExpireDays').value) || 3,
             taskCheckCron: document.getElementById('taskCheckCron').value || '0 19-23 * * *',
             cleanRecycleCron: document.getElementById('cleanRecycleCron').value || '0 */8 * * *',
+            lazyFileCleanupCron: document.getElementById('lazyFileCleanupCron').value || '0 */6 * * *',
             maxRetries: parseInt(document.getElementById('taskMaxRetries').value) || 3,
             retryInterval: parseInt(document.getElementById('taskRetryInterval').value) || 300,
             enableAutoClearRecycle: document.getElementById('enableAutoClearRecycle').checked,
             enableAutoClearFamilyRecycle: document.getElementById('enableAutoClearFamilyRecycle').checked,
+            enableAutoCleanLazyFiles: document.getElementById('enableAutoCleanLazyFiles').checked,
+            lazyFileRetentionHours: parseInt(document.getElementById('lazyFileRetentionHours').value) || 24,
             mediaSuffix: document.getElementById('mediaSuffix').value,
             enableOnlySaveMedia: document.getElementById('enableOnlySaveMedia').checked,
             enableAutoCreateFolder: document.getElementById('enableAutoCreateFolder').checked,
@@ -206,6 +212,10 @@ async function saveSettings() {
     if (settings.task.taskRetryInterval < 60) {
         message.warning("任务重试间隔不能小于60秒")
         return 
+    }
+    if (settings.task.lazyFileRetentionHours < 1) {
+        message.warning("懒转存文件保留时长不能小于1小时")
+        return
     }
 
     try {

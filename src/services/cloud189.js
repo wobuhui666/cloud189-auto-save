@@ -88,6 +88,9 @@ class Cloud189Service {
                             res_msg: "文件不存在"
                         };
                     }
+                    if (responseBody.errorCode === 'InvalidSessionKey' && /check ip error/i.test(responseBody.errorMsg || '')) {
+                        logTaskEvent('天翼云盘会话失效: 当前出口 IP 与 Cookie 绑定 IP 不一致。若为双栈网络，建议为容器添加环境变量 DNS_LOOKUP_IP_VERSION=ipv4；如账号仅使用 Cookie 登录，请改用账号密码登录或固定代理出口。');
+                    }
                     logTaskEvent('请求天翼云盘接口失败:' + error.response.body);
                 } else {
                     logTaskEvent('请求天翼云盘接口失败:' + error.response.body);
