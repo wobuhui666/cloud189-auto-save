@@ -941,10 +941,15 @@
                                 <input type="checkbox" id="enableEmby">
                                 启用 Emby 通知
                             </label>
+                            <label>
+                                <input type="checkbox" id="enableEmbyProxy">
+                                启用 Emby 反代播放（播放时302到天翼直链）
+                            </label>
                             <label for="embyServer">Emby 服务器地址</label>
                             <input type="text" id="embyServer" placeholder="例如: http://localhost:8096">
                             <label for="embyApiKey">API Key</label>
                             <input type="text" id="embyApiKey" placeholder="Emby API Key">
+                            <small class="form-text">启用后可通过 <code>/emby-proxy</code> 访问 Emby，播放请求会优先尝试 302 到天翼直链；其余请求会回源到 Emby。</small>
                         </div>
                     </div>
                 </div>

@@ -11,6 +11,7 @@ async function saveMediaSettings() {
     const enableStrm = document.getElementById('enableStrm').checked
     const useStreamProxyForTaskStrm = document.getElementById('useStreamProxyForTaskStrm').checked
     const enableEmby = document.getElementById('enableEmby').checked
+    const enableEmbyProxy = document.getElementById('enableEmbyProxy').checked
     const settings = {
         strm: {
             enable: enableStrm,
@@ -20,6 +21,9 @@ async function saveMediaSettings() {
             enable: enableEmby,
             serverUrl: document.getElementById('embyServer').value,
             apiKey: document.getElementById('embyApiKey').value,
+            proxy: {
+                enable: enableEmbyProxy
+            }
         },
         cloudSaver: {
             baseUrl: document.getElementById('cloudSaverUrl').value,

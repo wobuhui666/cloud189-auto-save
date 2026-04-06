@@ -13,9 +13,10 @@ const { Not, IsNull, Like } = require('typeorm');
 // emby接口
 class EmbyService {
     constructor(taskService) {
-        this.enable = ConfigService.getConfigValue('emby');
-        this.embyUrl = ConfigService.getConfigValue('emby.serverUrl');
-        this.embyApiKey = ConfigService.getConfigValue('emby.apiKey');
+        this.enable = false;
+        this.embyUrl = '';
+        this.embyApiKey = '';
+        this.proxyEnabled = false;
         this.embyPathReplace = ''
         this.messageUtil = new MessageUtil();
 
@@ -23,10 +24,54 @@ class EmbyService {
         this._accountRepo = AppDataSource.getRepository(Account);
         this._taskService = taskService;
         this._strmService = new StrmService();
+        this._refreshConfig();
+    }
+
+    _refreshConfig() {
+        this.enable = !!ConfigService.getConfigValue('emby.enable');
+        this.embyUrl = String(ConfigService.getConfigValue('emby.serverUrl') || '').trim().replace(/\/+$/g, '');
+        this.embyApiKey = String(ConfigService.getConfigValue('emby.apiKey') || '').trim();
+        this.proxyEnabled = !!ConfigService.getConfigValue('emby.proxy.enable');
+    }
+
+    getProxyBasePath() {
+        return '/emby-proxy';
+    }
+
+    isProxyEnabled() {
+        this._refreshConfig();
+        return this.proxyEnabled;
+    }
+
+    async handleProxyRequest(req, res) {
+        this._refreshConfig();
+        if (!this.embyUrl) {
+            res.status(503).json({ success: false, error: 'Emby 服务器地址未配置' });
+            return;
+        }
+
+        const proxyBasePath = this.getProxyBasePath();
+        const relativePath = (req.originalUrl || req.url || '').replace(new RegExp(`^${proxyBasePath}`), '') || '/';
+
+        if (this.proxyEnabled && this._isPlaybackRequest(relativePath)) {
+            try {
+                const directUrl = await this._resolvePlaybackDirectUrl(relativePath, req.query || {});
+                if (directUrl) {
+                    res.set('Cache-Control', 'no-store');
+                    res.redirect(302, directUrl);
+                    return;
+                }
+            } catch (error) {
+                logTaskEvent(`Emby反代直链失败，回退Emby原始播放: ${error.message}`);
+            }
+        }
+
+        await this._forwardToEmby(req, res, relativePath);
     }
 
 
     async notify(task) {
+        this._refreshConfig();
         if (!this.enable){
             logTaskEvent(`Emby通知未启用, 请启用后执行`);
             return;
@@ -126,8 +171,270 @@ class EmbyService {
         }
     }
 
+    async getItemById(id) {
+        const url = `${this.embyUrl}/Items`;
+        const response = await this.request(url, {
+            method: 'GET',
+            searchParams: {
+                Ids: id,
+                Recursive: true,
+                Fields: 'Path,MediaSources,ProviderIds,Name'
+            },
+        });
+        return response?.Items?.[0] || null;
+    }
+
+    _isPlaybackRequest(requestPath = '') {
+        const normalizedPath = String(requestPath || '').split('?')[0];
+        return /\/(?:emby\/)?(?:Videos|Audio)\/[^/]+\/.+/i.test(normalizedPath);
+    }
+
+    _extractItemId(requestPath = '') {
+        const normalizedPath = String(requestPath || '').split('?')[0];
+        const match = normalizedPath.match(/\/(?:emby\/)?(?:Videos|Audio)\/([^/]+)/i);
+        return match?.[1] || null;
+    }
+
+    _normalizeSlashPath(value = '') {
+        return String(value || '').replace(/\\/g, '/').replace(/\/+/g, '/');
+    }
+
+    _trimSlashPath(value = '') {
+        return this._normalizeSlashPath(value).replace(/^\/+|\/+$/g, '');
+    }
+
+    _buildProxyTargetUrl(relativePath = '', query = {}) {
+        const upstream = new URL(this.embyUrl);
+        const [pathnamePart, queryString = ''] = String(relativePath || '/').split('?');
+        upstream.pathname = path.posix.join(upstream.pathname || '/', pathnamePart || '/');
+        const searchParams = new URLSearchParams(queryString);
+        for (const [key, value] of Object.entries(query || {})) {
+            if (value == null) {
+                continue;
+            }
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    searchParams.append(key, item);
+                }
+                continue;
+            }
+            if (!searchParams.has(key)) {
+                searchParams.set(key, String(value));
+            }
+        }
+        upstream.search = searchParams.toString();
+        return upstream.toString();
+    }
+
+    async _forwardToEmby(req, res, relativePath) {
+        const targetUrl = this._buildProxyTargetUrl(relativePath);
+        const headers = {
+            ...req.headers,
+            host: undefined,
+            connection: undefined,
+            'content-length': undefined,
+            'x-forwarded-host': req.headers.host,
+            'x-forwarded-proto': req.protocol,
+            'x-forwarded-for': req.ip
+        };
+        const options = {
+            method: req.method,
+            headers,
+            throwHttpErrors: false,
+            followRedirect: false,
+            decompress: false
+        };
+        if (!['GET', 'HEAD'].includes(req.method.toUpperCase())) {
+            options.body = req;
+        }
+
+        const upstream = got.stream(targetUrl, options);
+        upstream.on('response', (response) => {
+            res.status(response.statusCode || 502);
+            for (const [key, value] of Object.entries(response.headers)) {
+                if (value == null || key.toLowerCase() === 'content-length') {
+                    continue;
+                }
+                if (key.toLowerCase() === 'location') {
+                    res.setHeader(key, this._rewriteProxyLocation(String(value)));
+                    continue;
+                }
+                res.setHeader(key, value);
+            }
+        });
+        upstream.on('error', (error) => {
+            if (!res.headersSent) {
+                res.status(502).json({ success: false, error: `Emby反代请求失败: ${error.message}` });
+            }
+        });
+        upstream.pipe(res);
+    }
+
+    _rewriteProxyLocation(location) {
+        if (!location || !this.embyUrl) {
+            return location;
+        }
+        const proxyBasePath = this.getProxyBasePath();
+        if (location.startsWith(this.embyUrl)) {
+            return `${proxyBasePath}${location.substring(this.embyUrl.length) || '/'}`;
+        }
+        return location;
+    }
+
+    async _resolvePlaybackDirectUrl(requestPath, query = {}) {
+        const itemId = this._extractItemId(requestPath);
+        if (!itemId) {
+            throw new Error('未解析到 Emby 媒体项 ID');
+        }
+
+        const item = await this.getItemById(itemId);
+        if (!item) {
+            throw new Error(`未获取到 Emby 媒体项: ${itemId}`);
+        }
+
+        const mediaPath = this._resolveMediaPath(item, query.MediaSourceId || query.mediaSourceId);
+        if (!mediaPath) {
+            throw new Error(`Emby 媒体项缺少可用路径: ${itemId}`);
+        }
+
+        const matchedTask = await this._findTaskByItemPath(mediaPath);
+        if (!matchedTask) {
+            throw new Error(`未找到与 Emby 路径对应的任务: ${mediaPath}`);
+        }
+
+        const cloud189 = Cloud189Service.getInstance(matchedTask.task.account);
+        const allFiles = await this._taskService.getAllFolderFiles(cloud189, matchedTask.task);
+        const targetFile = this._matchCloudFile(allFiles, matchedTask.relativePath, mediaPath);
+        if (!targetFile?.id) {
+            throw new Error(`未找到对应的网盘文件: ${mediaPath}`);
+        }
+
+        logTaskEvent(`Emby反代命中任务[${matchedTask.task.resourceName}]，文件: ${targetFile.name}`);
+        return await cloud189.getDownloadLink(targetFile.id);
+    }
+
+    _resolveMediaPath(item, mediaSourceId = '') {
+        const mediaSources = Array.isArray(item?.MediaSources) ? item.MediaSources : [];
+        if (mediaSourceId) {
+            const matchedSource = mediaSources.find((source) => String(source.Id) === String(mediaSourceId));
+            if (matchedSource?.Path) {
+                return this._normalizeSlashPath(matchedSource.Path);
+            }
+        }
+        if (mediaSources[0]?.Path) {
+            return this._normalizeSlashPath(mediaSources[0].Path);
+        }
+        return item?.Path ? this._normalizeSlashPath(item.Path) : '';
+    }
+
+    async _findTaskByItemPath(itemPath) {
+        const accounts = await this._accountRepo.find({
+            where: [
+                { embyPathReplace: Not(IsNull()) }
+            ]
+        });
+
+        for (const account of accounts) {
+            const mappedPath = this._mapEmbyPathToCloudPath(itemPath, account.embyPathReplace);
+            if (!mappedPath) {
+                continue;
+            }
+
+            const tasks = await this._taskRepo.find({
+                where: {
+                    accountId: account.id
+                },
+                relations: {
+                    account: true
+                },
+                select: {
+                    account: {
+                        username: true,
+                        password: true,
+                        cookies: true,
+                        localStrmPrefix: true,
+                        cloudStrmPrefix: true,
+                        embyPathReplace: true,
+                        accountType: true,
+                        familyId: true
+                    }
+                }
+            });
+
+            const matchedTask = this._pickBestTask(tasks, mappedPath);
+            if (matchedTask) {
+                return matchedTask;
+            }
+        }
+
+        return null;
+    }
+
+    _mapEmbyPathToCloudPath(itemPath, embyPathReplace = '') {
+        const normalizedItemPath = this._normalizeSlashPath(itemPath);
+        const replaceRules = String(embyPathReplace || '').split(';').map(rule => rule.trim()).filter(Boolean);
+        for (const rule of replaceRules) {
+            const parts = rule.split(':');
+            if (parts.length < 2) {
+                continue;
+            }
+            const cloudPrefix = this._normalizeSlashPath(parts[0]);
+            const embyPrefix = this._normalizeSlashPath(parts.slice(1).join(':'));
+            if (!embyPrefix || !normalizedItemPath.startsWith(embyPrefix)) {
+                continue;
+            }
+            return this._trimSlashPath(normalizedItemPath.replace(embyPrefix, cloudPrefix));
+        }
+        return '';
+    }
+
+    _pickBestTask(tasks, mappedPath) {
+        const normalizedMappedPath = this._trimSlashPath(mappedPath);
+        const candidates = tasks
+            .map((task) => {
+                const normalizedTaskPath = this._trimSlashPath(task.realFolderName || '');
+                if (!normalizedTaskPath) {
+                    return null;
+                }
+                if (
+                    normalizedMappedPath === normalizedTaskPath
+                    || normalizedMappedPath.startsWith(`${normalizedTaskPath}/`)
+                ) {
+                    const relativePath = normalizedMappedPath
+                        .substring(normalizedTaskPath.length)
+                        .replace(/^\/+/, '');
+                    return {
+                        task,
+                        relativePath,
+                        matchLength: normalizedTaskPath.length
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean)
+            .sort((left, right) => right.matchLength - left.matchLength);
+
+        return candidates[0] || null;
+    }
+
+    _matchCloudFile(files, relativePath, itemPath) {
+        const normalizedRelativePath = this._trimSlashPath(relativePath);
+        if (normalizedRelativePath) {
+            const exactFile = files.find((file) => this._trimSlashPath(file.relativePath || '') === normalizedRelativePath);
+            if (exactFile) {
+                return exactFile;
+            }
+        }
+
+        const itemFileName = path.basename(this._normalizeSlashPath(itemPath));
+        return files.find((file) => file.name === itemFileName)
+            || files.find((file) => path.parse(file.name).name === path.parse(itemFileName).name)
+            || null;
+    }
+
     // 统一请求接口
     async request(url, options) {
+        this._refreshConfig();
         try {
             const headers = {
                 'Authorization': 'MediaBrowser Token="' + this.embyApiKey + '"',

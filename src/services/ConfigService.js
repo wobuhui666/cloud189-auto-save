@@ -84,7 +84,10 @@ class ConfigService {
       emby: {
         enable: false,
         serverUrl: '',
-        apiKey: ''
+        apiKey: '',
+        proxy: {
+          enable: false
+        }
       },
       cloudSaver: {
         baseUrl: '',

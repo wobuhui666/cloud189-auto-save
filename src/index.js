@@ -110,6 +110,8 @@ app.use((req, res, next) => {
         || req.path === '/api/auth/login' 
         || req.path === '/api/auth/login' 
         || req.path.startsWith('/api/stream/')
+        || req.path === '/emby-proxy'
+        || req.path.startsWith('/emby-proxy/')
         || req.path === '/emby/notify'
         || req.path.match(/\.(css|js|png|jpg|jpeg|gif|ico)$/)) {
         return next();
@@ -165,6 +167,10 @@ AppDataSource.initialize().then(async () => {
     // 初始化任务定时器
     await SchedulerService.initTaskJobs(taskRepo, taskService);
     await SchedulerService.initStrmConfigJobs(strmConfigRepo, strmConfigService);
+
+    app.use('/emby-proxy', async (req, res) => {
+        await embyService.handleProxyRequest(req, res);
+    });
     
     // 账号相关API
     app.get('/api/accounts', async (req, res) => {

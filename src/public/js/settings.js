@@ -77,6 +77,7 @@ async function loadSettings() {
             document.getElementById('enableStrm').checked = enableStrm;
             document.getElementById('useStreamProxyForTaskStrm').checked = settings.strm?.useStreamProxy || false;
             document.getElementById('enableEmby').checked = enableEmby;
+            document.getElementById('enableEmbyProxy').checked = settings.emby?.proxy?.enable || false;
             document.getElementById('embyServer').value = settings.emby?.serverUrl || '';
             document.getElementById('embyApiKey').value = settings.emby?.apiKey || '';
 
