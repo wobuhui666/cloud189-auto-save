@@ -67,8 +67,17 @@ const closeStandaloneEmbyProxyServer = async () => {
     });
 };
 
+const isEmbyProxyRequestPath = (requestUrl = '', basePath = '/emby-proxy') => {
+    const pathname = String(requestUrl || '/').split('?')[0];
+    if (!basePath) {
+        return true;
+    }
+    return pathname === basePath || pathname.startsWith(`${basePath}/`);
+};
+
 const createStandaloneEmbyProxyApp = (embyService) => {
     const proxyApp = express();
+    proxyApp.set('trust proxy', true);
     proxyApp.use(cors(corsOptions));
     proxyApp.use(async (req, res) => {
         await embyService.handleProxyRequest(req, res, { basePath: '' });
@@ -106,11 +115,18 @@ const syncStandaloneEmbyProxyServer = async (embyService) => {
             console.log(`Emby 独立反代运行在 http://localhost:${proxyPort}`);
             resolve();
         });
+        server.on('upgrade', (req, socket, head) => {
+            embyService.handleProxyUpgrade(req, socket, head, { basePath: '' }).catch((error) => {
+                console.error('Emby 独立反代 WebSocket 失败:', error.message);
+                socket.destroy();
+            });
+        });
         server.once('error', reject);
     });
 };
 
 const app = express();
+app.set('trust proxy', true);
 app.use(cors(corsOptions));
 app.use(express.json());
 
@@ -1378,13 +1394,23 @@ AppDataSource.initialize().then(async () => {
     // 初始化cloudsaver
     setupCloudSaverRoutes(app);
     // 启动服务器
-    app.listen(appPort, async () => {
+    const server = app.listen(appPort, async () => {
         console.log(`服务器运行在 http://localhost:${appPort}`);
         try {
             await syncStandaloneEmbyProxyServer(embyService);
         } catch (error) {
             console.error('启动 Emby 独立反代端口失败:', error.message);
         }
+    });
+    server.on('upgrade', (req, socket, head) => {
+        if (!isEmbyProxyRequestPath(req.url, '/emby-proxy')) {
+            socket.destroy();
+            return;
+        }
+        embyService.handleProxyUpgrade(req, socket, head, { basePath: '/emby-proxy' }).catch((error) => {
+            console.error('Emby 内置反代 WebSocket 失败:', error.message);
+            socket.destroy();
+        });
     });
 }).catch(error => {
     console.error('数据库连接失败:', error);

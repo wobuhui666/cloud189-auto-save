@@ -1,4 +1,6 @@
 const got = require('got');
+const http = require('http');
+const https = require('https');
 const { logTaskEvent } = require('../utils/logUtils');
 const ConfigService = require('./ConfigService');
 const { MessageUtil } = require('./message');
@@ -55,9 +57,7 @@ class EmbyService {
 
         const proxyBasePath = this.getProxyBasePath(options);
         const currentUrl = req.originalUrl || req.url || '/';
-        const relativePath = proxyBasePath
-            ? (currentUrl.replace(new RegExp(`^${proxyBasePath}`), '') || '/')
-            : currentUrl || '/';
+        const relativePath = this._buildRelativePath(currentUrl, proxyBasePath);
 
         if (this.proxyEnabled && this._isPlaybackRequest(relativePath)) {
             try {
@@ -73,6 +73,24 @@ class EmbyService {
         }
 
         await this._forwardToEmby(req, res, relativePath, proxyBasePath);
+    }
+
+    async handleProxyUpgrade(req, socket, head, options = {}) {
+        this._refreshConfig();
+        if (!this.embyUrl) {
+            this._writeUpgradeError(socket, 503, 'Emby 服务器地址未配置');
+            return;
+        }
+
+        const proxyBasePath = this.getProxyBasePath(options);
+        const relativePath = this._buildRelativePath(req.url || '/', proxyBasePath);
+
+        try {
+            await this._forwardWebSocket(req, socket, head, relativePath);
+        } catch (error) {
+            logTaskEvent(`Emby反代 WebSocket 失败: ${error.message}`);
+            this._writeUpgradeError(socket, 502, `Emby反代 WebSocket 失败: ${error.message}`);
+        }
     }
 
 
@@ -209,6 +227,56 @@ class EmbyService {
         return this._normalizeSlashPath(value).replace(/^\/+|\/+$/g, '');
     }
 
+    _escapeRegex(value = '') {
+        return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    _buildRelativePath(currentUrl = '/', proxyBasePath = '') {
+        if (!proxyBasePath) {
+            return currentUrl || '/';
+        }
+
+        const normalizedUrl = String(currentUrl || '/');
+        return normalizedUrl.replace(new RegExp(`^${this._escapeRegex(proxyBasePath)}`), '') || '/';
+    }
+
+    _readForwardedHeader(req, headerName) {
+        const headerValue = req?.headers?.[headerName];
+        if (Array.isArray(headerValue)) {
+            return String(headerValue[0] || '').split(',')[0].trim();
+        }
+        return String(headerValue || '').split(',')[0].trim();
+    }
+
+    _getForwardedProto(req) {
+        const forwardedProto = this._readForwardedHeader(req, 'x-forwarded-proto');
+        if (forwardedProto) {
+            return forwardedProto;
+        }
+        if (req?.protocol) {
+            return req.protocol;
+        }
+        return req?.socket?.encrypted ? 'https' : 'http';
+    }
+
+    _getForwardedHost(req) {
+        return this._readForwardedHeader(req, 'x-forwarded-host')
+            || this._readForwardedHeader(req, 'host')
+            || '';
+    }
+
+    _getForwardedFor(req) {
+        const forwardedFor = req?.headers?.['x-forwarded-for'];
+        if (Array.isArray(forwardedFor)) {
+            return forwardedFor.join(', ');
+        }
+        return String(forwardedFor || req?.ip || req?.socket?.remoteAddress || '').trim();
+    }
+
+    _getUpstreamHttpClient(targetUrl) {
+        return targetUrl.protocol === 'https:' ? https : http;
+    }
+
     _buildProxyTargetUrl(relativePath = '', query = {}) {
         const upstream = new URL(this.embyUrl);
         const [pathnamePart, queryString = ''] = String(relativePath || '/').split('?');
@@ -239,9 +307,9 @@ class EmbyService {
             host: undefined,
             connection: undefined,
             'content-length': undefined,
-            'x-forwarded-host': req.headers.host,
-            'x-forwarded-proto': req.protocol,
-            'x-forwarded-for': req.ip
+            'x-forwarded-host': this._getForwardedHost(req),
+            'x-forwarded-proto': this._getForwardedProto(req),
+            'x-forwarded-for': this._getForwardedFor(req)
         };
         const options = {
             method: req.method,
@@ -274,6 +342,117 @@ class EmbyService {
             }
         });
         upstream.pipe(res);
+    }
+
+    async _forwardWebSocket(req, socket, head, relativePath) {
+        const targetUrl = new URL(this._buildProxyTargetUrl(relativePath));
+        const upstreamClient = this._getUpstreamHttpClient(targetUrl);
+        const headers = {
+            ...req.headers,
+            host: targetUrl.host,
+            'x-forwarded-host': this._getForwardedHost(req),
+            'x-forwarded-proto': this._getForwardedProto(req),
+            'x-forwarded-for': this._getForwardedFor(req)
+        };
+
+        const requestOptions = {
+            protocol: targetUrl.protocol,
+            hostname: targetUrl.hostname,
+            port: targetUrl.port || (targetUrl.protocol === 'https:' ? 443 : 80),
+            method: req.method || 'GET',
+            path: `${targetUrl.pathname}${targetUrl.search}`,
+            headers
+        };
+
+        await new Promise((resolve, reject) => {
+            const upstreamRequest = upstreamClient.request(requestOptions);
+            let upgraded = false;
+
+            upstreamRequest.on('upgrade', (upstreamResponse, upstreamSocket, upstreamHead) => {
+                upgraded = true;
+                const statusCode = upstreamResponse.statusCode || 101;
+                const statusMessage = upstreamResponse.statusMessage || 'Switching Protocols';
+                const responseHeaders = [`HTTP/1.1 ${statusCode} ${statusMessage}`];
+
+                for (const [key, value] of Object.entries(upstreamResponse.headers || {})) {
+                    if (value == null) {
+                        continue;
+                    }
+                    if (Array.isArray(value)) {
+                        for (const item of value) {
+                            responseHeaders.push(`${key}: ${item}`);
+                        }
+                        continue;
+                    }
+                    responseHeaders.push(`${key}: ${value}`);
+                }
+
+                socket.write(`${responseHeaders.join('\r\n')}\r\n\r\n`);
+                if (head?.length) {
+                    upstreamSocket.write(head);
+                }
+                if (upstreamHead?.length) {
+                    socket.write(upstreamHead);
+                }
+
+                upstreamSocket.pipe(socket);
+                socket.pipe(upstreamSocket);
+
+                upstreamSocket.on('error', (error) => {
+                    logTaskEvent(`Emby上游 WebSocket 异常: ${error.message}`);
+                    socket.destroy(error);
+                });
+                socket.on('error', () => {
+                    upstreamSocket.destroy();
+                });
+                resolve();
+            });
+
+            upstreamRequest.on('response', (upstreamResponse) => {
+                if (upgraded) {
+                    return;
+                }
+                const statusCode = upstreamResponse.statusCode || 502;
+                const statusMessage = upstreamResponse.statusMessage || 'Bad Gateway';
+                const responseHeaders = [`HTTP/1.1 ${statusCode} ${statusMessage}`];
+
+                for (const [key, value] of Object.entries(upstreamResponse.headers || {})) {
+                    if (value == null) {
+                        continue;
+                    }
+                    if (Array.isArray(value)) {
+                        for (const item of value) {
+                            responseHeaders.push(`${key}: ${item}`);
+                        }
+                        continue;
+                    }
+                    responseHeaders.push(`${key}: ${value}`);
+                }
+
+                socket.write(`${responseHeaders.join('\r\n')}\r\n\r\n`);
+                upstreamResponse.pipe(socket);
+                resolve();
+            });
+
+            upstreamRequest.on('error', reject);
+            upstreamRequest.end();
+        });
+    }
+
+    _writeUpgradeError(socket, statusCode, message) {
+        if (!socket || socket.destroyed) {
+            return;
+        }
+        const body = String(message || 'Bad Gateway');
+        const statusText = statusCode >= 500 ? 'Bad Gateway' : 'Service Unavailable';
+        socket.end(
+            `HTTP/1.1 ${statusCode} ${statusText}\r\n`
+            + 'Connection: close\r\n'
+            + 'Content-Type: text/plain; charset=utf-8\r\n'
+            + `Content-Length: ${Buffer.byteLength(body)}\r\n`
+            + '\r\n'
+            + body
+        );
     }
 
     _rewriteProxyLocation(location, proxyBasePath = '/emby-proxy') {
