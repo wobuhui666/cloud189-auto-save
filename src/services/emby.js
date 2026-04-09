@@ -8,6 +8,7 @@ const { AppDataSource } = require('../database');
 const { Task, Account } = require('../entities'); 
 const { Cloud189Service } = require('./cloud189');
 const path = require('path');
+const querystring = require('querystring');
 const { StrmService } = require('./strm');
 
 const { Not, IsNull, Like } = require('typeorm'); 
@@ -57,6 +58,10 @@ class EmbyService {
 
         const proxyBasePath = this.getProxyBasePath(options);
         const currentUrl = req.originalUrl || req.url || '/';
+        if (proxyBasePath && (currentUrl === proxyBasePath || currentUrl === `${proxyBasePath}/`)) {
+            res.redirect(302, `${proxyBasePath}/web/index.html`);
+            return;
+        }
         const relativePath = this._buildRelativePath(currentUrl, proxyBasePath);
 
         if (this.proxyEnabled && this._isPlaybackRequest(relativePath)) {
@@ -300,17 +305,55 @@ class EmbyService {
         return upstream.toString();
     }
 
+    async _readRequestBody(req) {
+        if (['GET', 'HEAD'].includes(String(req.method || 'GET').toUpperCase())) {
+            return null;
+        }
+
+        if (Buffer.isBuffer(req.body)) {
+            return req.body;
+        }
+
+        if (typeof req.body === 'string') {
+            return Buffer.from(req.body);
+        }
+
+        if (req.body && typeof req.body === 'object' && !req.readable) {
+            const contentType = String(req.headers['content-type'] || '').toLowerCase();
+            if (contentType.includes('application/json')) {
+                return Buffer.from(JSON.stringify(req.body));
+            }
+            if (contentType.includes('application/x-www-form-urlencoded')) {
+                return Buffer.from(querystring.stringify(req.body));
+            }
+        }
+
+        const chunks = [];
+        for await (const chunk of req) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        if (!chunks.length) {
+            return Buffer.alloc(0);
+        }
+        return Buffer.concat(chunks);
+    }
+
     async _forwardToEmby(req, res, relativePath, proxyBasePath = '/emby-proxy') {
         const targetUrl = this._buildProxyTargetUrl(relativePath);
+        const body = await this._readRequestBody(req);
         const headers = {
             ...req.headers,
             host: undefined,
             connection: undefined,
             'content-length': undefined,
+            'transfer-encoding': undefined,
             'x-forwarded-host': this._getForwardedHost(req),
             'x-forwarded-proto': this._getForwardedProto(req),
             'x-forwarded-for': this._getForwardedFor(req)
         };
+        if (body) {
+            headers['content-length'] = String(body.length);
+        }
         const options = {
             method: req.method,
             headers,
@@ -318,8 +361,8 @@ class EmbyService {
             followRedirect: false,
             decompress: false
         };
-        if (!['GET', 'HEAD'].includes(req.method.toUpperCase())) {
-            options.body = req;
+        if (body) {
+            options.body = body;
         }
 
         const upstream = got.stream(targetUrl, options);
@@ -330,7 +373,7 @@ class EmbyService {
                     continue;
                 }
                 if (key.toLowerCase() === 'location') {
-                    res.setHeader(key, this._rewriteProxyLocation(String(value), proxyBasePath));
+                    res.setHeader(key, this._rewriteProxyLocation(this._resolveUpstreamLocation(String(value), targetUrl), proxyBasePath));
                     continue;
                 }
                 res.setHeader(key, value);
@@ -342,6 +385,14 @@ class EmbyService {
             }
         });
         upstream.pipe(res);
+    }
+
+    _resolveUpstreamLocation(location, targetUrl) {
+        try {
+            return new URL(location, targetUrl).toString();
+        } catch (error) {
+            return location;
+        }
     }
 
     async _forwardWebSocket(req, socket, head, relativePath) {
