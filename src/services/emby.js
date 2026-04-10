@@ -9,6 +9,8 @@ const { Task, Account } = require('../entities');
 const { Cloud189Service } = require('./cloud189');
 const path = require('path');
 const { StrmService } = require('./strm');
+const { StreamProxyService } = require('./streamProxy');
+const { LazyShareStrmService } = require('./lazyShareStrm');
 
 const { Not, IsNull, Like } = require('typeorm'); 
 
@@ -26,6 +28,8 @@ class EmbyService {
         this._accountRepo = AppDataSource.getRepository(Account);
         this._taskService = taskService;
         this._strmService = new StrmService();
+        this._streamProxyService = new StreamProxyService(this._accountRepo);
+        this._lazyShareStrmService = new LazyShareStrmService(this._accountRepo, taskService);
         this._refreshConfig();
     }
 
@@ -484,6 +488,11 @@ class EmbyService {
             throw new Error(`Emby 媒体项缺少可用路径: ${itemId}`);
         }
 
+        const streamProxyUrl = await this._resolveStreamProxyMediaUrl(mediaPath);
+        if (streamProxyUrl) {
+            return streamProxyUrl;
+        }
+
         const matchedTask = await this._findTaskByItemPath(mediaPath);
         if (!matchedTask) {
             throw new Error(`未找到与 Emby 路径对应的任务: ${mediaPath}`);
@@ -505,13 +514,40 @@ class EmbyService {
         if (mediaSourceId) {
             const matchedSource = mediaSources.find((source) => String(source.Id) === String(mediaSourceId));
             if (matchedSource?.Path) {
-                return this._normalizeSlashPath(matchedSource.Path);
+                return this._normalizeMediaPath(matchedSource.Path);
             }
         }
         if (mediaSources[0]?.Path) {
-            return this._normalizeSlashPath(mediaSources[0].Path);
+            return this._normalizeMediaPath(mediaSources[0].Path);
         }
-        return item?.Path ? this._normalizeSlashPath(item.Path) : '';
+        return item?.Path ? this._normalizeMediaPath(item.Path) : '';
+    }
+
+    _normalizeMediaPath(value = '') {
+        const rawValue = String(value || '').trim();
+        if (/^https?:\/\//i.test(rawValue)) {
+            return rawValue;
+        }
+        return this._normalizeSlashPath(rawValue);
+    }
+
+    _extractStreamProxyToken(mediaPath = '') {
+        const normalizedMediaPath = String(mediaPath || '').trim();
+        const match = normalizedMediaPath.match(/\/api\/stream\/([^/?#]+)/i);
+        return match?.[1] || null;
+    }
+
+    async _resolveStreamProxyMediaUrl(mediaPath = '') {
+        const token = this._extractStreamProxyToken(mediaPath);
+        if (!token) {
+            return '';
+        }
+
+        const payload = this._streamProxyService.parseToken(token);
+        if (payload.type === 'lazyShare') {
+            return await this._lazyShareStrmService.resolveLatestUrlByPayload(payload);
+        }
+        return await this._streamProxyService.resolveLatestUrlByPayload(payload);
     }
 
     async _findTaskByItemPath(itemPath) {
