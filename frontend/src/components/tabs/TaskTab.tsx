@@ -39,6 +39,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [deleteCloud, setDeleteCloud] = useState(false);
+  const [isTopMenuOpen, setIsTopMenuOpen] = useState(false);
+  const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -58,6 +60,32 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   useEffect(() => {
     fetchTasks();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('[data-task-top-menu]')) {
+        setIsTopMenuOpen(false);
+      }
+      if (!target?.closest('[data-task-item-menu]')) {
+        setOpenTaskMenuId(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsTopMenuOpen(false);
+        setOpenTaskMenuId(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   const handleExecuteTask = async (id: number) => {
     try {
@@ -225,32 +253,47 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           >
             <Plus size={18} /> 创建任务
           </button>
-          <div className="relative group">
-            <button className="bg-white border border-slate-300 px-6 py-2.5 rounded-full text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2 text-slate-700">
-              更多操作 <ChevronRight size={16} className="rotate-90" />
+          <div className="relative" data-task-top-menu>
+            <button
+              type="button"
+              onClick={() => setIsTopMenuOpen(prev => !prev)}
+              className="bg-white border border-slate-300 px-6 py-2.5 rounded-full text-sm font-medium hover:bg-slate-50 transition-all flex items-center gap-2 text-slate-700"
+            >
+              更多操作 <ChevronRight size={16} className={`transition-transform ${isTopMenuOpen ? 'rotate-180' : 'rotate-90'}`} />
             </button>
-            <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 hidden group-hover:block z-20">
-              <button 
-                onClick={handleExecuteAll}
-                className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
-              >
-                执行所有任务
-              </button>
-              <button 
-                onClick={handleGenerateStrm}
-                disabled={selectedTaskIds.length === 0}
-                className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-[#0b57d0] transition-colors disabled:opacity-50"
-              >
-                生成 STRM
-              </button>
-              <button 
-                onClick={handleBatchDelete}
-                disabled={selectedTaskIds.length === 0}
-                className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-red-600 transition-colors disabled:opacity-50"
-              >
-                批量删除选中
-              </button>
-            </div>
+            {isTopMenuOpen && (
+              <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50">
+                <button
+                  onClick={() => {
+                    setIsTopMenuOpen(false);
+                    handleExecuteAll();
+                  }}
+                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
+                >
+                  执行所有任务
+                </button>
+                <button
+                  onClick={() => {
+                    setIsTopMenuOpen(false);
+                    handleGenerateStrm();
+                  }}
+                  disabled={selectedTaskIds.length === 0}
+                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-[#0b57d0] transition-colors disabled:opacity-50"
+                >
+                  生成 STRM
+                </button>
+                <button
+                  onClick={() => {
+                    setIsTopMenuOpen(false);
+                    handleBatchDelete();
+                  }}
+                  disabled={selectedTaskIds.length === 0}
+                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-red-600 transition-colors disabled:opacity-50"
+                >
+                  批量删除选中
+                </button>
+              </div>
+            )}
           </div>
         </div>
         
@@ -326,7 +369,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           return (
             <div 
               key={task.id}
-              className={`bg-white rounded-3xl border p-6 shadow-sm hover:shadow-md transition-all group relative overflow-hidden ${
+              className={`bg-white rounded-3xl border p-6 shadow-sm hover:shadow-md transition-all group relative ${
                 isSelected ? 'border-[#0b57d0] ring-1 ring-[#0b57d0]/20' : 'border-slate-200/60'
               } ${task.status === 'completed' ? 'opacity-80' : ''}`}
             >
@@ -385,24 +428,36 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                     >
                       <RefreshCw size={18} />
                     </button>
-                    <div className="relative group/menu">
-                      <button className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-900 transition-colors">
+                    <div className="relative" data-task-item-menu>
+                      <button
+                        type="button"
+                        onClick={() => setOpenTaskMenuId(prev => prev === task.id ? null : task.id)}
+                        className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-900 transition-colors"
+                      >
                         <MoreVertical size={18} />
                       </button>
-                      <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 hidden group-hover/menu:block z-20">
-                        <button 
-                          onClick={() => handleEditTask(task)}
-                          className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors flex items-center gap-2"
-                        >
-                          <Edit3 size={14} /> 修改任务
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteTask(task.id)}
-                          className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-red-600 transition-colors flex items-center gap-2"
-                        >
-                          <Trash2 size={14} /> 删除任务
-                        </button>
-                      </div>
+                      {openTaskMenuId === task.id && (
+                        <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-50">
+                          <button
+                            onClick={() => {
+                              setOpenTaskMenuId(null);
+                              handleEditTask(task);
+                            }}
+                            className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors flex items-center gap-2"
+                          >
+                            <Edit3 size={14} /> 修改任务
+                          </button>
+                          <button
+                            onClick={() => {
+                              setOpenTaskMenuId(null);
+                              handleDeleteTask(task.id);
+                            }}
+                            className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-red-600 transition-colors flex items-center gap-2"
+                          >
+                            <Trash2 size={14} /> 删除任务
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

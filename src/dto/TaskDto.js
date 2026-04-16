@@ -1,3 +1,10 @@
+const normalizeMatchOperator = (matchOperator) => {
+    if (matchOperator === 'regex') {
+        return 'contains';
+    }
+    return matchOperator;
+};
+
 class CreateTaskDto {
     constructor(data) {
         this.accountId = data.accountId;
@@ -6,7 +13,7 @@ class CreateTaskDto {
         this.totalEpisodes = data.totalEpisodes;
         this.accessCode = data.accessCode;
         this.matchPattern = data.matchPattern;
-        this.matchOperator = data.matchOperator;
+        this.matchOperator = normalizeMatchOperator(data.matchOperator);
         this.matchValue = data.matchValue;
         this.overwriteFolder = data.overwriteFolder;
         this.remark = data.remark;

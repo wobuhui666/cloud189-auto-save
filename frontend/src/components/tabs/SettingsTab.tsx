@@ -24,6 +24,13 @@ interface RegexPreset {
   matchValue: string;
 }
 
+const normalizeMatchOperator = (matchOperator?: string) => {
+  if (matchOperator === 'regex') {
+    return 'contains';
+  }
+  return matchOperator || '';
+};
+
 interface SettingsData {
   task: {
     taskExpireDays: number;
@@ -203,7 +210,7 @@ const SettingsTab: React.FC = () => {
     sourceRegex: '',
     targetRegex: '',
     matchPattern: '',
-    matchOperator: 'regex',
+    matchOperator: '',
     matchValue: ''
   });
 
@@ -848,7 +855,7 @@ const SettingsTab: React.FC = () => {
               type="button"
               onClick={() => {
                 setEditingRegexIndex(null);
-                setRegexForm({ name: '', description: '', sourceRegex: '', targetRegex: '', matchPattern: '', matchOperator: 'regex', matchValue: '' });
+                setRegexForm({ name: '', description: '', sourceRegex: '', targetRegex: '', matchPattern: '', matchOperator: '', matchValue: '' });
                 setIsRegexModalOpen(true);
               }}
               className="px-4 py-2 bg-[#d3e3fd] text-[#041e49] rounded-xl text-sm font-medium hover:bg-[#c2e7ff] transition-colors flex items-center gap-2"
@@ -877,7 +884,10 @@ const SettingsTab: React.FC = () => {
                       type="button"
                       onClick={() => {
                         setEditingRegexIndex(index);
-                        setRegexForm(preset);
+                        setRegexForm({
+                          ...preset,
+                          matchOperator: normalizeMatchOperator(preset.matchOperator)
+                        });
                         setIsRegexModalOpen(true);
                       }}
                       className="p-2 hover:bg-white rounded-full text-slate-500 transition-colors"
@@ -1028,9 +1038,13 @@ const SettingsTab: React.FC = () => {
       >
         <form onSubmit={(e) => {
           e.preventDefault();
+          const normalizedRegexForm = {
+            ...regexForm,
+            matchOperator: normalizeMatchOperator(regexForm.matchOperator)
+          };
           const newPresets = [...(settings.regexPresets || [])];
-          if (editingRegexIndex !== null) newPresets[editingRegexIndex] = regexForm;
-          else newPresets.push(regexForm);
+          if (editingRegexIndex !== null) newPresets[editingRegexIndex] = normalizedRegexForm;
+          else newPresets.push(normalizedRegexForm);
           updateSettings('regexPresets', newPresets);
           setIsRegexModalOpen(false);
         }} className="space-y-4">
@@ -1058,10 +1072,12 @@ const SettingsTab: React.FC = () => {
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-500">匹配操作符</label>
               <select value={regexForm.matchOperator} onChange={e => setRegexForm({...regexForm, matchOperator: e.target.value})} className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm">
-                <option value="regex">正则表达式</option>
+                <option value="">请选择</option>
                 <option value="lt">小于 (Size)</option>
                 <option value="gt">大于 (Size)</option>
                 <option value="eq">等于 (Size)</option>
+                <option value="contains">包含</option>
+                <option value="notContains">不包含</option>
               </select>
             </div>
             <div className="space-y-1">

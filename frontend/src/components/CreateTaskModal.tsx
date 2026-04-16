@@ -26,6 +26,13 @@ interface CreateTaskModalProps {
   initialData?: any;
 }
 
+const normalizeMatchOperator = (matchOperator?: string) => {
+  if (matchOperator === 'regex') {
+    return 'contains';
+  }
+  return matchOperator || '';
+};
+
 const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSuccess, initialData }) => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [regexPresets, setRegexPresets] = useState<RegexPreset[]>([]);
@@ -49,7 +56,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
     taskGroup: '',
     remark: '',
     matchPattern: '',
-    matchOperator: 'regex',
+    matchOperator: '',
     matchValue: '',
     enableCron: false,
     cronExpression: '',
@@ -68,7 +75,11 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
       fetchAccounts();
       fetchRegexPresets();
       if (initialData) {
-        setFormData(prev => ({ ...prev, ...initialData }));
+        setFormData(prev => ({
+          ...prev,
+          ...initialData,
+          matchOperator: normalizeMatchOperator(initialData.matchOperator)
+        }));
       } else {
         // Try to load last target folder from localStorage
         const lastTarget = localStorage.getItem('lastTargetFolder');
@@ -123,7 +134,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
         sourceRegex: preset.sourceRegex || prev.sourceRegex,
         targetRegex: preset.targetRegex || prev.targetRegex,
         matchPattern: preset.matchPattern || prev.matchPattern,
-        matchOperator: preset.matchOperator || prev.matchOperator,
+        matchOperator: normalizeMatchOperator(preset.matchOperator || prev.matchOperator),
         matchValue: preset.matchValue || prev.matchValue
       }));
     }
@@ -179,7 +190,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
     try {
       let endpoint = '/api/tasks';
       let method = 'POST';
-      let body: any = { ...formData };
+      let body: any = {
+        ...formData,
+        matchOperator: normalizeMatchOperator(formData.matchOperator)
+      };
 
       if (isBatchMode) {
         endpoint = '/api/tasks/batch-create';
@@ -511,10 +525,12 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
                       onChange={e => setFormData({...formData, matchOperator: e.target.value})}
                       className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs"
                     >
-                      <option value="regex">正则表达式</option>
+                      <option value="">请选择</option>
                       <option value="lt">小于 (lt)</option>
                       <option value="gt">大于 (gt)</option>
                       <option value="eq">等于 (eq)</option>
+                      <option value="contains">包含 (contains)</option>
+                      <option value="notContains">不包含 (notContains)</option>
                     </select>
                   </div>
                   <div className="space-y-1">

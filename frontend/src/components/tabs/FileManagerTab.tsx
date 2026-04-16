@@ -46,6 +46,7 @@ const FileManagerTab: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [driveLabel, setDriveLabel] = useState('');
   const [isFolderSelectorOpen, setIsFolderSelectorOpen] = useState(false);
+  const [openFileMenuId, setOpenFileMenuId] = useState<string | null>(null);
 
   const fetchAccounts = async () => {
     try {
@@ -94,6 +95,28 @@ const FileManagerTab: React.FC = () => {
       fetchFiles(path[path.length - 1].id);
     }
   }, [selectedAccountId, fetchFiles]);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('[data-file-item-menu]')) {
+        setOpenFileMenuId(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenFileMenuId(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   const handleAccountChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedAccountId(e.target.value);
@@ -356,7 +379,7 @@ const FileManagerTab: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -439,33 +462,46 @@ const FileManagerTab: React.FC = () => {
                             </button>
                           </>
                         )}
-                        <div className="relative group/menu">
-                          <button className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-900 transition-colors">
+                        <div className="relative" data-file-item-menu>
+                          <button
+                            type="button"
+                            onClick={() => setOpenFileMenuId(prev => prev === entry.id ? null : entry.id)}
+                            className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-900 transition-colors"
+                          >
                             <MoreVertical size={18} />
                           </button>
-                          <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 hidden group-hover/menu:block z-20">
-                            <button 
-                              onClick={() => {
-                                navigator.clipboard.writeText(entry.id);
-                                alert('已复制 ID');
-                              }}
-                              className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
-                            >
-                              复制 ID
-                            </button>
-                            <button 
-                              onClick={() => handleRename(entry)}
-                              className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
-                            >
-                              重命名
-                            </button>
-                            <button 
-                              onClick={() => handleDelete([entry])}
-                              className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-red-600 transition-colors"
-                            >
-                              删除
-                            </button>
-                          </div>
+                          {openFileMenuId === entry.id && (
+                            <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-50">
+                              <button
+                                onClick={() => {
+                                  setOpenFileMenuId(null);
+                                  navigator.clipboard.writeText(entry.id);
+                                  alert('已复制 ID');
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
+                              >
+                                复制 ID
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setOpenFileMenuId(null);
+                                  handleRename(entry);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
+                              >
+                                重命名
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setOpenFileMenuId(null);
+                                  handleDelete([entry]);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-red-600 transition-colors"
+                              >
+                                删除
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
