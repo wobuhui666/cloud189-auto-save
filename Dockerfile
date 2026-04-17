@@ -1,4 +1,18 @@
 # 使用受支持的 Node LTS + Debian bookworm，避免 buster 源失效
+FROM node:20-bookworm-slim AS frontend-builder
+
+# 前端构建阶段：镜像构建时即时打包前端，避免本地遗漏 npm run build 导致线上 bundle 过期
+WORKDIR /home/frontend
+
+# 先复制依赖清单命中层缓存
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+# 复制前端源码并构建（vite build.outDir 指向 ../src/public）
+COPY frontend/ ./
+RUN npm run build
+
+
 FROM node:20-bookworm-slim AS builder
 
 # 设置工作目录
@@ -33,7 +47,8 @@ COPY --from=builder /home/node_modules ./node_modules
 
 # 复制构建好的代码
 COPY --from=builder /home/dist ./dist
-COPY --from=builder /home/src/public ./dist/public
+# 使用 frontend-builder 阶段生成的前端产物（覆盖任何旧 bundle）
+COPY --from=frontend-builder /home/src/public ./dist/public
 # 复制cloud189-sdk编译后的代码到./vender/cloud189-sdk/dist
 COPY --from=builder /home/vender/cloud189-sdk/dist ./vender/cloud189-sdk/dist
 

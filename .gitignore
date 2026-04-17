@@ -127,3 +127,8 @@ dist
 /live-*.png
 /settings-static-round*.png
 /login-redesign-preview.png
+
+# Vite 前端构建产物（由 Dockerfile 在镜像构建时生成）
+# login.html 为手写登录页，保留追踪
+/src/public/assets/
+/src/public/index.html

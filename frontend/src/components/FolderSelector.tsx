@@ -228,6 +228,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                           accountName: fav.accountName
                         });
                         onClose();
+                      }
                     }}
                   >
                     <div className="flex flex-col min-w-0">
