@@ -20,6 +20,7 @@
 </div>
 
 ---
+各种cli混用导致bug超级多，正在全力修复
 本项目仅供学习交流，请勿用于非法用途。开发者不对任何资源内容负责。
 精力有限，更新速度可能不是很快，敬请谅解。
 问题反馈与功能请求，请提交 [Issues](https://github.com/wobuhui666/cloud189-auto-save/issues) 
