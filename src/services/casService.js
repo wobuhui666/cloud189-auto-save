@@ -242,7 +242,21 @@ class CasService {
         }
 
         const url = `${UPLOAD_BASE_URL}${uri}?params=${params}`;
-        const response = await got(url, requestOptions).json();
+        let response;
+        try {
+            response = await got(url, requestOptions).json();
+        } catch (err) {
+            // 尝试解析 4xx/5xx 响应体，给出清晰错误（如 InfoSecurityErrorCode）
+            let body = null;
+            try { body = err.response && JSON.parse(err.response.body); } catch (_) {}
+            if (body && body.code === 'InfoSecurityErrorCode') {
+                throw new Error(`CAS秒传被天翼云盘风控拦截(文件MD5黑名单): ${uri}`);
+            }
+            if (body && (body.code || body.msg)) {
+                throw new Error(`CAS上传请求失败 ${uri}: ${body.code || ''} ${body.msg || ''}`.trim());
+            }
+            throw err;
+        }
 
         if (!response || response.code !== 'SUCCESS') {
             const msg = response?.msg || response?.code || 'unknown';

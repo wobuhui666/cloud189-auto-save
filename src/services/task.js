@@ -104,13 +104,9 @@ class TaskService {
             const enableOnlySaveMedia = ConfigService.getConfigValue('task.enableOnlySaveMedia');
             // mediaSuffixs转为小写
             const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase())
-            const hasRootMediaFiles = rootFiles.some(file => this._checkFileSuffix(file, true, mediaSuffixs));
             // 校验文件是否一个满足条件的都没有, 如果都没有 直接跳过
             let shouldContinue = false;
             if (enableOnlySaveMedia && !rootFiles.some(file => this._checkFileSuffix(file, true, mediaSuffixs))) {
-                shouldContinue = true
-            }
-            if (taskDto.enableLazyStrm && !hasRootMediaFiles) {
                 shouldContinue = true
             }
             if (!shouldContinue) {

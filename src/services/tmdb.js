@@ -193,7 +193,8 @@ class TMDBService {
                 voteAverage: response.vote_average,
                 cast: response.credits?.cast || [],
                 type: 'tv',
-                totalSeasons: response.number_of_seasons || 0,     // 同时添加总季数
+                totalSeasons: response.number_of_seasons || 0,
+                totalEpisodes: response.number_of_episodes || 0,
                 seasons: response.seasons,
                 lastEpisodeToAir: response.last_episode_to_air,
                 status: response.status,

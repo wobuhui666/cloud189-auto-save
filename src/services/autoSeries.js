@@ -47,9 +47,11 @@ class AutoSeriesService {
         const taskName = tmdbInfo?.title
             ? `${tmdbInfo.title}${tmdbInfo.releaseDate ? ` (${new Date(tmdbInfo.releaseDate).getFullYear()})` : ''}`
             : normalizedTitle;
-        const totalEpisodes = tmdbInfo?.status === 'Ended'
-            ? Number(tmdbInfo?.lastEpisodeToAir?.episode_number || 0)
-            : 0;
+        const totalEpisodes = Number(tmdbInfo?.totalEpisodes || 0) > 0
+            ? Number(tmdbInfo.totalEpisodes)
+            : (tmdbInfo?.status === 'Ended'
+                ? Number(tmdbInfo?.lastEpisodeToAir?.episode_number || 0)
+                : 0);
 
         if (normalizedMode === 'lazy') {
             return await this._createLazySeries({
@@ -109,9 +111,11 @@ class AutoSeriesService {
 
         const autoCreateConfig = ConfigService.getConfigValue('task.autoCreate', {});
         const targetFolder = String(autoCreateConfig.targetFolder || '').trim();
-        const totalEpisodes = tmdbInfo?.status === 'Ended'
-            ? Number(tmdbInfo?.lastEpisodeToAir?.episode_number || 0)
-            : 0;
+        const totalEpisodes = Number(tmdbInfo?.totalEpisodes || 0) > 0
+            ? Number(tmdbInfo.totalEpisodes)
+            : (tmdbInfo?.status === 'Ended'
+                ? Number(tmdbInfo?.lastEpisodeToAir?.episode_number || 0)
+                : 0);
 
         const tasks = await this.taskService.createTask({
             accountId: account.id,

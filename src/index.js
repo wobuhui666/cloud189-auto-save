@@ -1558,6 +1558,27 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    app.get('/api/tmdb/:type/:id', async (req, res) => {
+        try {
+            const { type, id } = req.params;
+            if (!id) {
+                throw new Error('TMDB ID 不能为空');
+            }
+            if (!['tv', 'movie'].includes(type)) {
+                throw new Error('无效的 TMDB 类型');
+            }
+            const data = type === 'tv'
+                ? await tmdbService.getTVDetails(id)
+                : await tmdbService.getMovieDetails(id);
+            if (!data) {
+                throw new Error('获取 TMDB 详情失败');
+            }
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     // ai重命名
     app.post('/api/files/ai-rename', async (req, res) => {
         try {

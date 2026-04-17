@@ -355,16 +355,50 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
     }
   };
 
+  const handleSelectTmdb = async (result: { id: number; title: string; type?: string }) => {
+    setLoading(true);
+    try {
+      let totalEpisodes = '';
+      if (result.type === 'tv') {
+        const response = await fetch(`/api/tmdb/tv/${result.id}`);
+        const data = await response.json();
+        if (data.success && data.data?.totalEpisodes > 0) {
+          totalEpisodes = String(data.data.totalEpisodes);
+        }
+      }
+
+      setFormData(prev => ({
+        ...prev,
+        taskName: result.title,
+        tmdbId: String(result.id),
+        totalEpisodes
+      }));
+      setTmdbResults([]);
+    } catch (error) {
+      console.error('Failed to fetch TMDB details:', error);
+      setFormData(prev => ({
+        ...prev,
+        taskName: result.title,
+        tmdbId: String(result.id)
+      }));
+      setTmdbResults([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoading(true);
 
     try {
       const normalizedMatchOperator = normalizeMatchOperator(formData.matchOperator);
+      const normalizedTotalEpisodes = Number(formData.totalEpisodes || 0);
       let endpoint = '/api/tasks';
       let method = 'POST';
       let body: Record<string, unknown> = {
         ...formData,
+        totalEpisodes: normalizedTotalEpisodes,
         matchOperator: normalizedMatchOperator
       };
 
@@ -382,7 +416,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
           realFolderId: formData.targetFolderId,
           realFolderName: formData.targetFolder || formData.targetFolderId,
           currentEpisodes: Number(formData.currentEpisodes || 0),
-          totalEpisodes: Number(formData.totalEpisodes || 0),
+          totalEpisodes: normalizedTotalEpisodes,
           status: formData.status,
           shareFolderId,
           shareFolderName,
@@ -615,10 +649,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
                   <button
                     key={result.id}
                     type="button"
-                    onClick={() => {
-                      setFormData(prev => ({ ...prev, taskName: result.title, tmdbId: String(result.id) }));
-                      setTmdbResults([]);
-                    }}
+                    onClick={() => handleSelectTmdb(result)}
                     className="w-full text-left px-3 py-2 hover:bg-white rounded-xl text-sm text-slate-700 transition-colors flex justify-between items-center group"
                   >
                     <span className="truncate">{result.title} ({result.releaseDate?.substring(0, 4)})</span>

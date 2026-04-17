@@ -116,7 +116,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       shareLink: task.shareLink,
       accessCode: '',
       taskName: task.resourceName,
-      totalEpisodes: task.totalEpisodes ? String(task.totalEpisodes) : '',
+      totalEpisodes: task.totalEpisodes !== null && task.totalEpisodes !== undefined && task.totalEpisodes > 0 ? String(task.totalEpisodes) : '',
       currentEpisodes: String(task.currentEpisodes || 0),
       targetFolderId: task.realFolderId || task.targetFolderId,
       targetFolder: task.realFolderName || '',
@@ -434,7 +434,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                 
                 <div className="flex flex-col items-end gap-3">
                   <div className="text-right">
-                    <div className="text-sm font-bold text-slate-900">{task.currentEpisodes} / {task.totalEpisodes || '?'} 集</div>
+                    <div className="text-sm font-bold text-slate-900">{task.currentEpisodes} / {task.totalEpisodes > 0 ? task.totalEpisodes : '?'} 集</div>
                     <div className="w-36 h-2 bg-slate-100 rounded-full mt-2 overflow-hidden">
                       <motion.div 
                         initial={{ width: 0 }}
