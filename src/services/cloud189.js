@@ -230,7 +230,7 @@ class Cloud189Service {
     async listFamilyFiles(folderId = '') {
         const familyId = await this.resolveFamilyId();
         const normalizedFolderId = folderId === '-11' ? '' : (folderId || '');
-        return await this.request(`${Cloud189Service.CLOUD_API_BASE_URL}/family/file/listFiles.action`, {
+        return await this.request('/api/open/family/file/listFiles.action', {
             method: 'GET',
             searchParams: {
                 folderId: normalizedFolderId,
@@ -251,12 +251,14 @@ class Cloud189Service {
         logTaskEvent("创建批量任务")
         logTaskEvent(`batchTaskDto: ${batchTaskDto.toString()}`)
         const payload = { ...batchTaskDto };
-        if ((this.isFamilyAccount() || payload.familyId) && !payload.familyId) {
+        // 去除 null/undefined 字段，避免 form 里出现 "null" 字符串
+        for (const key of Object.keys(payload)) {
+            if (payload[key] == null) delete payload[key];
+        }
+        if (this.isFamilyAccount() && !payload.familyId) {
             payload.familyId = await this.resolveFamilyId();
         }
-        const action = payload.familyId
-            ? `${Cloud189Service.CLOUD_API_BASE_URL}/batch/createBatchTask.action`
-            : '/api/open/batch/createBatchTask.action';
+        const action = '/api/open/batch/createBatchTask.action';
         return await this.request(action, {
             method: 'POST',
             form: payload
@@ -265,9 +267,7 @@ class Cloud189Service {
     // 查询转存任务状态
     async checkTaskStatus(taskId, batchTaskDto = {}) {
         const params = { taskId, type: batchTaskDto.type || "SHARE_SAVE" };
-        const action = (this.isFamilyAccount() || batchTaskDto.familyId)
-            ? `${Cloud189Service.CLOUD_API_BASE_URL}/batch/checkBatchTask.action`
-            : '/api/open/batch/checkBatchTask.action';
+        const action = '/api/open/batch/checkBatchTask.action';
         return await this.request(action, {
             method: 'POST',
             form: params,
@@ -294,7 +294,7 @@ class Cloud189Service {
     async createFolder(folderName, parentFolderId) {
         if (this.isFamilyAccount()) {
             const familyId = await this.resolveFamilyId();
-            return await this.request(`${Cloud189Service.CLOUD_API_BASE_URL}/family/file/createFolder.action`, {
+            return await this.request('/api/open/family/file/createFolder.action', {
                 method: 'POST',
                 searchParams: {
                     folderName,
@@ -324,11 +324,9 @@ class Cloud189Service {
             },
         })
     }
-    // 获取冲突的文件 
+    // 获取冲突的文件
     async getConflictTaskInfo(taskId, batchTaskDto = {}) {
-        const action = (this.isFamilyAccount() || batchTaskDto.familyId)
-            ? `${Cloud189Service.CLOUD_API_BASE_URL}/batch/getConflictTaskInfo.action`
-            : '/api/open/batch/getConflictTaskInfo.action';
+        const action = '/api/open/batch/getConflictTaskInfo.action';
         return await this.request(action , {
             method: 'POST',
             form: {
@@ -340,9 +338,7 @@ class Cloud189Service {
 
     // 处理冲突 taskInfos: [{"fileId":"","fileName":"","isConflict":1,"isFolder":0,"dealWay":1}]
     async manageBatchTask(taskId,targetFolderId, taskInfos, batchTaskDto = {}) {
-        const action = (this.isFamilyAccount() || batchTaskDto.familyId)
-            ? `${Cloud189Service.CLOUD_API_BASE_URL}/batch/manageBatchTask.action`
-            : '/api/open/batch/manageBatchTask.action';
+        const action = '/api/open/batch/manageBatchTask.action';
         return await this.request(action , {
             method: 'POST',
             form: {
@@ -355,10 +351,10 @@ class Cloud189Service {
     }
 
     // 重命名文件
-    async renameFile(fileId, destFileName) { 
+    async renameFile(fileId, destFileName) {
         if (this.isFamilyAccount()) {
             const familyId = await this.resolveFamilyId();
-            return await this.request(`${Cloud189Service.CLOUD_API_BASE_URL}/family/file/renameFile.action`, {
+            return await this.request('/api/open/family/file/renameFile.action', {
                 method: 'GET',
                 searchParams: {
                     fileId,
@@ -390,11 +386,35 @@ class Cloud189Service {
         }
         return null
     }
+
+    // 获取家庭空间根目录ID（用作家庭秒传中转目录）
+    async getFamilyRootFolderId(familyId) {
+        try {
+            const result = await this.request('/api/open/family/file/listFiles.action', {
+                method: 'GET',
+                searchParams: { familyId, folderId: '', needPath: true, pageNum: 1, pageSize: 1 }
+            });
+            const pathItems = Array.isArray(result?.path) ? result.path : [];
+            const familyRoot = [...pathItems].reverse().find((item) =>
+                item && item.fileId && item.fileId !== '-11' && item.fileId !== '-16'
+            );
+            if (familyRoot?.fileId) {
+                return String(familyRoot.fileId);
+            }
+            if (result?.fileListAO?.path?.length > 0) {
+                return String(result.fileListAO.path[0].fileId);
+            }
+            return '';
+        } catch (error) {
+            logTaskEvent(`[家庭中转] 获取家庭根目录ID失败: ${error.message}`);
+            return '';
+        }
+    }
     // 获取网盘直链
     async getDownloadLink(fileId, shareId = null) {
         if (this.isFamilyAccount() && !shareId) {
             const familyId = await this.resolveFamilyId();
-            const response = await this.request(`${Cloud189Service.CLOUD_API_BASE_URL}/family/file/getFileDownloadUrl.action`, {
+            const response = await this.request('/api/open/family/file/getFileDownloadUrl.action', {
                 method: 'GET',
                 searchParams: {
                     fileId,
@@ -469,7 +489,7 @@ class Cloud189Service {
     async getFileDownloadUrl(fileId) {
         if (this.isFamilyAccount()) {
             const familyId = await this.resolveFamilyId();
-            const response = await this.request(`${Cloud189Service.CLOUD_API_BASE_URL}/family/file/getFileDownloadUrl.action`, {
+            const response = await this.request('/api/open/family/file/getFileDownloadUrl.action', {
                 method: 'GET',
                 searchParams: { fileId, familyId }
             });
@@ -496,9 +516,7 @@ class Cloud189Service {
         if (this.isFamilyAccount()) {
             batchTaskDto.familyId = await this.resolveFamilyId();
         }
-        const action = batchTaskDto.familyId
-            ? `${Cloud189Service.CLOUD_API_BASE_URL}/batch/createBatchTask.action`
-            : '/api/open/batch/createBatchTask.action';
+        const action = '/api/open/batch/createBatchTask.action';
         return await this.request(action, {
             method: 'POST',
             form: batchTaskDto
