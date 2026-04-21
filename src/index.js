@@ -818,6 +818,19 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: false, error: error.message });
         }
     });
+
+    // 手动模式：先搜索候选资源，由前端选择后再调用 /api/auto-series 创建
+    app.get('/api/auto-series/search', async (req, res) => {
+        try {
+            const result = await autoSeriesService.searchResources({
+                title: req.query.title,
+                year: req.query.year
+            });
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
     // 根据任务生成STRM文件
     app.post('/api/tasks/strm', async (req, res) => {
         try {

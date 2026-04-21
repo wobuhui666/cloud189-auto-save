@@ -408,26 +408,15 @@ const MediaTab: React.FC = () => {
 
       {/* Emby Settings */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
-            <Tv size={24} className="text-[#0b57d0]" /> Emby 设置
-          </h3>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input 
-              type="checkbox" 
-              className="sr-only peer" 
-              checked={settings.emby.enable}
-              onChange={(e) => updateSetting('emby.enable', e.target.checked)}
-            />
-            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-          </label>
-        </div>
-        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.emby.enable && 'opacity-60 pointer-events-none'}`}>
+        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+          <Tv size={24} className="text-[#0b57d0]" /> Emby 设置
+        </h3>
+        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">Emby 地址</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={settings.emby.serverUrl}
                 onChange={e => updateSetting('emby.serverUrl', e.target.value)}
                 placeholder="http://127.0.0.1:8096"
@@ -436,8 +425,8 @@ const MediaTab: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">API Key</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={settings.emby.apiKey}
                 onChange={e => updateSetting('emby.apiKey', e.target.value)}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
@@ -445,6 +434,19 @@ const MediaTab: React.FC = () => {
             </div>
           </div>
           <div className="space-y-4">
+            <div className="flex items-center gap-6 flex-wrap">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div
+                  onClick={() => updateSetting('emby.enable', !settings.emby.enable)}
+                  className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                    settings.emby.enable ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
+                  }`}
+                >
+                  {settings.emby.enable && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                </div>
+                <span className="text-sm font-medium text-slate-900">启用 Emby 入库通知</span>
+              </label>
+            </div>
             <div className="flex items-center gap-6 flex-wrap">
               <label className="flex items-center gap-3 cursor-pointer">
                 <div

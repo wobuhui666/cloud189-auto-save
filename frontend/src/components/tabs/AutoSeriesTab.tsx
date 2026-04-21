@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, PlayCircle, RefreshCw, AlertCircle, CheckCircle2, X } from 'lucide-react';
+import { Plus, Search, PlayCircle, RefreshCw, AlertCircle, CheckCircle2, X, ArrowLeft, Check } from 'lucide-react';
 import Modal from '../Modal';
 
 interface Account {
@@ -16,22 +16,35 @@ interface AutoSeriesSettings {
 
 type AutoSeriesMode = 'normal' | 'lazy';
 
+interface CandidateResource {
+  messageId?: string;
+  title: string;
+  shareLink: string;
+  score?: number;
+}
+
 const DEFAULT_AUTO_SERIES_MODE: AutoSeriesMode = 'lazy';
 
 const AutoSeriesTab: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [defaults, setDefaults] = useState<AutoSeriesSettings | null>(null);
   const [form, setForm] = useState<{
     title: string;
     year: string;
     mode: AutoSeriesMode;
+    manualSelect: boolean;
   }>({
     title: '',
     year: '',
-    mode: DEFAULT_AUTO_SERIES_MODE
+    mode: DEFAULT_AUTO_SERIES_MODE,
+    manualSelect: false
   });
+  const [candidates, setCandidates] = useState<CandidateResource[]>([]);
+  const [selectedLink, setSelectedLink] = useState<string>('');
+  const [step, setStep] = useState<'form' | 'select'>('form');
 
   useEffect(() => {
     fetchData();
@@ -53,28 +66,34 @@ const AutoSeriesTab: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.title.trim()) {
-      alert('剧名不能为空');
-      return;
-    }
+  const resetModal = () => {
+    setIsModalOpen(false);
+    setForm({ title: '', year: '', mode: DEFAULT_AUTO_SERIES_MODE, manualSelect: false });
+    setCandidates([]);
+    setSelectedLink('');
+    setStep('form');
+  };
 
+  const createTask = async (shareLink?: string, resourceTitle?: string) => {
     setLoading(true);
     try {
       const response = await fetch('/api/auto-series', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify({
+          title: form.title,
+          year: form.year,
+          mode: form.mode,
+          ...(shareLink ? { shareLink, resourceTitle: resourceTitle || '' } : {})
+        })
       });
       const data = await response.json();
       if (data.success) {
         const resultMode: AutoSeriesMode = data.data?.mode === 'normal' ? 'normal' : form.mode;
-        alert(data.data?.taskCount > 0 
+        alert(data.data?.taskCount > 0
           ? `已创建${resultMode === 'lazy' ? '懒转存' : '自动'}任务：${data.data.taskName}`
           : `已生成懒转存STRM：${data.data.taskName}`);
-        setIsModalOpen(false);
-        setForm({ title: '', year: '', mode: DEFAULT_AUTO_SERIES_MODE });
+        resetModal();
       } else {
         alert('自动追剧失败: ' + data.error);
       }
@@ -83,6 +102,58 @@ const AutoSeriesTab: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = async () => {
+    if (!form.title.trim()) {
+      alert('剧名不能为空');
+      return;
+    }
+    setSearching(true);
+    try {
+      const params = new URLSearchParams({ title: form.title.trim() });
+      if (form.year.trim()) params.append('year', form.year.trim());
+      const response = await fetch(`/api/auto-series/search?${params.toString()}`);
+      const data = await response.json();
+      if (data.success) {
+        const list: CandidateResource[] = data.data?.resources || [];
+        if (!list.length) {
+          alert('未搜索到可用资源');
+          return;
+        }
+        setCandidates(list);
+        setSelectedLink(list[0]?.shareLink || '');
+        setStep('select');
+      } else {
+        alert('资源搜索失败: ' + data.error);
+      }
+    } catch (error) {
+      alert('资源搜索失败: ' + (error as Error).message);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.title.trim()) {
+      alert('剧名不能为空');
+      return;
+    }
+    if (form.manualSelect) {
+      await handleSearch();
+      return;
+    }
+    await createTask();
+  };
+
+  const handleConfirmSelection = async () => {
+    if (!selectedLink) {
+      alert('请选择一个资源');
+      return;
+    }
+    const picked = candidates.find(item => item.shareLink === selectedLink);
+    await createTask(selectedLink, picked?.title);
   };
 
   const getAccountName = (id: string) => {
@@ -167,72 +238,156 @@ const AutoSeriesTab: React.FC = () => {
 
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="添加自动追剧"
+        onClose={resetModal}
+        title={step === 'select' ? '选择资源' : '添加自动追剧'}
         footer={null}
       >
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">剧集名称</label>
-            <input 
-              type="text" 
-              value={form.title}
-              onChange={e => setForm({...form, title: e.target.value})}
-              className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-              placeholder="例如: 庆余年 第二季"
-              required
-            />
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
+        {step === 'form' ? (
+          <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">年份 (可选)</label>
-              <input 
-                type="text" 
-                value={form.year}
-                onChange={e => setForm({...form, year: e.target.value})}
+              <label className="text-sm font-medium text-slate-700">剧集名称</label>
+              <input
+                type="text"
+                value={form.title}
+                onChange={e => setForm({ ...form, title: e.target.value })}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                placeholder="2024"
+                placeholder="例如: 庆余年 第二季"
+                required
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">模式</label>
-              <select 
-                value={form.mode}
-                onChange={e => setForm({...form, mode: e.target.value as AutoSeriesMode})}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700">年份 (可选)</label>
+                <input
+                  type="text"
+                  value={form.year}
+                  onChange={e => setForm({ ...form, year: e.target.value })}
+                  className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  placeholder="2024"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700">模式</label>
+                <select
+                  value={form.mode}
+                  onChange={e => setForm({ ...form, mode: e.target.value as AutoSeriesMode })}
+                  className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                >
+                  <option value="lazy">懒转存 (生成STRM)</option>
+                  <option value="normal">自动转存 (下载文件)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* 手动选择资源开关 —— 默认关闭 */}
+            <label className="flex items-start gap-3 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-100/70 transition-colors">
+              <input
+                type="checkbox"
+                checked={form.manualSelect}
+                onChange={e => setForm({ ...form, manualSelect: e.target.checked })}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/40"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-slate-800">手动选择资源</div>
+                <div className="text-xs text-slate-500 mt-0.5">
+                  开启后将先展示候选资源列表，由你确认后再创建任务；关闭则自动挑选最匹配的资源。
+                </div>
+              </div>
+            </label>
+
+            <div className="bg-[#f8fafd] p-4 rounded-2xl border border-slate-100">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                <span className="font-bold text-[#0b57d0]">说明：</span>
+                系统将根据剧名在网盘资源中搜索并自动创建转存任务。如果选择“懒转存”，则优先生成 STRM 文件而不占用网盘空间。
+              </p>
+            </div>
+
+            <div className="flex gap-4 pt-4">
+              <button
+                type="button"
+                onClick={resetModal}
+                className="flex-1 px-6 py-3 border border-slate-300 text-slate-700 rounded-full font-medium hover:bg-slate-50 transition-all"
               >
-                <option value="lazy">懒转存 (生成STRM)</option>
-                <option value="normal">自动转存 (下载文件)</option>
-              </select>
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={loading || searching}
+                className="flex-1 px-6 py-3 bg-[#0b57d0] text-white rounded-full font-medium hover:bg-[#0b57d0]/90 transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {(loading || searching) && <RefreshCw size={18} className="animate-spin" />}
+                {form.manualSelect ? '搜索资源' : '开始追剧'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-5">
+            <div className="text-xs text-slate-500">
+              共找到 <span className="font-semibold text-slate-800">{candidates.length}</span> 条候选资源，默认选中匹配度最高的一项。
+            </div>
+            <div className="max-h-[360px] overflow-y-auto space-y-2 pr-1">
+              {candidates.map((item, index) => {
+                const active = item.shareLink === selectedLink;
+                return (
+                  <button
+                    key={item.shareLink || index}
+                    type="button"
+                    onClick={() => setSelectedLink(item.shareLink)}
+                    className={`w-full text-left p-4 rounded-2xl border transition-all flex items-start gap-3 ${
+                      active
+                        ? 'border-[#0b57d0] bg-[#eef4fe] shadow-sm'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div
+                      className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
+                        active ? 'border-[#0b57d0] bg-[#0b57d0] text-white' : 'border-slate-300'
+                      }`}
+                    >
+                      {active && <Check size={12} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-slate-900 line-clamp-2 leading-snug">{item.title}</div>
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+                        {typeof item.score === 'number' && (
+                          <span className="px-1.5 py-0.5 bg-slate-100 rounded-md">匹配度 {item.score}</span>
+                        )}
+                        <span className="truncate" title={item.shareLink}>{item.shareLink}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setStep('form')}
+                className="px-5 py-3 border border-slate-300 text-slate-700 rounded-full font-medium hover:bg-slate-50 transition-all flex items-center gap-2"
+              >
+                <ArrowLeft size={16} /> 返回
+              </button>
+              <button
+                type="button"
+                onClick={resetModal}
+                className="px-5 py-3 border border-slate-300 text-slate-700 rounded-full font-medium hover:bg-slate-50 transition-all"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSelection}
+                disabled={loading || !selectedLink}
+                className="flex-1 px-6 py-3 bg-[#0b57d0] text-white rounded-full font-medium hover:bg-[#0b57d0]/90 transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {loading && <RefreshCw size={18} className="animate-spin" />}
+                使用该资源创建任务
+              </button>
             </div>
           </div>
-
-          <div className="bg-[#f8fafd] p-4 rounded-2xl border border-slate-100">
-            <p className="text-xs text-slate-500 leading-relaxed">
-              <span className="font-bold text-[#0b57d0]">说明：</span>
-              系统将根据剧名在网盘资源中搜索并自动创建转存任务。如果选择“懒转存”，则优先生成 STRM 文件而不占用网盘空间。
-            </p>
-          </div>
-
-          <div className="flex gap-4 pt-4">
-            <button 
-              type="button"
-              onClick={() => setIsModalOpen(false)}
-              className="flex-1 px-6 py-3 border border-slate-300 text-slate-700 rounded-full font-medium hover:bg-slate-50 transition-all"
-            >
-              取消
-            </button>
-            <button 
-              type="submit"
-              disabled={loading}
-              className="flex-1 px-6 py-3 bg-[#0b57d0] text-white rounded-full font-medium hover:bg-[#0b57d0]/90 transition-all shadow-md flex items-center justify-center gap-2"
-            >
-              {loading && <RefreshCw size={18} className="animate-spin" />}
-              开始追剧
-            </button>
-          </div>
-        </form>
+        )}
       </Modal>
     </div>
   );

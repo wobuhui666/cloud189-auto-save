@@ -10,10 +10,12 @@ class AutoSeriesService {
         this.tmdbService = new TMDBService();
     }
 
-    async createByTitle({ title, year = '', mode = 'lazy' }) {
+    async createByTitle({ title, year = '', mode = 'lazy', shareLink = '', resourceTitle = '' }) {
         const normalizedTitle = String(title || '').trim();
         const normalizedYear = String(year || '').trim();
         const normalizedMode = this._normalizeMode(mode);
+        const manualShareLink = String(shareLink || '').trim();
+        const manualResourceTitle = String(resourceTitle || '').trim();
         if (!normalizedTitle) {
             throw new Error('剧名不能为空');
         }
@@ -39,7 +41,9 @@ class AutoSeriesService {
         }
 
         const tmdbInfo = await this._resolveTmdb(normalizedTitle, normalizedYear);
-        const resource = await this._findBestResource(normalizedTitle, normalizedYear, tmdbInfo);
+        const resource = manualShareLink
+            ? { title: manualResourceTitle || normalizedTitle, cloudLinks: [{ link: manualShareLink }] }
+            : await this._findBestResource(normalizedTitle, normalizedYear, tmdbInfo);
         if (!resource?.cloudLinks?.[0]?.link) {
             throw new Error('未找到可用的天翼分享资源');
         }
@@ -164,7 +168,56 @@ class AutoSeriesService {
         }
     }
 
-    async _findBestResource(title, year, tmdbInfo) {
+    async searchResources({ title, year = '' }) {
+        const normalizedTitle = String(title || '').trim();
+        const normalizedYear = String(year || '').trim();
+        if (!normalizedTitle) {
+            throw new Error('剧名不能为空');
+        }
+
+        const tmdbInfo = await this._resolveTmdb(normalizedTitle, normalizedYear);
+        const resources = await this._fetchResources(normalizedTitle, tmdbInfo);
+        if (!resources.length) {
+            return { tmdbInfo: this._pickTmdbBrief(tmdbInfo), resources: [] };
+        }
+
+        const titleCandidates = [
+            normalizedTitle,
+            tmdbInfo?.title,
+            tmdbInfo?.originalTitle
+        ].filter(Boolean).map(item => String(item).toLowerCase());
+        const targetYear = normalizedYear
+            || (tmdbInfo?.releaseDate ? String(new Date(tmdbInfo.releaseDate).getFullYear()) : '');
+
+        const scored = resources
+            .map(resource => ({
+                messageId: resource.messageId,
+                title: resource.title,
+                shareLink: resource.cloudLinks?.[0]?.link || '',
+                score: this._scoreResource(resource, titleCandidates, targetYear)
+            }))
+            .filter(item => item.shareLink)
+            .sort((left, right) => right.score - left.score);
+
+        return {
+            tmdbInfo: this._pickTmdbBrief(tmdbInfo),
+            resources: scored
+        };
+    }
+
+    _pickTmdbBrief(tmdbInfo) {
+        if (!tmdbInfo) {
+            return null;
+        }
+        return {
+            id: tmdbInfo.id || null,
+            title: tmdbInfo.title || '',
+            originalTitle: tmdbInfo.originalTitle || '',
+            releaseDate: tmdbInfo.releaseDate || ''
+        };
+    }
+
+    async _fetchResources(title, tmdbInfo) {
         const searchKeywords = [];
         if (tmdbInfo?.title) {
             searchKeywords.push(tmdbInfo.title);
@@ -177,14 +230,17 @@ class AutoSeriesService {
         }
 
         const uniqueKeywords = [...new Set(searchKeywords.filter(Boolean))];
-        let resources = [];
         for (const keyword of uniqueKeywords) {
             const result = await cloudSaverSDK.search(keyword);
             if (result?.length) {
-                resources = result;
-                break;
+                return result;
             }
         }
+        return [];
+    }
+
+    async _findBestResource(title, year, tmdbInfo) {
+        const resources = await this._fetchResources(title, tmdbInfo);
         if (!resources.length) {
             return null;
         }
