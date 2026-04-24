@@ -8,6 +8,9 @@ WORKDIR /home/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
+# 复制根版本文件，供 vite.config.ts 读取应用版本
+COPY package.json /home/package.json
+
 # 复制前端源码并构建（vite build.outDir 指向 ../src/public）
 COPY frontend/ ./
 RUN npm run build
