@@ -40,6 +40,8 @@ import SettingsTab from './components/tabs/SettingsTab';
 // --- Types ---
 type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'settings';
 
+const appVersionLabel = `v${__APP_VERSION__}`;
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('task');
   const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
@@ -140,7 +142,7 @@ export default function App() {
             >
               <div className="px-6 py-8">
                 <h1 className="text-2xl font-medium text-[var(--text-primary)]">天翼自动转存</h1>
-                <p className="text-sm text-[var(--text-secondary)] mt-1">Material Design 3</p>
+                <p className="text-sm text-[var(--text-secondary)] mt-1">{appVersionLabel}</p>
               </div>
               <div className="flex-1 px-3 space-y-1 overflow-y-auto custom-scrollbar">
                 {tabs.map(tab => (
@@ -179,7 +181,7 @@ export default function App() {
       <nav className="w-72 bg-[var(--bg-surface)] flex flex-col hidden md:flex z-10 border-r border-[var(--border-color)]">
         <div className="px-8 py-8">
           <h1 className="text-2xl font-medium text-[var(--text-primary)]">天翼自动转存</h1>
-          <p className="text-sm text-[var(--text-secondary)] mt-1">Material Design 3</p>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">{appVersionLabel}</p>
         </div>
         <div className="flex-1 px-3 space-y-1 overflow-y-auto pb-6 custom-scrollbar">
           {tabs.map(tab => (
