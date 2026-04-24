@@ -32,7 +32,10 @@ class MessageManager {
                 botToken: config.telegram.botToken,
                 chatId: config.telegram.chatId,
                 proxy: config.telegram.proxy,
-                cfProxyDomain: config.telegram.cfProxyDomain
+                cfProxyDomain: config.telegram.cfProxyDomain,
+                notifyOnSuccess: config.telegram.notifyOnSuccess ?? true,
+                notifyOnFailure: config.telegram.notifyOnFailure ?? true,
+                notifyOnScrape: config.telegram.notifyOnScrape ?? false,
             });
             telegramService.initialize();
             this.services.push(telegramService);
@@ -73,9 +76,9 @@ class MessageManager {
      * @param {string} message - 要发送的消息内容
      * @returns {Promise<Array<boolean>>} - 各个服务的发送结果
      */
-    async sendMessage(message) {
+    async sendMessage(message, options = {}) {
         const results = await Promise.all(
-            this.services.map(service => service.sendMessage(message))
+            this.services.map(service => service.sendMessage(message, options))
         );
         return results;
     }
@@ -85,9 +88,9 @@ class MessageManager {
      * @param {string} message - 要发送的消息内容
      * @returns {Promise<Array<boolean>>} - 各个服务的发送结果
      */
-    async sendScrapeMessage(message) {
+    async sendScrapeMessage(message, options = {}) {
         const results = await Promise.all(
-            this.services.map(service => service.sendScrapeMessage(message))
+            this.services.map(service => service.sendScrapeMessage(message, options))
         );
         return results;
     }

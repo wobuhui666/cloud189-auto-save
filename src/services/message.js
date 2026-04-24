@@ -8,19 +8,26 @@ class MessageUtil {
     }
 
     _init() {
-        const settings = ConfigService.getConfig()
-        // 初始化消息推送配置
+        const settings = ConfigService.getConfig();
+        const telegramBotSettings = settings.telegram?.bot || {};
+        const telegramEnabled = telegramBotSettings.enable ?? settings.telegram?.enable ?? false;
+        const telegramBotToken = telegramBotSettings.botToken || settings.telegram?.botToken || '';
+        const telegramChatId = telegramBotSettings.chatId || settings.telegram?.chatId || '';
+
         messageManager.initialize({
             wework: {
                 enabled: settings.wecom?.enable || false,
                 webhook: settings.wecom?.webhook || '',
             },
             telegram: {
-                enabled: settings.telegram?.enable || false,
-                botToken: settings.telegram?.botToken || '',
-                chatId: settings.telegram?.chatId || '',
+                enabled: telegramEnabled,
+                botToken: telegramBotToken,
+                chatId: telegramChatId,
+                notifyOnSuccess: settings.telegram?.notifyOnSuccess ?? true,
+                notifyOnFailure: settings.telegram?.notifyOnFailure ?? true,
+                notifyOnScrape: settings.telegram?.notifyOnScrape ?? false,
                 proxy: {
-                    type: "http",
+                    type: 'http',
                     host: settings.proxy?.host || '',
                     port: settings.proxy?.port || '',
                     username: settings.proxy?.username || '',
@@ -32,12 +39,12 @@ class MessageUtil {
                 enabled: settings.wxpusher?.enable || false,
                 spt: settings.wxpusher?.spt || ''
             },
-            bark:{
+            bark: {
                 enabled: settings.bark?.enable || false,
                 serverUrl: settings.bark?.serverUrl || '',
                 key: settings.bark?.key || '',
             },
-            pushplus:{
+            pushplus: {
                 enabled: settings.pushplus?.enable || false,
                 token: settings.pushplus?.token || '',
                 topic: settings.pushplus?.topic || '',
@@ -55,12 +62,12 @@ class MessageUtil {
     }
 
     // 发送消息
-    async sendMessage(message) {
-        await messageManager.sendMessage(message);
+    async sendMessage(message, options = {}) {
+        await messageManager.sendMessage(message, options);
     }
     // 发送刮削消息
-    async sendScrapeMessage(message) {
-        await messageManager.sendScrapeMessage(message);
+    async sendScrapeMessage(message, options = {}) {
+        await messageManager.sendScrapeMessage(message, options);
     }
 }
 

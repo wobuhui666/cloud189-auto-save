@@ -81,7 +81,7 @@ class SchedulerService {
                 }
                 const result = await taskService.processTask(latestTask);
                 if (result) {
-                    this.messageUtil.sendMessage(result)
+                    this.messageUtil.sendMessage(result, { level: 'success' });
                 }
                 logTaskEvent(`================================`);
             });

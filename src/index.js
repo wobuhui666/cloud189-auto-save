@@ -30,10 +30,43 @@ const { StreamProxyService } = require('./services/streamProxy');
 const { LazyShareStrmService } = require('./services/lazyShareStrm');
 const { OrganizerService } = require('./services/organizer');
 const { AutoSeriesService } = require('./services/autoSeries');
+const TelegramService = require('./services/message/TelegramService');
 
 const appPort = Number(process.env.PORT || 3000);
 let embyStandaloneProxyServer = null;
 const publicDir = path.join(__dirname, 'public');
+
+const normalizeTelegramSettings = (settings = {}) => {
+    const normalized = JSON.parse(JSON.stringify(settings || {}));
+    normalized.telegram = normalized.telegram || {};
+    normalized.telegram.bot = normalized.telegram.bot || {};
+
+    if (normalized.telegram.enable != null && normalized.telegram.bot.enable == null) {
+        normalized.telegram.bot.enable = normalized.telegram.enable;
+    }
+    if (normalized.telegram.botToken && !normalized.telegram.bot.botToken) {
+        normalized.telegram.bot.botToken = normalized.telegram.botToken;
+    }
+    if (normalized.telegram.chatId && !normalized.telegram.bot.chatId) {
+        normalized.telegram.bot.chatId = normalized.telegram.chatId;
+    }
+
+    normalized.telegram.bot.enable = !!normalized.telegram.bot.enable;
+    normalized.telegram.bot.botToken = normalized.telegram.bot.botToken || '';
+    normalized.telegram.bot.chatId = normalized.telegram.bot.chatId || '';
+    normalized.telegram.notifyOnSuccess = normalized.telegram.notifyOnSuccess ?? true;
+    normalized.telegram.notifyOnFailure = normalized.telegram.notifyOnFailure ?? true;
+    normalized.telegram.notifyOnScrape = normalized.telegram.notifyOnScrape ?? false;
+    normalized.telegram.bot.allowedChatIds = Array.isArray(normalized.telegram.bot.allowedChatIds)
+        ? [...new Set(normalized.telegram.bot.allowedChatIds.map(id => String(id).trim()).filter(Boolean))]
+        : [];
+    normalized.telegram.bot.adminChatIds = Array.isArray(normalized.telegram.bot.adminChatIds)
+        ? [...new Set(normalized.telegram.bot.adminChatIds.map(id => String(id).trim()).filter(Boolean))]
+        : [];
+
+    return normalized;
+};
+
 const corsOptions = {
     origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -458,7 +491,11 @@ AppDataSource.initialize().then(async () => {
     await botManager.handleBotStatus(
         ConfigService.getConfigValue('telegram.bot.botToken'),
         ConfigService.getConfigValue('telegram.bot.chatId'),
-        ConfigService.getConfigValue('telegram.bot.enable')
+        ConfigService.getConfigValue('telegram.bot.enable'),
+        {
+            allowedChatIds: ConfigService.getConfigValue('telegram.bot.allowedChatIds') || [],
+            adminChatIds: ConfigService.getConfigValue('telegram.bot.adminChatIds') || [],
+        }
     );
     // 初始化缓存管理器
     const folderCache = new CacheManager(parseInt(600));
@@ -1294,23 +1331,59 @@ AppDataSource.initialize().then(async () => {
 
     // 系统设置
     app.get('/api/settings', async (req, res) => {
-        res.json({success: true, data: ConfigService.getConfig()})
+        res.json({success: true, data: normalizeTelegramSettings(ConfigService.getConfig())})
     })
 
     app.post('/api/settings', async (req, res) => {
-        const settings = req.body;
+        const settings = normalizeTelegramSettings(req.body);
         SchedulerService.handleScheduleTasks(settings,taskService);
         ConfigService.setConfig(settings)
         await botManager.handleBotStatus(
             settings.telegram?.bot?.botToken,
             settings.telegram?.bot?.chatId,
-            settings.telegram?.bot?.enable
+            settings.telegram?.bot?.enable,
+            {
+                allowedChatIds: settings.telegram?.bot?.allowedChatIds || [],
+                adminChatIds: settings.telegram?.bot?.adminChatIds || [],
+            }
         );
         // 修改配置, 重新实例化消息推送
         messageUtil.updateConfig()
         Cloud189Service.setProxy()
         await embyPrewarmService.reload();
         res.json({success: true, data: null})
+    })
+
+    app.post('/api/settings/telegram/test', async (req, res) => {
+        try {
+            const settings = normalizeTelegramSettings({ telegram: req.body?.telegram || req.body || {} });
+            const botToken = settings.telegram?.bot?.botToken;
+            const chatId = settings.telegram?.bot?.chatId;
+            const proxyDomain = settings.telegram?.proxyDomain || '';
+            if (!botToken || !chatId) {
+                return res.json({ success: false, error: 'Bot Token 和 Chat ID 不能为空' });
+            }
+            const telegramService = new TelegramService({
+                botToken,
+                chatId,
+                cfProxyDomain: proxyDomain,
+                proxy: {
+                    type: 'http',
+                    host: ConfigService.getConfigValue('proxy.host') || '',
+                    port: ConfigService.getConfigValue('proxy.port') || '',
+                    username: ConfigService.getConfigValue('proxy.username') || '',
+                    password: ConfigService.getConfigValue('proxy.password') || '',
+                }
+            });
+            telegramService.initialize();
+            const ok = await telegramService.sendMessage('✅ Telegram 配置测试成功\n\n如果你收到这条消息，说明 Bot Token、Chat ID 和网络配置均可用。');
+            if (!ok) {
+                return res.json({ success: false, error: '发送测试消息失败，请检查 Bot Token、Chat ID 或网络配置' });
+            }
+            return res.json({ success: true, data: null });
+        } catch (error) {
+            return res.json({ success: false, error: error.message || '测试失败' });
+        }
     })
 
 

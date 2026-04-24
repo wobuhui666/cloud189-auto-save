@@ -912,7 +912,7 @@ class TaskService {
             message.splice(5, message.length - 10, '├─ ...');
         }
         message.length > 0 && logTaskEvent(`${task.resourceName}自动重命名完成: \n${message.join('\n')}`)
-        message.length > 0 && this.messageUtil.sendMessage(`${task.resourceName}自动重命名: \n${message.join('\n')}`);
+        message.length > 0 && this.messageUtil.sendMessage(`${task.resourceName}自动重命名: \n${message.join('\n')}`, { level: 'success' });
     }
 
     // 根据AI分析结果生成新文件名
@@ -1114,7 +1114,7 @@ class TaskService {
             await new Promise(resolve => setTimeout(resolve, 500));
         }
         if (saveResults.length > 0) {
-            this.messageUtil.sendMessage(saveResults.join("\n\n"))
+            this.messageUtil.sendMessage(saveResults.join("\n\n"), { level: 'success' })
         }
         logTaskEvent(`================================`);
         return saveResults
@@ -1237,7 +1237,7 @@ class TaskService {
         }
         
         if (saveResults.length > 0) {
-            this.messageUtil.sendMessage(saveResults.join("\n\n"));
+            this.messageUtil.sendMessage(saveResults.join("\n\n"), { level: 'success' });
         }
         logTaskEvent(`================================`);
         return saveResults;
@@ -1312,7 +1312,7 @@ class TaskService {
         }
 
         if (messages.length > 0) {
-            this.messageUtil.sendMessage(messages.join('\n\n'));
+            this.messageUtil.sendMessage(messages.join('\n\n'), { level: 'success' });
         }
         return messages;
     }
@@ -1547,7 +1547,7 @@ class TaskService {
             }
             const lazyShareStrmService = new LazyShareStrmService(this.accountRepo, this);
             const message = await lazyShareStrmService.generateFromTask(task, fileList, overwrite);
-            this.messageUtil.sendMessage(message);
+            this.messageUtil.sendMessage(message, { level: 'success' });
             return;
         }
         const cloud189 = Cloud189Service.getInstance(account);
@@ -1558,7 +1558,7 @@ class TaskService {
         }
         const strmService = new StrmService()
         const message = await strmService.generate(task, fileList, overwrite);
-        this.messageUtil.sendMessage(message);
+        this.messageUtil.sendMessage(message, { level: 'success' });
     }
     // 根据accountId获取账号
     async _getAccountById(accountId) {

@@ -67,14 +67,14 @@ class TaskEventHandler {
             if (task.enableLazyStrm) {
                 const lazyShareStrmService = new LazyShareStrmService(taskService.accountRepo, taskService);
                 const message = await lazyShareStrmService.generateFromTask(task, taskCompleteEventDto.fileList, overwriteStrm);
-                this.messageUtil.sendMessage(message);
+                this.messageUtil.sendMessage(message, { level: 'success' });
                 return;
             }
             const strmService = new StrmService();
             // 获取文件列表
             const fileList = await taskService.getFilesByTask(task)
             const message = await strmService.generate(task, fileList, overwriteStrm);
-            this.messageUtil.sendMessage(message);
+            this.messageUtil.sendMessage(message, { level: 'success' });
         } catch (error) {
             console.error(error);
             logTaskEvent(`生成STRM文件失败: ${error.message}`);
@@ -118,7 +118,7 @@ class TaskEventHandler {
                             rating: mediaDetails.voteAverage,
                             type: mediaDetails.type
                         }
-                        this.messageUtil.sendScrapeMessage(message);
+                        this.messageUtil.sendScrapeMessage(message, { level: 'scrape' });
                     }
                 }
             }

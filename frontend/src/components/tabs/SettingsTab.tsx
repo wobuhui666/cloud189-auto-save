@@ -61,10 +61,15 @@ interface SettingsData {
     proxyDomain: string;
     botToken: string;
     chatId: string;
+    notifyOnSuccess?: boolean;
+    notifyOnFailure?: boolean;
+    notifyOnScrape?: boolean;
     bot: {
       enable: boolean;
       botToken: string;
       chatId: string;
+      allowedChatIds: string[];
+      adminChatIds: string[];
     }
   };
   wxpusher: {
@@ -162,7 +167,10 @@ const initialSettings: SettingsData = {
     proxyDomain: '',
     botToken: '',
     chatId: '',
-    bot: { enable: false, botToken: '', chatId: '' }
+    notifyOnSuccess: true,
+    notifyOnFailure: true,
+    notifyOnScrape: false,
+    bot: { enable: false, botToken: '', chatId: '', allowedChatIds: [], adminChatIds: [] }
   },
   wxpusher: { enable: false, spt: '' },
   proxy: {
@@ -226,7 +234,27 @@ const SettingsTab: React.FC = () => {
       const response = await fetch('/api/settings');
       const data = await response.json();
       if (data.success) {
-        setSettings(prev => ({ ...data.data, regexPresets: prev.regexPresets }));
+        const loaded = data.data || {};
+        const normalized = {
+          ...loaded,
+          telegram: {
+            enable: loaded.telegram?.enable ?? loaded.telegram?.bot?.enable ?? false,
+            proxyDomain: loaded.telegram?.proxyDomain || '',
+            botToken: loaded.telegram?.botToken || loaded.telegram?.bot?.botToken || '',
+            chatId: loaded.telegram?.chatId || loaded.telegram?.bot?.chatId || '',
+            notifyOnSuccess: loaded.telegram?.notifyOnSuccess ?? true,
+            notifyOnFailure: loaded.telegram?.notifyOnFailure ?? true,
+            notifyOnScrape: loaded.telegram?.notifyOnScrape ?? false,
+            bot: {
+              enable: loaded.telegram?.bot?.enable ?? loaded.telegram?.enable ?? false,
+              botToken: loaded.telegram?.bot?.botToken || loaded.telegram?.botToken || '',
+              chatId: loaded.telegram?.bot?.chatId || loaded.telegram?.chatId || '',
+              allowedChatIds: loaded.telegram?.bot?.allowedChatIds || [],
+              adminChatIds: loaded.telegram?.bot?.adminChatIds || [],
+            }
+          }
+        };
+        setSettings(prev => ({ ...normalized, regexPresets: prev.regexPresets }));
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -263,10 +291,24 @@ const SettingsTab: React.FC = () => {
     setSaving(true);
     try {
       const { regexPresets, ...mainSettings } = settings;
+      const normalizedSettings = {
+        ...mainSettings,
+        telegram: {
+          ...mainSettings.telegram,
+          enable: mainSettings.telegram.bot.enable,
+          botToken: mainSettings.telegram.bot.botToken,
+          chatId: mainSettings.telegram.bot.chatId,
+          bot: {
+            ...mainSettings.telegram.bot,
+            allowedChatIds: [...new Set((mainSettings.telegram.bot.allowedChatIds || []).map(v => String(v).trim()).filter(Boolean))],
+            adminChatIds: [...new Set((mainSettings.telegram.bot.adminChatIds || []).map(v => String(v).trim()).filter(Boolean))],
+          }
+        }
+      };
       const response = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mainSettings)
+        body: JSON.stringify(normalizedSettings)
       });
       const data = await response.json();
       if (data.success) {
@@ -312,6 +354,37 @@ const SettingsTab: React.FC = () => {
       current[parts[parts.length - 1]] = value;
       return newSettings;
     });
+  };
+
+  const parseIdList = (raw: string) => [...new Set(raw.split('\n').map(v => v.trim()).filter(Boolean))];
+
+  const testTelegramConfig = async () => {
+    try {
+      const response = await fetch('/api/settings/telegram/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegram: {
+            proxyDomain: settings.telegram.proxyDomain,
+            bot: {
+              enable: settings.telegram.bot.enable,
+              botToken: settings.telegram.bot.botToken,
+              chatId: settings.telegram.bot.chatId,
+              allowedChatIds: settings.telegram.bot.allowedChatIds,
+              adminChatIds: settings.telegram.bot.adminChatIds,
+            }
+          }
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        alert('测试消息已发送，请到 Telegram 查看');
+      } else {
+        alert('测试失败: ' + data.error);
+      }
+    } catch (error) {
+      alert('测试失败: ' + (error as Error).message);
+    }
   };
 
   // Custom Push Handlers
@@ -612,50 +685,132 @@ const SettingsTab: React.FC = () => {
             <Send size={24} className="text-[#0b57d0]" /> Telegram 机器人
           </h3>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input 
-              type="checkbox" 
-              className="sr-only peer" 
-              checked={settings.telegram.enable}
-              onChange={(e) => updateSettings('telegram.enable', e.target.checked)}
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={settings.telegram.bot.enable}
+              onChange={(e) => {
+                updateSettings('telegram.bot.enable', e.target.checked);
+                updateSettings('telegram.enable', e.target.checked);
+              }}
             />
             <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
           </label>
         </div>
-        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.telegram.enable && 'opacity-60 pointer-events-none'}`}>
-          <p className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed">
-            启用后，你可以通过 Telegram 机器人直接管理任务、切换账号、搜索资源以及接收任务状态推送。
-          </p>
+        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.telegram.bot.enable && 'opacity-60 pointer-events-none'}`}>
+          <div className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed space-y-2">
+            <p>启用后，你可以通过 Telegram 机器人直接管理任务、切换账号、搜索资源以及接收任务状态推送。</p>
+            <p>1. Bot Token 可通过 @BotFather 创建机器人后获取。</p>
+            <p>2. Chat ID 需要先给机器人发消息，再从更新记录或测试消息里确认。</p>
+            <p>3. 允许使用的 Chat ID 用于白名单，管理员 Chat ID 额外拥有删除、重试、执行全部等权限。</p>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">Bot Token</label>
-              <input 
-                type="password" 
-                value={settings.telegram.botToken}
-                onChange={(e) => updateSettings('telegram.botToken', e.target.value)}
+              <input
+                type="password"
+                value={settings.telegram.bot.botToken}
+                onChange={(e) => {
+                  updateSettings('telegram.bot.botToken', e.target.value);
+                  updateSettings('telegram.botToken', e.target.value);
+                }}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
                 placeholder="123456789:ABCDefgh..."
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Chat ID</label>
-              <input 
-                type="text" 
-                value={settings.telegram.chatId}
-                onChange={(e) => updateSettings('telegram.chatId', e.target.value)}
+              <label className="text-sm font-medium text-slate-700">默认 Chat ID</label>
+              <input
+                type="text"
+                value={settings.telegram.bot.chatId}
+                onChange={(e) => {
+                  updateSettings('telegram.bot.chatId', e.target.value);
+                  updateSettings('telegram.chatId', e.target.value);
+                }}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
                 placeholder="例如：123456789"
               />
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium text-slate-700">反代 API 域名 (可选)</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={settings.telegram.proxyDomain}
                 onChange={(e) => updateSettings('telegram.proxyDomain', e.target.value)}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                placeholder="例如：api.telegram.org (留空使用官方地址)"
+                placeholder="例如：https://api.telegram.org 或你自己的反代地址"
               />
             </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">允许使用的 Chat ID 列表</label>
+              <textarea
+                value={(settings.telegram.bot.allowedChatIds || []).join('\n')}
+                onChange={(e) => updateSettings('telegram.bot.allowedChatIds', parseIdList(e.target.value))}
+                rows={4}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="一行一个 Chat ID；为空时回退到上方默认 Chat ID"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">管理员 Chat ID 列表</label>
+              <textarea
+                value={(settings.telegram.bot.adminChatIds || []).join('\n')}
+                onChange={(e) => updateSettings('telegram.bot.adminChatIds', parseIdList(e.target.value))}
+                rows={3}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="一行一个 Chat ID；为空时默认允许用户都拥有管理员权限"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <div
+                onClick={() => updateSettings('telegram.notifyOnSuccess', !settings.telegram.notifyOnSuccess)}
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                  settings.telegram.notifyOnSuccess ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
+                }`}
+              >
+                {settings.telegram.notifyOnSuccess && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+              </div>
+              <div>
+                <span className="text-sm font-medium text-slate-900">成功通知</span>
+              </div>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <div
+                onClick={() => updateSettings('telegram.notifyOnFailure', !settings.telegram.notifyOnFailure)}
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                  settings.telegram.notifyOnFailure ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
+                }`}
+              >
+                {settings.telegram.notifyOnFailure && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+              </div>
+              <div>
+                <span className="text-sm font-medium text-slate-900">失败通知</span>
+              </div>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <div
+                onClick={() => updateSettings('telegram.notifyOnScrape', !settings.telegram.notifyOnScrape)}
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                  settings.telegram.notifyOnScrape ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
+                }`}
+              >
+                {settings.telegram.notifyOnScrape && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+              </div>
+              <div>
+                <span className="text-sm font-medium text-slate-900">刮削通知</span>
+              </div>
+            </label>
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={testTelegramConfig}
+              className="px-5 py-3 bg-white border border-slate-300 rounded-2xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              测试配置
+            </button>
           </div>
         </div>
       </section>

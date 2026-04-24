@@ -384,7 +384,7 @@ class StrmService {
             }
         }
         if (messages.length > 0) {
-            this.messageUtil.sendMessage(messages.join('\n\n'));
+            this.messageUtil.sendMessage(messages.join('\n\n'), { level: 'success' });
         }   
     }
 

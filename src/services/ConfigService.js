@@ -38,10 +38,15 @@ class ConfigService {
         proxyDomain: '',
         botToken: '',
         chatId: '',
+        notifyOnSuccess: true,
+        notifyOnFailure: true,
+        notifyOnScrape: false,
         bot: {
           enable: false,
           botToken: '',
-          chatId: ''
+          chatId: '',
+          allowedChatIds: [],
+          adminChatIds: []
         }
       },
       wxpusher: {
