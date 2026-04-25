@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, Rss, MoreVertical, RefreshCw, Edit2, Trash2, Folder, ExternalLink, Search, ChevronLeft, Play, Info, CheckCircle2, AlertCircle, HelpCircle } from 'lucide-react';
 import Modal from '../Modal';
 
@@ -79,6 +80,9 @@ interface SubscriptionTabProps {
   onTransfer?: (initialData: any) => void;
 }
 
+const SUBSCRIPTION_MENU_WIDTH = 128;
+const SUBSCRIPTION_MENU_VIEWPORT_GAP = 12;
+
 const formatDateTime = (dateStr: string | null) => {
   if (!dateStr) return '从未';
   const date = new Date(dateStr);
@@ -100,6 +104,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [openSubscriptionMenuId, setOpenSubscriptionMenuId] = useState<number | null>(null);
+  const [subscriptionMenuPosition, setSubscriptionMenuPosition] = useState<{ top: number; left: number } | null>(null);
   
   // Subscription Modal State
   const [isSubModalOpen, setIsSubModalOpen] = useState(false);
@@ -174,12 +179,14 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       const target = event.target as HTMLElement | null;
       if (!target?.closest('[data-subscription-item-menu]')) {
         setOpenSubscriptionMenuId(null);
+        setSubscriptionMenuPosition(null);
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setOpenSubscriptionMenuId(null);
+        setSubscriptionMenuPosition(null);
       }
     };
 
@@ -190,6 +197,24 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  useEffect(() => {
+    if (openSubscriptionMenuId === null) {
+      return;
+    }
+
+    const closeMenu = () => {
+      setOpenSubscriptionMenuId(null);
+      setSubscriptionMenuPosition(null);
+    };
+
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('scroll', closeMenu, true);
+    return () => {
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true);
+    };
+  }, [openSubscriptionMenuId]);
 
   const handlePreviewUuid = async (uuid: string) => {
     if (!uuid.trim()) {
@@ -357,6 +382,37 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       alert('操作失败');
     }
   };
+
+  const closeSubscriptionMenu = () => {
+    setOpenSubscriptionMenuId(null);
+    setSubscriptionMenuPosition(null);
+  };
+
+  const handleToggleSubscriptionMenu = (subId: number, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (openSubscriptionMenuId === subId) {
+      closeSubscriptionMenu();
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const left = Math.max(
+      SUBSCRIPTION_MENU_VIEWPORT_GAP,
+      Math.min(
+        rect.right - SUBSCRIPTION_MENU_WIDTH,
+        window.innerWidth - SUBSCRIPTION_MENU_WIDTH - SUBSCRIPTION_MENU_VIEWPORT_GAP
+      )
+    );
+
+    setSubscriptionMenuPosition({
+      top: rect.bottom + 4,
+      left
+    });
+    setOpenSubscriptionMenuId(subId);
+  };
+
+  const activeSubscriptionMenu = openSubscriptionMenuId === null
+    ? null
+    : subscriptions.find(item => item.id === openSubscriptionMenuId) || null;
 
   const fetchResources = async (subId: number) => {
     setResLoading(true);
@@ -599,44 +655,13 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                       <div className="relative" data-subscription-item-menu>
                         <button
                           type="button"
-                          onClick={() => setOpenSubscriptionMenuId(prev => prev === sub.id ? null : sub.id)}
+                          onClick={(event) => handleToggleSubscriptionMenu(sub.id, event)}
                           className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-900 transition-colors"
                           aria-label={`打开 ${sub.name} 的操作菜单`}
                           aria-expanded={openSubscriptionMenuId === sub.id}
                         >
                           <MoreVertical size={18} />
                         </button>
-                        {openSubscriptionMenuId === sub.id && (
-                          <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-xl shadow-lg border border-slate-100 py-1 z-[210]">
-                            <button 
-                              onClick={() => {
-                                setOpenSubscriptionMenuId(null);
-                                handleEditSub(sub);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
-                            >
-                              <Edit2 size={14} /> 编辑
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setOpenSubscriptionMenuId(null);
-                                handleToggleSub(sub);
-                              }}
-                              className={`w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 ${sub.enabled ? 'text-orange-600' : 'text-green-600'}`}
-                            >
-                              {sub.enabled ? '停用' : '启用'}
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setOpenSubscriptionMenuId(null);
-                                handleDeleteSub(sub.id);
-                              }}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
-                            >
-                              <Trash2 size={14} /> 删除
-                            </button>
-                          </div>
-                        )}
                       </div>
                     </div>
                   </td>
@@ -1258,6 +1283,42 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
           )}
         </div>
       </Modal>
+      {activeSubscriptionMenu && subscriptionMenuPosition && typeof document !== 'undefined' && createPortal(
+          <div
+            className="fixed w-32 bg-white rounded-xl shadow-lg border border-slate-100 py-1 z-[210]"
+            style={subscriptionMenuPosition}
+            data-subscription-item-menu
+          >
+            <button
+              onClick={() => {
+                closeSubscriptionMenu();
+                handleEditSub(activeSubscriptionMenu);
+              }}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2"
+            >
+              <Edit2 size={14} /> 编辑
+            </button>
+            <button
+              onClick={() => {
+                closeSubscriptionMenu();
+                handleToggleSub(activeSubscriptionMenu);
+              }}
+              className={`w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 ${activeSubscriptionMenu.enabled ? 'text-orange-600' : 'text-green-600'}`}
+            >
+              {activeSubscriptionMenu.enabled ? '停用' : '启用'}
+            </button>
+            <button
+              onClick={() => {
+                closeSubscriptionMenu();
+                handleDeleteSub(activeSubscriptionMenu.id);
+              }}
+              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
+            >
+              <Trash2 size={14} /> 删除
+            </button>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

@@ -5,6 +5,7 @@ class BatchTaskDto {
         this.targetFolderId = data?.targetFolderId || null;
         this.shareId = data?.shareId || null;
         this.familyId = data?.familyId || null;
+        this.copyType = data?.copyType || null;
     }
 
     validate() {

@@ -84,6 +84,7 @@ class LazyShareStrmService {
                 type: 'lazyShare',
                 accountId,
                 shareId: shareData.shareInfo.shareId,
+                shareMode: shareData.shareInfo.shareMode,
                 fileId: file.id,
                 fileName: file.sourceFileName || file.name,
                 targetFolderId,
@@ -98,6 +99,7 @@ class LazyShareStrmService {
         this._scheduleCasMetadataPrewarm(cloud189, {
             accountId,
             shareId: shareData.shareInfo.shareId,
+            shareMode: shareData.shareInfo.shareMode,
             files: organized.files,
             resourceName: params.resourceName || shareData.shareInfo.fileName
         });
@@ -160,6 +162,7 @@ class LazyShareStrmService {
                 type: 'lazyShare',
                 accountId,
                 shareId,
+                shareMode: task.shareMode,
                 fileId: file.id,
                 fileName: file.sourceFileName || file.name,
                 targetFolderId,
@@ -177,6 +180,7 @@ class LazyShareStrmService {
             this._scheduleCasMetadataPrewarm(cloud189, {
                 accountId,
                 shareId,
+                shareMode: task.shareMode,
                 files: organized.files,
                 resourceName: task.resourceName
             });
@@ -856,6 +860,7 @@ class LazyShareStrmService {
             const payload = {
                 accountId: params.accountId,
                 shareId: params.shareId,
+                shareMode: params.shareMode,
                 fileId: file.id,
                 fileName: file.sourceFileName || file.name,
                 isCas: true,
@@ -981,6 +986,9 @@ class LazyShareStrmService {
             targetFolderId,
             shareId: payload.shareId
         });
+        if (payload.shareMode == 5) {
+            batchTaskDto.copyType = '3';
+        }
         const resp = await cloud189.createBatchTask(batchTaskDto);
         if (!resp) {
             throw new Error('懒转存任务提交失败');

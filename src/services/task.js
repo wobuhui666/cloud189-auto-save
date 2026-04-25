@@ -463,6 +463,9 @@ class TaskService {
                     targetFolderId: task.realFolderId,
                     shareId: task.shareId
                 });
+                if (task.shareMode == 5) {
+                    batchTaskDto.copyType = '3';
+                }
                 await this.createBatchTask(cloud189, batchTaskDto);
                 await this._restoreTransferredCasFiles(task, newFiles, cloud189, casService);
             } else {
