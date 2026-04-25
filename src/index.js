@@ -657,6 +657,8 @@ AppDataSource.initialize().then(async () => {
         // 添加搜索过滤
         if (search) {
             const searchConditions = [
+                { resourceName: Like(`%${search}%`) },
+                { shareFolderName: Like(`%${search}%`) },
                 { realFolderName: Like(`%${search}%`) },
                 { remark: Like(`%${search}%`) },
                 { taskGroup: Like(`%${search}%`) },
@@ -749,6 +751,16 @@ AppDataSource.initialize().then(async () => {
         try {
             const result = await taskService.createTasksBatch(req.body.tasks);
             res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/tasks/batch/status', async (req, res) => {
+        try {
+            const { taskIds, status } = req.body;
+            const updatedTasks = await taskService.updateTasksStatus(taskIds, status);
+            res.json({ success: true, data: updatedTasks });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }

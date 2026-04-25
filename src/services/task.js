@@ -422,6 +422,34 @@ class TaskService {
         }
     }
 
+    async updateTasksStatus(taskIds = [], status) {
+        if (!Array.isArray(taskIds) || taskIds.length === 0) {
+            throw new Error('未选择任务');
+        }
+
+        const validStatuses = ['pending', 'processing', 'completed', 'failed'];
+        if (!validStatuses.includes(status)) {
+            throw new Error('无效的状态值');
+        }
+
+        const normalizedTaskIds = [...new Set(
+            taskIds
+                .map(taskId => Number(taskId))
+                .filter(taskId => Number.isInteger(taskId) && taskId > 0)
+        )];
+
+        if (normalizedTaskIds.length === 0) {
+            throw new Error('未选择有效任务');
+        }
+
+        const updatedTasks = [];
+        for (const taskId of normalizedTaskIds) {
+            updatedTasks.push(await this.updateTask(taskId, { status }));
+        }
+
+        return updatedTasks;
+    }
+
     // 获取文件夹下的所有文件
     async getAllFolderFiles(cloud189, task) {
         if (task.enableSystemProxy) {

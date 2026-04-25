@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, ChevronRight, Filter, Search, RefreshCw, Files, PlayCircle, MoreVertical, CheckCircle2, AlertCircle, Clock, Trash2, ClipboardList, Edit3 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 
 interface Account {
   id: number;
@@ -41,12 +41,58 @@ interface TaskTabProps {
   onCreateTask: (initialData?: any) => void;
 }
 
+type TaskStatus = Task['status'];
+
+interface TaskFilterTag {
+  key: string;
+  label: string;
+  tone: 'group' | 'feature';
+}
+
+const TASK_STATUS_OPTIONS: Array<{ value: 'all' | TaskStatus; label: string }> = [
+  { value: 'all', label: '全部任务' },
+  { value: 'pending', label: '等待中' },
+  { value: 'processing', label: '追剧中' },
+  { value: 'completed', label: '已完结' },
+  { value: 'failed', label: '失败' }
+];
+
+const TASK_FEATURE_FILTERS: Array<{
+  key: string;
+  label: string;
+  matches: (task: Task) => boolean;
+}> = [
+  { key: 'feature:lazy-strm', label: '懒STRM', matches: (task) => task.enableLazyStrm },
+  { key: 'feature:cron', label: '定时任务', matches: (task) => Boolean(task.enableCron) },
+  { key: 'feature:organizer', label: '整理器', matches: (task) => task.enableOrganizer }
+];
+
+const getTaskFilterKeys = (task: Task) => {
+  const filterKeys: string[] = [];
+  const groupName = task.taskGroup?.trim();
+
+  if (groupName) {
+    filterKeys.push(`group:${groupName}`);
+  }
+
+  TASK_FEATURE_FILTERS.forEach((filterTag) => {
+    if (filterTag.matches(task)) {
+      filterKeys.push(filterTag.key);
+    }
+  });
+
+  return filterKeys;
+};
+
 const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
+  const [activeTagFilters, setActiveTagFilters] = useState<string[]>([]);
+  const [batchStatus, setBatchStatus] = useState<TaskStatus>('pending');
+  const [isBatchUpdatingStatus, setIsBatchUpdatingStatus] = useState(false);
   const [deleteCloud, setDeleteCloud] = useState(false);
   const [isTopMenuOpen, setIsTopMenuOpen] = useState(false);
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null);
@@ -96,6 +142,45 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  const availableTagFilters: TaskFilterTag[] = [
+    ...TASK_FEATURE_FILTERS
+      .filter((filterTag) => tasks.some((task) => filterTag.matches(task)))
+      .map((filterTag) => ({
+        key: filterTag.key,
+        label: filterTag.label,
+        tone: 'feature' as const
+      })),
+    ...Array.from(
+      new Set(
+        tasks
+          .map((task) => task.taskGroup?.trim())
+          .filter((taskGroup): taskGroup is string => Boolean(taskGroup))
+      )
+    )
+      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
+      .map((taskGroup) => ({
+        key: `group:${taskGroup}`,
+        label: taskGroup,
+        tone: 'group' as const
+      }))
+  ];
+
+  const filteredTasks = tasks.filter((task) => {
+    if (activeTagFilters.length === 0) {
+      return true;
+    }
+
+    const taskFilterKeys = new Set(getTaskFilterKeys(task));
+    return activeTagFilters.every((filterKey) => taskFilterKeys.has(filterKey));
+  });
+
+  const allVisibleSelected = filteredTasks.length > 0 && selectedTaskIds.length === filteredTasks.length;
+
+  useEffect(() => {
+    const availableTagKeys = new Set(availableTagFilters.map((filterTag) => filterTag.key));
+    setActiveTagFilters((currentFilters) => currentFilters.filter((filterKey) => availableTagKeys.has(filterKey)));
+  }, [tasks]);
 
   const handleExecuteTask = async (id: number) => {
     try {
@@ -188,6 +273,38 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
     }
   };
 
+  const handleBatchStatusUpdate = async () => {
+    if (selectedTaskIds.length === 0 || isBatchUpdatingStatus) return;
+
+    setIsBatchUpdatingStatus(true);
+    try {
+      const response = await fetch('/api/tasks/batch/status', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskIds: selectedTaskIds, status: batchStatus })
+      });
+      const data = await response.json();
+      if (data.success) {
+        fetchTasks();
+      } else {
+        alert(data.error || '批量更新状态失败');
+      }
+    } catch (error) {
+      console.error('Failed to batch update task status:', error);
+    } finally {
+      setIsBatchUpdatingStatus(false);
+    }
+  };
+
+  const toggleTagFilter = (filterKey: string) => {
+    setSelectedTaskIds([]);
+    setActiveTagFilters((currentFilters) =>
+      currentFilters.includes(filterKey)
+        ? currentFilters.filter((currentFilter) => currentFilter !== filterKey)
+        : [...currentFilters, filterKey]
+    );
+  };
+
   const toggleTaskSelection = (id: number) => {
     setSelectedTaskIds(prev => 
       prev.includes(id) ? prev.filter(taskId => taskId !== id) : [...prev, id]
@@ -195,10 +312,10 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   };
 
   const handleSelectAll = () => {
-    if (selectedTaskIds.length === (tasks?.length || 0)) {
+    if (allVisibleSelected) {
       setSelectedTaskIds([]);
     } else {
-      setSelectedTaskIds(tasks.map(t => t.id));
+      setSelectedTaskIds(filteredTasks.map((task) => task.id));
     }
   };
 
@@ -328,10 +445,11 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="pl-11 pr-8 py-2.5 bg-white border border-slate-300 rounded-full text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 appearance-none min-w-[140px]"
             >
-              <option value="all">全部任务</option>
-              <option value="processing">追剧中</option>
-              <option value="completed">已完结</option>
-              <option value="failed">失败</option>
+              {TASK_STATUS_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
           <div className="relative flex-1 min-w-[240px]">
@@ -353,26 +471,56 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         </div>
       </div>
 
-      <div className="flex items-center gap-6 px-2">
+      <div className="flex flex-wrap items-center gap-4 px-2">
         <label className="flex items-center gap-2 cursor-pointer group">
-          <div 
+          <div
             onClick={handleSelectAll}
             className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-              selectedTaskIds.length === (tasks?.length || 0) && (tasks?.length || 0) > 0
-                ? 'bg-[#0b57d0] border-[#0b57d0]' 
+              allVisibleSelected
+                ? 'bg-[#0b57d0] border-[#0b57d0]'
                 : 'border-slate-400 group-hover:border-[#0b57d0]'
             }`}
           >
-            {selectedTaskIds.length === (tasks?.length || 0) && (tasks?.length || 0) > 0 && <div className="w-2 h-2 bg-white rounded-sm" />}
+            {allVisibleSelected && <div className="w-2 h-2 bg-white rounded-sm" />}
           </div>
-          <span className="text-sm font-medium text-slate-600">全选</span>
+          <span className="text-sm font-medium text-slate-600">
+            全选
+            {filteredTasks.length > 0 ? ` (${filteredTasks.length})` : ''}
+          </span>
         </label>
+
+        <span className="text-sm text-slate-500">
+          已选 {selectedTaskIds.length} 项
+        </span>
+
+        <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
+          <select
+            value={batchStatus}
+            onChange={(e) => setBatchStatus(e.target.value as TaskStatus)}
+            className="bg-transparent px-2 py-1 text-sm text-slate-700 outline-none"
+          >
+            {TASK_STATUS_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={handleBatchStatusUpdate}
+            disabled={selectedTaskIds.length === 0 || isBatchUpdatingStatus}
+            className="rounded-full bg-[#0b57d0] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#0b57d0]/90 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+          >
+            {isBatchUpdatingStatus ? '设置中...' : '批量设状态'}
+          </button>
+        </div>
+
         <label className="flex items-center gap-2 cursor-pointer group">
-          <div 
+          <div
             onClick={() => setDeleteCloud(!deleteCloud)}
             className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-              deleteCloud 
-                ? 'bg-red-500 border-red-500' 
+              deleteCloud
+                ? 'bg-red-500 border-red-500'
                 : 'border-slate-400 group-hover:border-red-500'
             }`}
           >
@@ -382,8 +530,42 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         </label>
       </div>
 
+      {availableTagFilters.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-2">
+          <span className="text-sm font-medium text-slate-500">筛选标签</span>
+          {availableTagFilters.map((filterTag) => {
+            const isActive = activeTagFilters.includes(filterTag.key);
+            return (
+              <button
+                key={filterTag.key}
+                type="button"
+                onClick={() => toggleTagFilter(filterTag.key)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  isActive
+                    ? 'border-[#0b57d0] bg-[#d3e3fd] text-[#0b57d0]'
+                    : filterTag.tone === 'feature'
+                      ? 'border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300'
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                }`}
+              >
+                {filterTag.label}
+              </button>
+            );
+          })}
+          {activeTagFilters.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTagFilters([])}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700"
+            >
+              清空筛选
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-4">
-        {Array.isArray(tasks) && tasks.map(task => {
+        {Array.isArray(filteredTasks) && filteredTasks.map(task => {
           if (!task) return null;
           const taskName = task.shareFolderName ? `${task.resourceName}/${task.shareFolderName}` : (task.resourceName || 'Unknown Resource');
           const progress = (task.totalEpisodes && task.totalEpisodes > 0) ? (task.currentEpisodes / task.totalEpisodes) * 100 : 0;
@@ -392,7 +574,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           return (
             <div 
               key={task.id}
-              className={`bg-white rounded-3xl border p-6 shadow-sm hover:shadow-md transition-all group relative ${
+              className={`rounded-3xl border bg-white p-6 shadow-sm transition-all hover:shadow-md group relative ${
                 isSelected ? 'border-[#0b57d0] ring-1 ring-[#0b57d0]/20' : 'border-slate-200/60'
               } ${task.status === 'completed' ? 'opacity-80' : ''}`}
             >
@@ -407,17 +589,21 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                 </div>
               </div>
 
-              <div className={`absolute top-0 left-0 w-1.5 h-full ${getStatusColorClass(task.status)}`} />
+              <div
+                className={`absolute left-0 top-4 bottom-4 w-1.5 rounded-r-full ${getStatusColorClass(task.status)} pointer-events-none`}
+              />
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pl-6">
                 <div className="flex items-start gap-4">
                   <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${getStatusBgClass(task.status)}`}>
                     {getStatusIcon(task.status)}
                   </div>
                   <div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-bold text-slate-900 text-lg truncate max-w-[300px]" title={taskName}>{taskName}</h3>
                       {getStatusBadge(task.status)}
                       {task.enableLazyStrm && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">懒STRM</span>}
+                      {task.enableCron && <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-[10px] font-bold">定时任务</span>}
+                      {task.enableOrganizer && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold">整理器</span>}
                     </div>
                     <p className="text-sm text-slate-500 mt-1">
                       账号: {task.account?.username || '未知账号'} • 分组: {task.taskGroup || '-'}
@@ -489,10 +675,12 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           );
         })}
 
-        {(!tasks || tasks.length === 0) && !loading && (
+        {filteredTasks.length === 0 && !loading && (
           <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-300">
             <ClipboardList size={48} className="mx-auto text-slate-300 mb-4" />
-            <p className="text-slate-500 font-medium">暂无任务</p>
+            <p className="text-slate-500 font-medium">
+              {tasks.length === 0 ? '暂无任务' : '没有匹配当前筛选条件的任务'}
+            </p>
           </div>
         )}
       </div>

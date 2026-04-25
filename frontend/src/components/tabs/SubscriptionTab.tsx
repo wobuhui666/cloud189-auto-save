@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Rss, MoreVertical, RefreshCw, Edit2, Trash2, Folder, ExternalLink, Search, ChevronLeft, Play, Info, CheckCircle2, AlertCircle, HelpCircle } from 'lucide-react';
+import { Plus, Rss, MoreVertical, RefreshCw, Edit2, Trash2, Folder, ExternalLink, Search, ChevronLeft, Play, Info, CheckCircle2, AlertCircle, HelpCircle, Power } from 'lucide-react';
 import Modal from '../Modal';
 
 interface Subscription {
@@ -1659,6 +1659,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
               }}
               className={`w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 ${activeSubscriptionMenu.enabled ? 'text-orange-600' : 'text-green-600'}`}
             >
+              <Power size={14} />
               {activeSubscriptionMenu.enabled ? '停用' : '启用'}
             </button>
             <button

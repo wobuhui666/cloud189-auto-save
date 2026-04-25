@@ -39,8 +39,31 @@ import SettingsTab from './components/tabs/SettingsTab';
 
 // --- Types ---
 type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'settings';
+type ThemeMode = 'light' | 'dark' | 'system';
 
 const appVersionLabel = `v${__APP_VERSION__}`;
+const THEME_STORAGE_KEY = 'theme';
+
+const getStoredThemeMode = (): ThemeMode => {
+  if (typeof window === 'undefined') {
+    return 'system';
+  }
+
+  const savedThemeMode = localStorage.getItem(THEME_STORAGE_KEY);
+  if (savedThemeMode === 'light' || savedThemeMode === 'dark' || savedThemeMode === 'system') {
+    return savedThemeMode;
+  }
+
+  return 'system';
+};
+
+const getSystemPrefersDark = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('task');
@@ -51,22 +74,89 @@ export default function App() {
   const [createTaskInitialData, setCreateTaskInitialData] = useState<any>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [taskRefreshKey, setTaskRefreshKey] = useState(0);
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    return localStorage.getItem('theme') === 'dark' || 
-      (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  });
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(getSystemPrefersDark);
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+
+  const resolvedTheme = themeMode === 'system'
+    ? (systemPrefersDark ? 'dark' : 'light')
+    : themeMode;
+  const isDarkMode = resolvedTheme === 'dark';
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+
+    setSystemPrefersDark(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleChange);
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('[data-theme-menu]')) {
+        setIsThemeMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsThemeMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
     }
-  }, [isDarkMode]);
 
-  const toggleDarkMode = () => setIsDarkMode(!isDarkMode);
+    localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [isDarkMode, themeMode]);
+
+  const themeOptions: Array<{ value: ThemeMode; label: string; description: string; icon: any }> = [
+    { value: 'light', label: '浅色模式', description: '始终使用浅色外观', icon: Sun },
+    { value: 'dark', label: '深色模式', description: '始终使用深色外观', icon: Moon },
+    {
+      value: 'system',
+      label: '跟随系统',
+      description: `当前系统为${systemPrefersDark ? '深色' : '浅色'}`,
+      icon: Monitor
+    }
+  ];
+
+  const currentThemeLabel = themeMode === 'system'
+    ? `跟随系统 (${systemPrefersDark ? '当前深色' : '当前浅色'})`
+    : themeMode === 'dark'
+      ? '深色模式'
+      : '浅色模式';
+
+  const ThemeTriggerIcon = themeMode === 'system'
+    ? Monitor
+    : themeMode === 'dark'
+      ? Moon
+      : Sun;
+
+  const handleSelectThemeMode = (nextThemeMode: ThemeMode) => {
+    setThemeMode(nextThemeMode);
+    setIsThemeMenuOpen(false);
+  };
 
   const tabs: { id: TabType, label: string, icon: any }[] = [
     { id: 'account', label: '账号', icon: User },
@@ -225,13 +315,47 @@ export default function App() {
             <h2 className="text-2xl font-normal text-[var(--text-primary)]">{activeTabLabel}</h2>
           </div>
           <div className="flex items-center gap-2">
-            <button 
-              onClick={toggleDarkMode}
-              className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)]"
-              title={isDarkMode ? "切换到亮色模式" : "切换到深色模式"}
-            >
-              {isDarkMode ? <Sun size={22} /> : <Moon size={22} />}
-            </button>
+            <div className="relative" data-theme-menu>
+              <button
+                type="button"
+                onClick={() => setIsThemeMenuOpen((currentState) => !currentState)}
+                className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)]"
+                title={currentThemeLabel}
+                aria-label={`主题模式：${currentThemeLabel}`}
+                aria-haspopup="menu"
+                aria-expanded={isThemeMenuOpen}
+              >
+                <ThemeTriggerIcon size={22} />
+              </button>
+              {isThemeMenuOpen && (
+                <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-30">
+                  {themeOptions.map((themeOption) => {
+                    const OptionIcon = themeOption.icon;
+                    const isActive = themeOption.value === themeMode;
+
+                    return (
+                      <button
+                        key={themeOption.value}
+                        type="button"
+                        onClick={() => handleSelectThemeMode(themeOption.value)}
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${
+                          isActive
+                            ? 'bg-[#d3e3fd] text-[#0b57d0] dark:bg-[#0b57d0]/20 dark:text-[#8ab4f8]'
+                            : 'text-[var(--text-primary)] hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <OptionIcon size={18} className="shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium">{themeOption.label}</div>
+                          <div className="text-xs text-[var(--text-secondary)]">{themeOption.description}</div>
+                        </div>
+                        {isActive && <CheckCircle2 size={16} className="shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <button 
               onClick={() => setIsAIChatOpen(true)}
               className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)]"
