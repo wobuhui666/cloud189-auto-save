@@ -1253,6 +1253,15 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    app.get('/api/subscriptions/remote-resources', async (req, res) => {
+        try {
+            const resources = await subscriptionService.listRemoteSubscriptionResources(req.query);
+            res.json({ success: true, data: resources });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.post('/api/subscriptions', async (req, res) => {
         try {
             const subscription = await subscriptionService.createSubscription(req.body);

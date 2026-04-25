@@ -8,6 +8,7 @@ interface Subscription {
   uuid: string;
   remark: string | null;
   enabled: boolean;
+  selectedShareCodes?: string[];
   resourceCount: number;
   validResourceCount: number;
   lastRefreshStatus: 'success' | 'warning' | 'failed' | 'unknown';
@@ -57,7 +58,21 @@ interface PreviewInfo {
   defaultAccount: { id: number; name: string } | null;
   canCreate: boolean;
   existingSubscription: { id: number; name: string; enabled: boolean } | null;
+  remoteResourceCount?: number | null;
+  remoteSubscriptionDetected?: boolean;
   recommendation: string;
+}
+
+interface RemoteSubscriptionResource {
+  id: string;
+  title: string;
+  shareCode: string;
+  shareLink: string;
+  isFolder: boolean;
+  shareId: string;
+  shareType: string;
+  createDate: string | null;
+  lastOpTime: string | null;
 }
 
 interface SubscriptionTabProps {
@@ -75,6 +90,12 @@ const formatDateTime = (dateStr: string | null) => {
   });
 };
 
+const normalizeShareCodes = (values: string[] = []) => Array.from(new Set(
+  values
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+));
+
 const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,9 +107,20 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
     uuid: '',
     name: '',
     remark: '',
-    enabled: true
+    enabled: true,
+    selectedShareCodes: [] as string[]
   });
   const [previewInfo, setPreviewInfo] = useState<PreviewInfo | null>(null);
+  const [isRemoteSelectorOpen, setIsRemoteSelectorOpen] = useState(false);
+  const [remoteSelectorLoading, setRemoteSelectorLoading] = useState(false);
+  const [remoteSelectorItems, setRemoteSelectorItems] = useState<RemoteSubscriptionResource[]>([]);
+  const [remoteSelectorKeyword, setRemoteSelectorKeyword] = useState('');
+  const [remoteSelectorPageNum, setRemoteSelectorPageNum] = useState(1);
+  const [remoteSelectorTotalCount, setRemoteSelectorTotalCount] = useState(0);
+  const [remoteSelectorTotalPages, setRemoteSelectorTotalPages] = useState(0);
+  const [remoteSelectorSelectedShareCodes, setRemoteSelectorSelectedShareCodes] = useState<string[]>([]);
+  const [remoteSelectorUuid, setRemoteSelectorUuid] = useState('');
+  const remoteSelectorPageSize = 20;
 
   // Resources Modal State
   const [isResModalOpen, setIsResModalOpen] = useState(false);
@@ -137,7 +169,10 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
   }, []);
 
   const handlePreviewUuid = async (uuid: string) => {
-    if (!uuid.trim() || editingSub) return;
+    if (!uuid.trim()) {
+      setPreviewInfo(null);
+      return;
+    }
     try {
       const response = await fetch(`/api/subscriptions/preview?uuid=${encodeURIComponent(uuid.trim())}`);
       const data = await response.json();
@@ -151,7 +186,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
 
   const handleOpenAddSub = () => {
     setEditingSub(null);
-    setSubFormData({ uuid: '', name: '', remark: '', enabled: true });
+    setSubFormData({ uuid: '', name: '', remark: '', enabled: true, selectedShareCodes: [] });
     setPreviewInfo(null);
     setIsSubModalOpen(true);
   };
@@ -162,10 +197,12 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       uuid: sub.uuid,
       name: sub.name || '',
       remark: sub.remark || '',
-      enabled: sub.enabled
+      enabled: sub.enabled,
+      selectedShareCodes: normalizeShareCodes(sub.selectedShareCodes || [])
     });
     setPreviewInfo(null);
     setIsSubModalOpen(true);
+    handlePreviewUuid(sub.uuid);
   };
 
   const handleSaveSub = async (e: React.FormEvent) => {
@@ -190,6 +227,66 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
     } catch (error) {
       alert('操作失败');
     }
+  };
+
+  const fetchRemoteSubscriptionResources = async (pageNum: number = 1, keyword: string = remoteSelectorKeyword) => {
+    if (!subFormData.uuid.trim()) {
+      alert('请先填写 UUID / 订阅主页链接');
+      return;
+    }
+
+    setRemoteSelectorLoading(true);
+    try {
+      const query = new URLSearchParams({
+        uuid: subFormData.uuid.trim(),
+        pageNum: String(pageNum),
+        pageSize: String(remoteSelectorPageSize),
+        keyword: keyword.trim()
+      });
+      const response = await fetch(`/api/subscriptions/remote-resources?${query.toString()}`);
+      const data = await response.json();
+      if (data.success) {
+        setRemoteSelectorItems(data.data?.items || []);
+        setRemoteSelectorPageNum(data.data?.pageNum || pageNum);
+        setRemoteSelectorTotalCount(data.data?.count || 0);
+        setRemoteSelectorTotalPages(data.data?.totalPages || 0);
+        setRemoteSelectorUuid(data.data?.uuid || '');
+      } else {
+        alert('加载订阅链接失败: ' + data.error);
+      }
+    } catch (error) {
+      alert('加载订阅链接失败');
+    } finally {
+      setRemoteSelectorLoading(false);
+    }
+  };
+
+  const handleOpenRemoteSelector = async () => {
+    setRemoteSelectorKeyword('');
+    setRemoteSelectorPageNum(1);
+    setRemoteSelectorItems([]);
+    setRemoteSelectorTotalCount(0);
+    setRemoteSelectorTotalPages(0);
+    setRemoteSelectorUuid('');
+    setRemoteSelectorSelectedShareCodes(normalizeShareCodes(subFormData.selectedShareCodes));
+    setIsRemoteSelectorOpen(true);
+    fetchRemoteSubscriptionResources(1, '');
+  };
+
+  const handleToggleRemoteShareCode = (shareCode: string) => {
+    setRemoteSelectorSelectedShareCodes(prev => (
+      prev.includes(shareCode)
+        ? prev.filter(code => code !== shareCode)
+        : [...prev, shareCode]
+    ));
+  };
+
+  const handleApplyRemoteSelector = () => {
+    setSubFormData(prev => ({
+      ...prev,
+      selectedShareCodes: normalizeShareCodes(remoteSelectorSelectedShareCodes)
+    }));
+    setIsRemoteSelectorOpen(false);
   };
 
   const handleDeleteSub = async (id: number) => {
@@ -517,19 +614,26 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       >
         <form id="modal-form" onSubmit={handleSaveSub} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">UUID</label>
+            <label className="text-sm font-medium text-slate-700">UUID / 订阅主页链接</label>
             <input 
               type="text" 
               value={subFormData.uuid}
               onChange={e => {
-                setSubFormData({...subFormData, uuid: e.target.value});
-                if (!editingSub) setPreviewInfo(null);
+                setSubFormData({
+                  ...subFormData,
+                  uuid: e.target.value,
+                  selectedShareCodes: []
+                });
+                setPreviewInfo(null);
               }}
               onBlur={e => handlePreviewUuid(e.target.value)}
               required 
               className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
-              placeholder="输入订阅 UUID"
+              placeholder="支持直接粘贴 UUID 或 21cn 订阅主页链接"
             />
+            <p className="text-xs leading-relaxed text-slate-500">
+              例如：<span className="font-mono">https://content.21cn.com/h5/subscrip/index.html#/pages/own-home/index?uuid=...</span>
+            </p>
             {previewInfo && (
               <div className="mt-2 p-4 bg-slate-100 rounded-2xl space-y-2 text-xs border border-slate-200">
                 <div className="flex justify-between">
@@ -542,6 +646,12 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                   <span className="text-slate-500">可用账号</span>
                   <span>{previewInfo.accountCount} {previewInfo.defaultAccount && `(默认: ${previewInfo.defaultAccount.name})`}</span>
                 </div>
+                {previewInfo.remoteSubscriptionDetected && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">远程资源</span>
+                    <span>{previewInfo.remoteResourceCount ?? 0}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-slate-500">结论</span>
                   <span className={previewInfo.canCreate ? 'text-green-600' : 'text-orange-600'}>
@@ -557,6 +667,52 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                 <div className="pt-1 text-slate-700 leading-relaxed">
                   <strong>建议:</strong> {previewInfo.recommendation}
                 </div>
+              </div>
+            )}
+            {previewInfo?.remoteSubscriptionDetected && (
+              <div className="mt-3 p-4 bg-[#f8fbff] rounded-2xl border border-[#d7e7ff] space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">订阅内链接选择</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      当前已选 {subFormData.selectedShareCodes.length} 项，未选择时默认全量同步。
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleOpenRemoteSelector}
+                      className="px-4 py-2 rounded-full text-xs font-medium bg-[#0b57d0] text-white hover:bg-[#0b57d0]/90 transition-colors"
+                    >
+                      选择订阅链接
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSubFormData({ ...subFormData, selectedShareCodes: [] })}
+                      disabled={subFormData.selectedShareCodes.length === 0}
+                      className="px-4 py-2 rounded-full text-xs font-medium border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40"
+                    >
+                      清空选择
+                    </button>
+                  </div>
+                </div>
+                {subFormData.selectedShareCodes.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {subFormData.selectedShareCodes.slice(0, 8).map(shareCode => (
+                      <span
+                        key={shareCode}
+                        className="px-3 py-1 rounded-full bg-white border border-[#d7e7ff] text-[11px] font-mono text-slate-600"
+                      >
+                        {shareCode}
+                      </span>
+                    ))}
+                    {subFormData.selectedShareCodes.length > 8 && (
+                      <span className="px-3 py-1 rounded-full bg-white border border-[#d7e7ff] text-[11px] text-slate-500">
+                        +{subFormData.selectedShareCodes.length - 8} 项
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -589,6 +745,152 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             <span className="text-sm font-medium text-slate-700">启用此订阅</span>
           </label>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={isRemoteSelectorOpen}
+        onClose={() => setIsRemoteSelectorOpen(false)}
+        title="选择订阅里的链接"
+        footer={
+          <div className="px-8 py-6 flex justify-between gap-3 border-t border-slate-100">
+            <div className="text-xs text-slate-500 self-center">
+              已选 {remoteSelectorSelectedShareCodes.length} 项
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setIsRemoteSelectorOpen(false)}
+                className="px-6 py-2.5 rounded-full text-sm font-medium text-[#0b57d0] hover:bg-[#0b57d0]/10 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleApplyRemoteSelector}
+                className="px-6 py-2.5 rounded-full text-sm font-medium bg-[#0b57d0] text-white hover:bg-[#0b57d0]/90 transition-colors shadow-sm"
+              >
+                应用选择
+              </button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4 pt-6">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-600">
+            <div className="font-medium text-slate-900">UUID</div>
+            <div className="mt-1 font-mono break-all">{remoteSelectorUuid || subFormData.uuid || '-'}</div>
+            <div className="mt-2 text-slate-500">
+              保存后仅同步勾选的链接；如果不勾选，则仍按整个订阅全量同步。
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={remoteSelectorKeyword}
+                onChange={e => setRemoteSelectorKeyword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && fetchRemoteSubscriptionResources(1, remoteSelectorKeyword)}
+                placeholder="按标题搜索订阅里的链接"
+                className="w-full pl-12 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+              />
+              <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            </div>
+            <button
+              type="button"
+              onClick={() => fetchRemoteSubscriptionResources(1, remoteSelectorKeyword)}
+              className="px-4 py-2.5 bg-[#0b57d0] text-white rounded-2xl text-sm font-medium hover:bg-[#0b57d0]/90 transition-colors"
+            >
+              搜索
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRemoteSelectorKeyword('');
+                fetchRemoteSubscriptionResources(1, '');
+              }}
+              className="px-4 py-2.5 border border-slate-200 rounded-2xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            >
+              重置
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>远程共 {remoteSelectorTotalCount} 项</span>
+            <span>第 {remoteSelectorPageNum} / {Math.max(remoteSelectorTotalPages, 1)} 页</span>
+          </div>
+
+          <div className="max-h-[420px] overflow-y-auto rounded-2xl border border-slate-100">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50/70 sticky top-0 backdrop-blur-sm border-b border-slate-100">
+                <tr>
+                  <th className="px-4 py-3 font-medium text-slate-500 w-12">选择</th>
+                  <th className="px-4 py-3 font-medium text-slate-500">资源</th>
+                  <th className="px-4 py-3 font-medium text-slate-500">类型</th>
+                  <th className="px-4 py-3 font-medium text-slate-500">分享码</th>
+                  <th className="px-4 py-3 font-medium text-slate-500">更新时间</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {remoteSelectorLoading ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">加载中...</td>
+                  </tr>
+                ) : remoteSelectorItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">当前没有可选链接</td>
+                  </tr>
+                ) : remoteSelectorItems.map(item => (
+                  <tr key={item.shareCode} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={remoteSelectorSelectedShareCodes.includes(item.shareCode)}
+                        onChange={() => handleToggleRemoteShareCode(item.shareCode)}
+                        className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1">
+                        <span className="font-medium text-slate-900 break-all">{item.title}</span>
+                        <a
+                          href={item.shareLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-[#0b57d0] hover:underline"
+                        >
+                          打开详情链接
+                        </a>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{item.isFolder ? '文件夹' : '文件'}</td>
+                    <td className="px-4 py-3 font-mono text-[11px] text-slate-500 break-all">{item.shareCode}</td>
+                    <td className="px-4 py-3 text-[11px] text-slate-500">
+                      {formatDateTime(item.lastOpTime || item.createDate)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => fetchRemoteSubscriptionResources(remoteSelectorPageNum - 1, remoteSelectorKeyword)}
+              disabled={remoteSelectorPageNum <= 1 || remoteSelectorLoading}
+              className="px-4 py-2 rounded-full border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40"
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              onClick={() => fetchRemoteSubscriptionResources(remoteSelectorPageNum + 1, remoteSelectorKeyword)}
+              disabled={remoteSelectorPageNum >= remoteSelectorTotalPages || remoteSelectorLoading || remoteSelectorTotalPages === 0}
+              className="px-4 py-2 rounded-full border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-40"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
       </Modal>
 
       <Modal

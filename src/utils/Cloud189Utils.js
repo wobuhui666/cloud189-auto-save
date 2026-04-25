@@ -1,5 +1,6 @@
 class Cloud189Utils {
     static SHARE_CODE_PATTERN = /^(?:uuid)?[a-zA-Z0-9_-]{8,}$/;
+    static SUBSCRIPTION_UUID_PATTERN = /^[a-zA-Z0-9_-]{6,}$/;
 
     static _decodeShareText(shareText = '') {
         try {
@@ -33,8 +34,54 @@ class Cloud189Utils {
         return shareCode || '';
     }
 
+    static _extractSubscriptionUuidFromUrl(subscriptionLink) {
+        const subscriptionUrl = new URL(subscriptionLink);
+        const hashQuery = subscriptionUrl.hash.includes('?') ? subscriptionUrl.hash.split('?')[1] : '';
+        const hashParams = new URLSearchParams(hashQuery);
+        return (
+            hashParams.get('uuid')
+            || subscriptionUrl.searchParams.get('uuid')
+            || ''
+        );
+    }
+
+    static buildSubscriptionHomeUrl(uuid) {
+        return `https://content.21cn.com/h5/subscrip/index.html#/pages/own-home/index?uuid=${encodeURIComponent(uuid)}`;
+    }
+
+    static buildSubscriptionDetailsUrl(shareCode) {
+        return `https://content.21cn.com/h5/subscrip/index.html#/pages/details/index?shareCode=${encodeURIComponent(shareCode)}`;
+    }
+
     static _buildSubscriptionShareUrl(shareCode) {
-        return `https://content.21cn.com/h5/#/home?shareCode=${encodeURIComponent(shareCode)}`;
+        return this.buildSubscriptionDetailsUrl(shareCode);
+    }
+
+    static parseSubscriptionUuid(subscriptionText) {
+        const normalizedInput = this._normalizeShareText(subscriptionText);
+        if (!normalizedInput) {
+            throw new Error('订阅 UUID 不能为空');
+        }
+
+        const directUuid = normalizedInput.replace(/^uuid=/i, '');
+        if (this.SUBSCRIPTION_UUID_PATTERN.test(directUuid)) {
+            return directUuid;
+        }
+
+        let uuid = '';
+        try {
+            uuid = this._extractSubscriptionUuidFromUrl(normalizedInput);
+        } catch (error) {
+            const matchedUuid = normalizedInput.match(/[?&#]uuid=([a-zA-Z0-9_-]{6,})/i);
+            uuid = matchedUuid?.[1] || '';
+        }
+
+        const normalizedUuid = this._normalizeShareText(uuid).replace(/^uuid=/i, '');
+        if (!this.SUBSCRIPTION_UUID_PATTERN.test(normalizedUuid)) {
+            throw new Error('无效的订阅链接');
+        }
+
+        return normalizedUuid;
     }
 
     // 解析分享码

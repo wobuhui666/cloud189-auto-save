@@ -1,5 +1,6 @@
 const cloud189Utils = require('../utils/Cloud189Utils');
 const { Cloud189Service } = require('./cloud189');
+const got = require('got');
 
 class SubscriptionService {
     constructor(subscriptionRepo, resourceRepo, accountRepo) {
@@ -17,17 +18,15 @@ class SubscriptionService {
                 where: { subscriptionId: subscription.id }
             }))
         );
-        return subscriptions.map((subscription, index) => ({
-            ...subscription,
-            resourceCount: resourceCounts[index]
-        }));
+        return subscriptions.map((subscription, index) => this._serializeSubscription(
+            subscription,
+            resourceCounts[index]
+        ));
     }
 
     async createSubscription(data) {
-        const uuid = data.uuid?.trim();
-        if (!uuid) {
-            throw new Error('UUID 不能为空');
-        }
+        const uuid = this._normalizeSubscriptionUuid(data.uuid);
+        const selectedShareCodes = this._normalizeSelectedShareCodes(data.selectedShareCodes);
         const exist = await this.subscriptionRepo.findOneBy({ uuid });
         if (exist) {
             throw new Error('该 UUID 已存在');
@@ -42,16 +41,28 @@ class SubscriptionService {
             validResourceCount: 0,
             invalidResourceCount: 0,
             availableAccountCount: 0,
-            totalAccountCount: 0
+            totalAccountCount: 0,
+            selectedShareCodes: JSON.stringify(selectedShareCodes)
         });
-        return await this.subscriptionRepo.save(subscription);
+        const savedSubscription = await this.subscriptionRepo.save(subscription);
+
+        const syncResult = await this._syncRemoteResources(savedSubscription);
+        if (syncResult?.synced) {
+            savedSubscription.lastRefreshMessage = syncResult.totalRemoteCount > 0
+                ? (
+                    syncResult.selectionActive
+                        ? `已按选择同步 ${syncResult.matchedRemoteCount} / ${syncResult.totalRemoteCount} 个订阅资源，待校验`
+                        : `已同步 ${syncResult.totalRemoteCount} 个订阅资源，待校验`
+                )
+                : '订阅已创建，但远程订阅暂无资源';
+            await this.subscriptionRepo.save(savedSubscription);
+        }
+
+        return this._serializeSubscription(savedSubscription);
     }
 
     async previewSubscriptionCreation(data) {
-        const uuid = data.uuid?.trim();
-        if (!uuid) {
-            throw new Error('UUID 不能为空');
-        }
+        const uuid = this._normalizeSubscriptionUuid(data.uuid);
 
         const exist = await this.subscriptionRepo.findOneBy({ uuid });
         const accounts = await this._getAvailableAccounts();
@@ -63,6 +74,7 @@ class SubscriptionService {
         }));
 
         const looksLikeUuid = /^[a-zA-Z0-9_-]{6,}$/.test(uuid);
+        const subscriptionStats = await this._fetchRemoteResourceSummary(uuid);
         const canCreate = !exist && normalizedAccounts.length > 0 && looksLikeUuid;
         let recommendation = '';
         if (exist) {
@@ -71,6 +83,8 @@ class SubscriptionService {
             recommendation = '当前没有可用账号，无法进行订阅资源校验。';
         } else if (!looksLikeUuid) {
             recommendation = 'UUID 格式看起来不太正确，请确认后再保存。';
+        } else if (subscriptionStats?.available) {
+            recommendation = `识别到真实订阅，预计可同步 ${subscriptionStats.count} 个资源。创建后建议立即执行一次校验。`;
         } else {
             recommendation = '可以创建订阅。创建后建议立即添加资源并执行一次校验。';
         }
@@ -93,7 +107,29 @@ class SubscriptionService {
                 lastRefreshStatus: exist.lastRefreshStatus,
                 lastRefreshTime: exist.lastRefreshTime
             } : null,
+            remoteResourceCount: subscriptionStats?.count ?? null,
+            remoteSubscriptionDetected: !!subscriptionStats?.available,
             recommendation
+        };
+    }
+
+    async listRemoteSubscriptionResources(data) {
+        const uuid = this._normalizeSubscriptionUuid(data.uuid);
+        const pageNum = Math.max(parseInt(data.pageNum, 10) || 1, 1);
+        const pageSize = Math.min(Math.max(parseInt(data.pageSize, 10) || 20, 1), 200);
+        const keyword = String(data.keyword || '').trim();
+        const pageData = await this._fetchRemoteResourcePage(uuid, pageNum, pageSize, keyword);
+
+        return {
+            uuid,
+            count: pageData.totalRemoteCount,
+            pageNum,
+            pageSize,
+            totalPages: pageData.totalRemoteCount > 0 ? Math.ceil(pageData.totalRemoteCount / pageSize) : 0,
+            keyword,
+            items: pageData.fileList
+                .map(entry => this._buildRemoteResourceItem(entry))
+                .filter(item => item.shareCode)
         };
     }
 
@@ -102,15 +138,14 @@ class SubscriptionService {
         if (!subscription) {
             throw new Error('订阅不存在');
         }
+        let shouldSyncResources = false;
         if (updates.uuid !== undefined) {
-            const nextUuid = updates.uuid.trim();
-            if (!nextUuid) {
-                throw new Error('UUID 不能为空');
-            }
+            const nextUuid = this._normalizeSubscriptionUuid(updates.uuid);
             const exist = await this.subscriptionRepo.findOneBy({ uuid: nextUuid });
             if (exist && exist.id !== id) {
                 throw new Error('该 UUID 已存在');
             }
+            shouldSyncResources = shouldSyncResources || subscription.uuid !== nextUuid;
             subscription.uuid = nextUuid;
         }
         if (updates.name !== undefined) {
@@ -122,7 +157,24 @@ class SubscriptionService {
         if (updates.enabled !== undefined) {
             subscription.enabled = !!updates.enabled;
         }
-        return await this.subscriptionRepo.save(subscription);
+        if (updates.selectedShareCodes !== undefined) {
+            const normalizedSelectedShareCodes = this._normalizeSelectedShareCodes(updates.selectedShareCodes);
+            const serializedSelectedShareCodes = JSON.stringify(normalizedSelectedShareCodes);
+            shouldSyncResources = shouldSyncResources || subscription.selectedShareCodes !== serializedSelectedShareCodes;
+            subscription.selectedShareCodes = serializedSelectedShareCodes;
+        }
+
+        let savedSubscription = await this.subscriptionRepo.save(subscription);
+        if (shouldSyncResources) {
+            const syncResult = await this._syncRemoteResources(savedSubscription);
+            await this._refreshSubscriptionSummary(savedSubscription.id);
+            if (syncResult?.synced) {
+                savedSubscription.lastRefreshMessage = this._buildSyncSummary(syncResult) || savedSubscription.lastRefreshMessage;
+                savedSubscription = await this.subscriptionRepo.save(savedSubscription);
+            }
+        }
+
+        return this._serializeSubscription(savedSubscription);
     }
 
     async deleteSubscription(id) {
@@ -188,6 +240,7 @@ class SubscriptionService {
 
     async refreshSubscription(subscriptionId) {
         const subscription = await this._ensureSubscription(subscriptionId);
+        const syncResult = await this._syncRemoteResources(subscription);
         const resources = await this.resourceRepo.find({
             where: { subscriptionId },
             order: { id: 'DESC' }
@@ -214,15 +267,18 @@ class SubscriptionService {
         subscription.invalidResourceCount = invalidResourceCount;
         subscription.availableAccountCount = allAvailableAccountIds.size;
         subscription.totalAccountCount = accounts.length;
+        const syncSummary = this._buildSyncSummary(syncResult);
         if (!resources.length) {
             subscription.lastRefreshStatus = 'success';
-            subscription.lastRefreshMessage = '暂无订阅资源，已更新账号状态';
+            subscription.lastRefreshMessage = syncSummary
+                ? `${syncSummary} | 暂无订阅资源，已更新账号状态`
+                : '暂无订阅资源，已更新账号状态';
         } else if (invalidResourceCount > 0) {
             subscription.lastRefreshStatus = validResourceCount > 0 ? 'warning' : 'failed';
-            subscription.lastRefreshMessage = failedResources.slice(0, 3).join(' | ');
+            subscription.lastRefreshMessage = [syncSummary, failedResources.slice(0, 3).join(' | ')].filter(Boolean).join(' | ');
         } else {
             subscription.lastRefreshStatus = 'success';
-            subscription.lastRefreshMessage = `全部 ${validResourceCount} 个资源校验成功`;
+            subscription.lastRefreshMessage = [syncSummary, `全部 ${validResourceCount} 个资源校验成功`].filter(Boolean).join(' | ');
         }
         await this.subscriptionRepo.save(subscription);
         return {
@@ -231,7 +287,8 @@ class SubscriptionService {
             invalidResourceCount,
             availableAccountCount: allAvailableAccountIds.size,
             totalAccountCount: accounts.length,
-            failedResources
+            failedResources,
+            syncResult
         };
     }
 
@@ -365,6 +422,66 @@ class SubscriptionService {
         });
     }
 
+    _serializeSubscription(subscription, resourceCount = null) {
+        return {
+            ...subscription,
+            ...(resourceCount === null ? {} : { resourceCount }),
+            selectedShareCodes: this._normalizeSelectedShareCodes(subscription?.selectedShareCodes)
+        };
+    }
+
+    _normalizeSelectedShareCodes(input) {
+        if (input == null || input === '') {
+            return [];
+        }
+
+        let values = input;
+        if (typeof input === 'string') {
+            const rawText = input.trim();
+            if (!rawText) {
+                return [];
+            }
+            try {
+                values = JSON.parse(rawText);
+            } catch (error) {
+                values = rawText.split(/[\n,]/);
+            }
+        }
+
+        const normalizedValues = [];
+        const seenShareCodes = new Set();
+        const valueList = Array.isArray(values) ? values : [values];
+        for (const value of valueList) {
+            const rawValue = String(value || '').trim();
+            if (!rawValue) {
+                continue;
+            }
+
+            let shareCode = '';
+            try {
+                shareCode = cloud189Utils.parseShareCode(rawValue);
+            } catch (error) {
+                shareCode = rawValue;
+            }
+
+            if (!shareCode || seenShareCodes.has(shareCode)) {
+                continue;
+            }
+
+            seenShareCodes.add(shareCode);
+            normalizedValues.push(shareCode);
+        }
+
+        return normalizedValues;
+    }
+
+    _getSelectedShareCodeSet(subscriptionOrSelectedShareCodes) {
+        if (Array.isArray(subscriptionOrSelectedShareCodes)) {
+            return new Set(this._normalizeSelectedShareCodes(subscriptionOrSelectedShareCodes));
+        }
+        return new Set(this._normalizeSelectedShareCodes(subscriptionOrSelectedShareCodes?.selectedShareCodes));
+    }
+
     async _validateResourceAgainstAccounts(resource, accounts) {
         const availableAccountIds = [];
         const errors = [];
@@ -489,10 +606,281 @@ class SubscriptionService {
             throw new Error('获取分享信息失败');
         }
         return {
-            shareLink: url,
+            shareLink: cloud189Utils.buildSubscriptionDetailsUrl(shareCode),
             accessCode: finalAccessCode,
             shareInfo
         };
+    }
+
+    _normalizeSubscriptionUuid(input) {
+        return cloud189Utils.parseSubscriptionUuid(String(input || '').trim());
+    }
+
+    async _fetchRemoteResourceSummary(uuid) {
+        try {
+            const page = await this._fetchRemoteResourcePage(uuid, 1, 1);
+            return {
+                available: true,
+                count: page.totalRemoteCount
+            };
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async _fetchRemoteResourcePage(uuid, pageNum = 1, pageSize = 200, keyword = '') {
+        const response = await got('https://api.cloud.189.cn/open/share/getUpResourceShare.action', {
+            method: 'GET',
+            searchParams: {
+                upUserId: uuid,
+                pageNum,
+                pageSize,
+                ...(keyword ? { fileName: keyword } : {})
+            },
+            responseType: 'json',
+            timeout: {
+                request: 20000
+            },
+            retry: {
+                limit: 0
+            },
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': cloud189Utils.buildSubscriptionHomeUrl(uuid),
+                'User-Agent': 'Mozilla/5.0'
+            }
+        });
+
+        const payload = response.body || {};
+        if (payload.code !== 'success' || !payload.data) {
+            const errorMessage = payload.message || payload.msg || '获取远程订阅资源失败';
+            throw new Error(errorMessage);
+        }
+
+        return {
+            totalRemoteCount: Number(payload.data.count) || 0,
+            fileList: Array.isArray(payload.data.fileList) ? payload.data.fileList : []
+        };
+    }
+
+    _buildRemoteResourceItem(entry) {
+        const shareCode = String(entry?.accessURL || '').trim();
+        const title = String(entry?.name || entry?.fileName || '').trim() || `订阅资源-${entry?.id || shareCode}`;
+        return {
+            id: String(entry?.id || shareCode || ''),
+            title,
+            shareCode,
+            shareLink: shareCode ? cloud189Utils.buildSubscriptionDetailsUrl(shareCode) : '',
+            isFolder: !!entry?.folder,
+            shareId: entry?.shareId ? String(entry.shareId) : '',
+            shareType: entry?.shareType != null ? String(entry.shareType) : '',
+            createDate: entry?.createDate || null,
+            lastOpTime: entry?.lastOpTime || null
+        };
+    }
+
+    _buildResourceIdentityKey(shareLink) {
+        try {
+            const shareCode = cloud189Utils.parseShareCode(String(shareLink || '').trim());
+            return `share:${shareCode}`;
+        } catch (error) {
+            const normalizedLink = String(shareLink || '').trim();
+            return normalizedLink ? `raw:${normalizedLink}` : '';
+        }
+    }
+
+    _extractResourceShareCode(resource) {
+        try {
+            return cloud189Utils.parseShareCode(String(resource?.shareLink || '').trim());
+        } catch (error) {
+            return '';
+        }
+    }
+
+    async _pruneUnselectedResources(subscriptionId, selectedShareCodeSet) {
+        if (!selectedShareCodeSet?.size) {
+            return 0;
+        }
+
+        const resources = await this.resourceRepo.find({
+            where: { subscriptionId }
+        });
+        const resourcesToDelete = resources.filter(resource => {
+            const shareCode = this._extractResourceShareCode(resource);
+            return shareCode && !selectedShareCodeSet.has(shareCode);
+        });
+
+        if (!resourcesToDelete.length) {
+            return 0;
+        }
+
+        await this.resourceRepo.remove(resourcesToDelete);
+        return resourcesToDelete.length;
+    }
+
+    async _syncRemoteResources(subscription) {
+        const uuid = String(subscription?.uuid || '').trim();
+        if (!uuid) {
+            return {
+                synced: false,
+                totalRemoteCount: 0,
+                createdCount: 0,
+                updatedCount: 0,
+                prunedCount: 0,
+                matchedRemoteCount: 0,
+                selectionActive: false
+            };
+        }
+        const selectedShareCodeSet = this._getSelectedShareCodeSet(subscription);
+
+        let firstPage = null;
+        try {
+            firstPage = await this._fetchRemoteResourcePage(uuid, 1, 200);
+        } catch (error) {
+            return {
+                synced: false,
+                totalRemoteCount: 0,
+                createdCount: 0,
+                updatedCount: 0,
+                prunedCount: 0,
+                matchedRemoteCount: 0,
+                selectionActive: selectedShareCodeSet.size > 0,
+                error: error.message
+            };
+        }
+
+        const remoteEntries = [...firstPage.fileList];
+        const totalRemoteCount = firstPage.totalRemoteCount;
+        const totalPages = totalRemoteCount > 0 ? Math.ceil(totalRemoteCount / 200) : 0;
+
+        for (let pageNum = 2; pageNum <= totalPages; pageNum += 1) {
+            const pageData = await this._fetchRemoteResourcePage(uuid, pageNum, 200);
+            remoteEntries.push(...pageData.fileList);
+        }
+        const matchedRemoteEntries = selectedShareCodeSet.size > 0
+            ? remoteEntries.filter(entry => selectedShareCodeSet.has(String(entry?.accessURL || '').trim()))
+            : remoteEntries;
+
+        const existingResources = await this.resourceRepo.find({
+            where: { subscriptionId: subscription.id }
+        });
+        const existingResourceMap = new Map();
+        for (const resource of existingResources) {
+            const key = this._buildResourceIdentityKey(resource.shareLink);
+            if (key && !existingResourceMap.has(key)) {
+                existingResourceMap.set(key, resource);
+            }
+        }
+
+        const resourcesToSave = [];
+        let createdCount = 0;
+        let updatedCount = 0;
+
+        for (const entry of matchedRemoteEntries) {
+            const shareCode = String(entry.accessURL || '').trim();
+            if (!shareCode) {
+                continue;
+            }
+
+            const shareLink = cloud189Utils.buildSubscriptionDetailsUrl(shareCode);
+            const title = String(entry.name || '').trim() || `订阅资源-${entry.id || shareCode}`;
+            const resourceKey = this._buildResourceIdentityKey(shareLink);
+            const existingResource = existingResourceMap.get(resourceKey);
+
+            if (!existingResource) {
+                resourcesToSave.push(this.resourceRepo.create({
+                    subscriptionId: subscription.id,
+                    title,
+                    shareLink,
+                    accessCode: '',
+                    shareId: entry.shareId ? String(entry.shareId) : '',
+                    shareMode: entry.shareType != null ? String(entry.shareType) : '',
+                    shareFileId: entry.id ? String(entry.id) : '',
+                    shareFileName: title,
+                    isFolder: !!entry.folder,
+                    verifyStatus: 'unknown',
+                    lastVerifyError: '',
+                    availableAccountIds: '',
+                    verifyDetails: ''
+                }));
+                createdCount += 1;
+                continue;
+            }
+
+            let changed = false;
+            if (existingResource.shareLink !== shareLink) {
+                existingResource.shareLink = shareLink;
+                changed = true;
+            }
+            if (existingResource.accessCode !== '') {
+                existingResource.accessCode = '';
+                changed = true;
+            }
+            if (String(existingResource.shareId || '') !== String(entry.shareId || '')) {
+                existingResource.shareId = entry.shareId ? String(entry.shareId) : '';
+                changed = true;
+            }
+            if (String(existingResource.shareMode || '') !== String(entry.shareType || '')) {
+                existingResource.shareMode = entry.shareType != null ? String(entry.shareType) : '';
+                changed = true;
+            }
+            if (String(existingResource.shareFileId || '') !== String(entry.id || '')) {
+                existingResource.shareFileId = entry.id ? String(entry.id) : '';
+                changed = true;
+            }
+            if (existingResource.shareFileName !== title) {
+                const shouldUpdateTitle = !existingResource.title || existingResource.title === existingResource.shareFileName;
+                existingResource.shareFileName = title;
+                if (shouldUpdateTitle) {
+                    existingResource.title = title;
+                }
+                changed = true;
+            }
+            if (!!existingResource.isFolder !== !!entry.folder) {
+                existingResource.isFolder = !!entry.folder;
+                changed = true;
+            }
+
+            if (changed) {
+                resourcesToSave.push(existingResource);
+                updatedCount += 1;
+            }
+        }
+
+        if (resourcesToSave.length) {
+            await this.resourceRepo.save(resourcesToSave);
+        }
+        const prunedCount = await this._pruneUnselectedResources(subscription.id, selectedShareCodeSet);
+
+        return {
+            synced: true,
+            totalRemoteCount,
+            matchedRemoteCount: matchedRemoteEntries.length,
+            createdCount,
+            updatedCount,
+            prunedCount,
+            selectionActive: selectedShareCodeSet.size > 0
+        };
+    }
+
+    _buildSyncSummary(syncResult) {
+        if (!syncResult?.synced) {
+            return '';
+        }
+        const parts = [];
+        if (syncResult.selectionActive) {
+            parts.push(`按选择保留 ${syncResult.matchedRemoteCount} / ${syncResult.totalRemoteCount} 个资源`);
+        }
+        if (syncResult.createdCount > 0) {
+            parts.push(`同步新增 ${syncResult.createdCount} 个资源`);
+        }
+        if (syncResult.updatedCount > 0) {
+            parts.push(`同步更新 ${syncResult.updatedCount} 个资源`);
+        }
+        if (syncResult.prunedCount > 0) {
+            parts.push(`移除 ${syncResult.prunedCount} 个未选资源`);
+        }
+        return parts.join('，');
     }
 }
 

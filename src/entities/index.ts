@@ -273,6 +273,9 @@ export class Subscription {
     @Column('integer', { nullable: true, default: 0 })
     totalAccountCount!: number;
 
+    @Column('text', { nullable: true, default: '' })
+    selectedShareCodes!: string;
+
     @CreateDateColumn({
         transformer: {
             from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
