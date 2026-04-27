@@ -48,6 +48,11 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
     fetchConfig();
   }, []);
 
+  // 每次 tab 切换到秒传时刷新配置
+  useEffect(() => {
+    fetchConfig();
+  }, []);
+
   const fetchAccounts = async () => {
     try {
       const res = await fetch('/api/accounts');
@@ -64,7 +69,6 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
   };
 
   const fetchConfig = async () => {
-    setIsConfigLoading(true);
     try {
       const res = await fetch('/api/cas/auto-restart-config');
       const data = await res.json();
@@ -73,8 +77,6 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       }
     } catch (e) {
       console.error('获取CAS配置失败:', e);
-    } finally {
-      setIsConfigLoading(false);
     }
   };
 
