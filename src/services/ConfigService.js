@@ -41,6 +41,22 @@ class ConfigService {
         scanInterval: 300,             // 扫描间隔（秒）
         tempFileTtl: 300               // 临时播放文件保留时间（秒）
       },
+      pt: {
+        downloadRoot: '',              // qb 下载根目录（容器内可见路径）
+        pollCron: '*/15 * * * *',      // RSS 拉取 cron
+        cleanupEnabled: true,          // 是否清理已完成的 release（qb 任务 + 本地文件）
+        cleanupCron: '0 */6 * * *',
+        retryIntervalSec: 300,         // release 失败重试间隔
+        downloader: {
+          type: 'qbittorrent',         // 当前支持: qbittorrent；预留 transmission/aria2
+          baseUrl: '',
+          username: '',
+          password: '',
+          categoryPrefix: 'pt-sub-',
+          tagPrefix: 'pt-rel-',
+          insecureSkipTlsVerify: false
+        }
+      },
       wecom: {
         enable: false,
         webhook: ''
