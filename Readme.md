@@ -103,8 +103,8 @@ docker run -d \
 如果这个项目帮到了你，请给一个 ⭐️ **Star** 以示支持！
 
 - 感谢所有贡献者与用户提供的宝贵建议。
-- 感谢
-- Claude Codex GeminiCLI
+- 感谢 Claude Codex GeminiCLI
+- [oceanxux/cloud189-auto-save](https://github.com/oceanxux/cloud189-auto-save)
 - [原版项目](https://github.com/1307super/cloud189-auto-save)
 - [my-cloud189-auto-save](https://github.com/ymting/my-cloud189-auto-save)
 - [OpenList](https://github.com/OpenListTeam/OpenList) - 家庭转存参考实现

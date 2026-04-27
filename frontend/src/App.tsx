@@ -16,7 +16,8 @@ import {
   MessageSquare,
   Moon,
   Sun,
-  Zap
+  Zap,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
