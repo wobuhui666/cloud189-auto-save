@@ -57,6 +57,7 @@ class Cloud189Service {
 
     // 封装统一请求
     async request(action, body = {}) {
+        const method = String(body?.method || 'GET').toUpperCase();
         body.headers = {
             'Accept': 'application/json;charset=UTF-8',
             ...(body.headers || {})
@@ -65,10 +66,11 @@ class Cloud189Service {
             const requestUrl = this.buildRequestUrl(action);
             return await this.client.request(requestUrl, body).json();
         }catch (error) {
-            if (error instanceof got.HTTPError) {
+            const statusCode = Number(error?.response?.statusCode || 0);
+            if (error?.name === 'HTTPError' || statusCode > 0) {
                 let responseBody = null;
                 try {
-                    responseBody = JSON.parse(error.response.body);
+                    responseBody = JSON.parse(error?.response?.body);
                 } catch (parseError) {
                     responseBody = null;
                 }
@@ -101,13 +103,29 @@ class Cloud189Service {
                     if (responseBody.errorCode === 'InvalidSessionKey' && /check ip error/i.test(responseBody.errorMsg || '')) {
                         logTaskEvent('天翼云盘会话失效: 当前出口 IP 与 Cookie 绑定 IP 不一致。若为双栈网络，建议为容器添加环境变量 DNS_LOOKUP_IP_VERSION=ipv4；如账号仅使用 Cookie 登录，请改用账号密码登录或固定代理出口。');
                     }
-                    logTaskEvent('请求天翼云盘接口失败:' + error.response.body);
+                    const message = responseBody.res_msg || responseBody.res_message || responseBody.errorMsg || error.message;
+                    logTaskEvent(`请求天翼云盘接口失败 [HTTP ${statusCode || '未知'} ${method} ${action}]: ${message}`);
+                    return {
+                        ...responseBody,
+                        _requestFailed: true,
+                        _retriable: statusCode >= 500 || statusCode === 429,
+                        _httpStatusCode: statusCode || undefined
+                    };
                 } else {
-                    logTaskEvent('请求天翼云盘接口失败:' + error.response.body);
+                    const responseBodyText = String(error?.response?.body || '').slice(0, 500);
+                    const fallbackMessage = responseBodyText || error.message || 'HTTP请求失败';
+                    logTaskEvent(`请求天翼云盘接口失败 [HTTP ${statusCode || '未知'} ${method} ${action}]: ${fallbackMessage}`);
+                    return {
+                        res_code: `HTTP_${statusCode || 'UNKNOWN'}`,
+                        res_msg: fallbackMessage,
+                        _requestFailed: true,
+                        _retriable: statusCode >= 500 || statusCode === 429,
+                        _httpStatusCode: statusCode || undefined
+                    };
                 }
-            }else if (error instanceof got.TimeoutError) {
+            }else if (error?.name === 'TimeoutError' || error instanceof got.TimeoutError) {
                 logTaskEvent('请求天翼云盘接口失败: 请求超时, 请检查是否能访问天翼云盘');
-            }else if(error instanceof got.RequestError) {
+            }else if(error?.name === 'RequestError' || error instanceof got.RequestError) {
                 logTaskEvent('请求天翼云盘接口异常: ' + error.message);
             }else{
                 logTaskEvent('其他异常:' + error.message)
@@ -115,6 +133,33 @@ class Cloud189Service {
             console.log(error)
             return null
         }
+    }
+
+    async requestWithRetry(action, body = {}, options = {}) {
+        const retries = Number(options.retries ?? 0);
+        const retryDelayMs = Number(options.retryDelayMs ?? 800);
+        const shouldRetry = typeof options.shouldRetry === 'function'
+            ? options.shouldRetry
+            : (result) => {
+                if (result == null) {
+                    return true;
+                }
+                if (result?._requestFailed) {
+                    return Boolean(result._retriable);
+                }
+                return false;
+            };
+
+        for (let attempt = 0; attempt <= retries; attempt++) {
+            const result = await this.request(action, body);
+            if (!shouldRetry(result) || attempt === retries) {
+                return result;
+            }
+            logTaskEvent(`天翼云盘接口请求失败 [${action}]，${Math.round(retryDelayMs / 1000 * 10) / 10} 秒后重试 (${attempt + 1}/${retries})`);
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        }
+
+        return null;
     }
 
     buildRequestUrl(action) {
@@ -214,46 +259,137 @@ class Cloud189Service {
     }
 
     // 获取个人网盘文件列表
-    async listFiles(folderId) {
+    async listFiles(folderId, options = {}) {
+        const { recursive = false, maxPages = 10 } = options;
+        
         if (this.isFamilyAccount()) {
-            return await this.listFamilyFiles(folderId);
+            return await this.listFamilyFiles(folderId, options);
         }
-        return await this.request('/api/open/file/listFiles.action' , {
-            method: 'GET',
-            searchParams: { 
-                folderId,
-                mediaType: 0,
-                orderBy: 'lastOpTime',
-                descending: true,
-                pageNum: 1,
-                pageSize: 1000
-             }
-        })
+        
+        // 分页获取所有文件
+        const allFiles = [];
+        const allFolders = [];
+        let pageNum = 1;
+        let hasMore = true;
+        
+        while (hasMore && pageNum <= maxPages) {
+            const result = await this.requestWithRetry('/api/open/file/listFiles.action', {
+                method: 'GET',
+                searchParams: {
+                    folderId,
+                    mediaType: 0,
+                    orderBy: 'lastOpTime',
+                    descending: true,
+                    pageNum,
+                    pageSize: 1000
+                }
+            }, {
+                retries: 2,
+                retryDelayMs: 1200
+            });
+            
+            const fileListAO = result?.fileListAO || {};
+            const files = fileListAO.fileList || [];
+            const folders = fileListAO.folderList || [];
+            
+            allFiles.push(...files);
+            allFolders.push(...folders);
+            
+            // 检查是否还有更多
+            const totalCount = fileListAO.count || 0;
+            hasMore = (pageNum * 1000) < totalCount && files.length === 1000;
+            pageNum++;
+        }
+        
+        // 递归获取子目录文件
+        if (recursive) {
+            for (const folder of allFolders) {
+                const subResult = await this.listFiles(folder.id, { recursive, maxPages });
+                allFiles.push(...(subResult.fileListAO?.fileList || []));
+                allFolders.push(...(subResult.fileListAO?.folderList || []));
+            }
+        }
+        
+        return {
+            fileListAO: {
+                fileList: allFiles,
+                folderList: allFolders,
+                count: allFiles.length
+            }
+        };
     }
 
-    async listFamilyFiles(folderId = '') {
+    async listFamilyFiles(folderId = '', options = {}) {
+        const { recursive = false, maxPages = 10 } = options;
         const familyId = await this.resolveFamilyId();
         const normalizedFolderId = folderId === '-11' ? '' : (folderId || '');
-        return await this.request('/api/open/family/file/listFiles.action', {
-            method: 'GET',
-            searchParams: {
-                folderId: normalizedFolderId,
-                fileType: '0',
-                mediaAttr: '0',
-                iconOption: '5',
-                pageNum: '1',
-                pageSize: '1000',
-                familyId,
-                orderBy: '1',
-                descending: 'false'
+        
+        // 分页获取所有文件
+        const allFiles = [];
+        const allFolders = [];
+        let pageNum = 1;
+        let hasMore = true;
+        
+        while (hasMore && pageNum <= maxPages) {
+            const result = await this.requestWithRetry('/api/open/family/file/listFiles.action', {
+                method: 'GET',
+                searchParams: {
+                    folderId: normalizedFolderId,
+                    fileType: '0',
+                    mediaAttr: '0',
+                    iconOption: '5',
+                    pageNum: String(pageNum),
+                    pageSize: '1000',
+                    familyId,
+                    orderBy: '1',
+                    descending: 'false'
+                }
+            }, {
+                retries: 2,
+                retryDelayMs: 1200
+            });
+            
+            const fileListAO = result?.fileListAO || {};
+            const files = fileListAO.fileList || [];
+            const folders = fileListAO.folderList || [];
+            
+            allFiles.push(...files);
+            allFolders.push(...folders);
+            
+            // 检查是否还有更多
+            const totalCount = fileListAO.count || 0;
+            hasMore = (pageNum * 1000) < totalCount && files.length === 1000;
+            pageNum++;
+        }
+        
+        // 递归获取子目录文件
+        if (recursive) {
+            for (const folder of allFolders) {
+                const subResult = await this.listFamilyFiles(folder.id, { recursive, maxPages });
+                allFiles.push(...(subResult.fileListAO?.fileList || []));
+                allFolders.push(...(subResult.fileListAO?.folderList || []));
             }
-        });
+        }
+        
+        return {
+            fileListAO: {
+                fileList: allFiles,
+                folderList: allFolders,
+                count: allFiles.length
+            }
+        };
     }
 
     // 创建批量执行任务
     async createBatchTask(batchTaskDto) {
         logTaskEvent("创建批量任务")
-        logTaskEvent(`batchTaskDto: ${batchTaskDto.toString()}`)
+        let taskInfos = [];
+        try {
+            taskInfos = JSON.parse(batchTaskDto.taskInfos || '[]');
+        } catch {
+            taskInfos = [];
+        }
+        logTaskEvent(`batchTaskDto摘要: type=${batchTaskDto.type}, targetFolderId=${batchTaskDto.targetFolderId}, shareId=${batchTaskDto.shareId}, familyId=${batchTaskDto.familyId || 'null'}, taskCount=${taskInfos.length}, sample=${taskInfos.slice(0, 3).map(item => item.fileName).join(' | ')}`)
         const payload = { ...batchTaskDto };
         // 去除 null/undefined 字段，避免 form 里出现 "null" 字符串
         for (const key of Object.keys(payload)) {
@@ -298,7 +434,7 @@ class Cloud189Service {
     async createFolder(folderName, parentFolderId) {
         if (this.isFamilyAccount()) {
             const familyId = await this.resolveFamilyId();
-            return await this.request('/api/open/family/file/createFolder.action', {
+            return await this.requestWithRetry('/api/open/family/file/createFolder.action', {
                 method: 'POST',
                 searchParams: {
                     folderName,
@@ -306,14 +442,22 @@ class Cloud189Service {
                     familyId,
                     parentId: parentFolderId === '-11' ? '' : (parentFolderId || '')
                 }
+            }, {
+                retries: 2,
+                retryDelayMs: 1200,
+                shouldRetry: (result) => result == null || result?.res_code === 'FileNotFound'
             });
         }
-        return await this.request('/api/open/file/createFolder.action' , {
+        return await this.requestWithRetry('/api/open/file/createFolder.action' , {
             method: 'POST',
             form: {
                 parentFolderId: parentFolderId,
                 folderName: folderName
             },
+        }, {
+            retries: 2,
+            retryDelayMs: 1200,
+            shouldRetry: (result) => result == null || result?.res_code === 'FileNotFound'
         })
     }
 
@@ -354,25 +498,48 @@ class Cloud189Service {
         });
     }
 
+    // 获取单个文件详细信息（含MD5）
+    async getFileInfo(fileId) {
+        if (this.isFamilyAccount()) {
+            const familyId = await this.resolveFamilyId();
+            const resp = await this.request('/api/open/family/file/getFileInfo.action', {
+                method: 'GET',
+                searchParams: { fileId, familyId }
+            });
+            return resp?.fileInfo || null;
+        }
+        const resp = await this.request('/api/open/file/getFileInfo.action', {
+            method: 'GET',
+            searchParams: { fileId }
+        });
+        return resp?.fileInfo || null;
+    }
+
     // 重命名文件
     async renameFile(fileId, destFileName) {
         if (this.isFamilyAccount()) {
             const familyId = await this.resolveFamilyId();
-            return await this.request('/api/open/family/file/renameFile.action', {
+            return await this.requestWithRetry('/api/open/family/file/renameFile.action', {
                 method: 'GET',
                 searchParams: {
                     fileId,
                     destFileName,
                     familyId
                 }
+            }, {
+                retries: 2,
+                retryDelayMs: 1000
             });
         }
-        const response = await this.request('/api/open/file/renameFile.action', {
+        const response = await this.requestWithRetry('/api/open/file/renameFile.action', {
             method: 'POST',
             form: {
                 fileId,
                 destFileName
             },
+        }, {
+            retries: 2,
+            retryDelayMs: 1000
         })
         return response
     }

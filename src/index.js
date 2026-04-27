@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { AppDataSource } = require('./database');
-const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig } = require('./entities');
+const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun } = require('./entities');
 const { TaskService } = require('./services/task');
 const { Cloud189Service } = require('./services/cloud189');
 const { MessageUtil } = require('./services/message');
@@ -31,6 +31,7 @@ const { LazyShareStrmService } = require('./services/lazyShareStrm');
 const { OrganizerService } = require('./services/organizer');
 const { AutoSeriesService } = require('./services/autoSeries');
 const TelegramService = require('./services/message/TelegramService');
+const { CasService } = require('./services/casService');
 
 const appPort = Number(process.env.PORT || 3000);
 let embyStandaloneProxyServer = null;
@@ -1737,6 +1738,245 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: false, error: error.message });
         }
     })
+
+    // ==================== CAS 秒传相关 API ====================
+    const casService = new CasService();
+
+    // CAS 秒传恢复
+    app.post('/api/cas/restore', async (req, res) => {
+        try {
+            const { accountId, folderId, casContent, fileName } = req.body;
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+            const casInfo = CasService.parseCasContent(casContent);
+            const result = await casService.restoreFromCas(cloud189, folderId, casInfo, fileName || casInfo.name);
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 云端CAS文件恢复 - 下载并解析云端CAS文件后恢复
+    app.post('/api/cas/restore-file', async (req, res) => {
+        try {
+            const { accountId, folderId, casFileId, casFileName } = req.body;
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+
+            // 下载并解析CAS文件
+            const casInfo = await casService.downloadAndParseCas(cloud189, casFileId);
+            const restoreName = CasService.getOriginalFileName(casFileName, casInfo);
+
+            // 执行恢复
+            const result = await casService.restoreFromCas(cloud189, folderId, casInfo, restoreName);
+
+            // 恢复后删除CAS文件（如果配置启用）
+            await casService.deleteCasFileAfterRestore(cloud189, casFileId, casFileName, account.accountType === 'family');
+
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 恢复并播放 - 临时恢复文件用于播放
+    app.post('/api/cas/restore-and-play', async (req, res) => {
+        try {
+            const { CasPlaybackService } = require('./services/casPlaybackService');
+            const { accountId, casFileId, casFileName, folderId } = req.body;
+
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+
+            const playbackService = new CasPlaybackService();
+            const result = await playbackService.restoreAndGetPlaybackUrl(
+                cloud189, casFileId, casFileName, folderId || '-11'
+            );
+
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // CAS自动恢复配置管理
+    app.get('/api/cas/auto-restart-config', async (req, res) => {
+        try {
+            const config = ConfigService.getConfigValue('cas', {});
+            res.json({
+                success: true,
+                data: {
+                    enableAutoRestore: config.enableAutoRestore || false,
+                    autoRestorePaths: config.autoRestorePaths || [],
+                    deleteCasAfterRestore: config.deleteCasAfterRestore !== false,
+                    deleteSourceAfterGenerate: config.deleteSourceAfterGenerate || false,
+                    enableFamilyTransit: config.enableFamilyTransit !== false,
+                    familyTransitFirst: config.familyTransitFirst || false,
+                    scanInterval: config.scanInterval || 300
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/cas/auto-restart-config', async (req, res) => {
+        try {
+            const {
+                enableAutoRestore,
+                autoRestorePaths,
+                deleteCasAfterRestore,
+                deleteSourceAfterGenerate,
+                enableFamilyTransit,
+                familyTransitFirst,
+                scanInterval
+            } = req.body;
+
+            ConfigService.setConfigValue('cas.enableAutoRestore', enableAutoRestore);
+            ConfigService.setConfigValue('cas.autoRestorePaths', autoRestorePaths || []);
+            ConfigService.setConfigValue('cas.deleteCasAfterRestore', deleteCasAfterRestore !== false);
+            ConfigService.setConfigValue('cas.deleteSourceAfterGenerate', deleteSourceAfterGenerate || false);
+            ConfigService.setConfigValue('cas.enableFamilyTransit', enableFamilyTransit !== false);
+            ConfigService.setConfigValue('cas.familyTransitFirst', familyTransitFirst || false);
+            ConfigService.setConfigValue('cas.scanInterval', scanInterval || 300);
+
+            // 重启监控服务
+            const { casMonitorService } = require('./services/casMonitorService');
+            if (enableAutoRestore) {
+                casMonitorService.reload();
+            } else {
+                casMonitorService.stop();
+            }
+
+            res.json({ success: true, data: '配置已保存' });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 手动触发CAS扫描
+    app.post('/api/cas/trigger-scan', async (req, res) => {
+        try {
+            const { accountId, folderId } = req.body;
+            const { casMonitorService } = require('./services/casMonitorService');
+            const result = await casMonitorService.triggerScan(accountId, folderId);
+            res.json(result);
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 获取CAS监控状态
+    app.get('/api/cas/monitor-status', async (req, res) => {
+        try {
+            const { casMonitorService } = require('./services/casMonitorService');
+            const status = casMonitorService.getStatus();
+            res.json({ success: true, data: status });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 批量清理CAS文件
+    app.post('/api/cas/batch-cleanup', async (req, res) => {
+        try {
+            const { CasCleanupService } = require('./services/casCleanupService');
+            const { accountId, folderId, options } = req.body;
+
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+
+            const cleanupService = new CasCleanupService();
+            const result = await cleanupService.batchPermanentDelete(cloud189, folderId, options);
+
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 创建CAS文件
+    app.post('/api/cas/create', async (req, res) => {
+        try {
+            const { accountId, fileId, parentId } = req.body;
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+
+            const result = await cloud189.listFiles(parentId || '-11');
+            const file = (result?.fileListAO?.fileList || []).find(f => String(f.id) === String(fileId));
+
+            if (!file) throw new Error('未找到文件或文件信息不完整(需MD5)');
+
+            const casContent = CasService.generateCasContent(file, 'base64');
+
+            // 生成CAS后删除源文件（如果配置启用）
+            await casService.deleteSourceFileAfterGenerate(cloud189, fileId, file.name || file.fileName, account.accountType === 'family');
+
+            res.json({ success: true, data: { casContent, fileName: (file.name || file.fileName) + '.cas' } });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 批量生成CAS文件到云端
+    app.post('/api/cas/generate-folder-files', async (req, res) => {
+        try {
+            const { accountId, jobs, format, overwrite } = req.body || {};
+            const account = await accountRepo.findOneBy({ id: Number(accountId) });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+            const result = await casService.generateCasFilesToCloud(cloud189, jobs, {
+                format,
+                overwrite: overwrite !== false
+            });
+            res.json({ success: true, data: result });
+        } catch (error) {
+            console.error('生成云端CAS文件失败:', error);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 导出文件夹CAS文件到云端
+    app.post('/api/cas/export-folder-to-cloud', async (req, res) => {
+        try {
+            const { accountId, sourceFolderId, targetFolderId, recursive, overwrite } = req.body || {};
+            const account = await accountRepo.findOneBy({ id: Number(accountId) });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+            const result = await casService.exportFolderCasFilesToCloud(cloud189, sourceFolderId, targetFolderId, {
+                recursive: recursive !== false,
+                overwrite: overwrite !== false,
+                mediaOnly: true
+            });
+            res.json({ success: true, data: result });
+        } catch (error) {
+            console.error('网盘文件另存为CAS失败:', error);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 导出文件夹CAS信息
+    app.post('/api/cas/export-folder', async (req, res) => {
+        try {
+            const { accountId, folderId } = req.body;
+            const account = await accountRepo.findOneBy({ id: Number(accountId) });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+
+            const exportData = await casService.collectFolderCasStubs(cloud189, folderId, { mediaOnly: true });
+            res.json({ success: true, data: exportData });
+        } catch (error) {
+            console.error('导出文件夹CAS信息失败:', error);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== END CAS API ====================
     
     // 全局错误处理中间件
     app.use((err, req, res, next) => {
@@ -1756,6 +1996,13 @@ AppDataSource.initialize().then(async () => {
             await syncStandaloneEmbyProxyServer(embyService);
         } catch (error) {
             console.error('启动 Emby 独立反代端口失败:', error.message);
+        }
+        // 启动 CAS 监控服务
+        try {
+            const { casMonitorService } = require('./services/casMonitorService');
+            casMonitorService.start();
+        } catch (error) {
+            console.error('启动 CAS 监控服务失败:', error.message);
         }
     });
     server.on('upgrade', (req, socket, head) => {

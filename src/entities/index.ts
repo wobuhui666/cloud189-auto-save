@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
 
 @Entity()
 export class Account {
@@ -68,7 +68,7 @@ export class Task {
     @Column('integer')
     accountId!: number;
 
-    @ManyToOne(() => Account, { nullable: true })
+    @ManyToOne(() => Account, { nullable: true, onDelete: 'CASCADE' })
     @JoinColumn({ name: 'accountId' })
     account!: Account;
 
@@ -77,6 +77,15 @@ export class Task {
 
     @Column('text')
     targetFolderId!: string;
+
+    @Column('text', { nullable: true })
+    targetFolderName!: string;
+
+    @Column('text', { nullable: true })
+    organizerTargetFolderId!: string;
+
+    @Column('text', { nullable: true })
+    organizerTargetFolderName!: string;
 
     @Column('text', { nullable: true })
     videoType!: string;
@@ -95,6 +104,12 @@ export class Task {
 
     @Column('datetime', { nullable: true})
     lastFileUpdateTime!: Date;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    lastSourceRefreshTime!: Date;
 
     @Column('text', { nullable: true })
     resourceName!: string;
@@ -189,6 +204,15 @@ export class Task {
 
     @Column({ nullable: true })
     tmdbId!: string; // tmdbId, 用于匹配tmdb和emby的电影
+
+    @Column('integer', { nullable: true })
+    tmdbSeasonNumber!: number;
+
+    @Column('text', { nullable: true })
+    tmdbSeasonName!: string;
+
+    @Column('integer', { nullable: true })
+    tmdbSeasonEpisodes!: number;
     
     @Column({ nullable: true })
     enableTaskScraper!: boolean; // 是否启用刮削
@@ -219,15 +243,73 @@ export class Task {
     isFolder!: boolean;
 }
 
+@Entity()
+@Index(['taskId', 'sourceFileId'], { unique: true })
+export class TaskProcessedFile {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('integer')
+    taskId!: number;
+
+    @ManyToOne(() => Task, { nullable: false, onDelete: 'CASCADE' })
+    @JoinColumn({ name: 'taskId' })
+    task!: Task;
+
+    @Column('text')
+    sourceFileId!: string;
+
+    @Column('text', { nullable: true })
+    sourceFileName!: string;
+
+    @Column('text', { nullable: true })
+    sourceMd5!: string;
+
+    @Column('text', { nullable: true })
+    sourceShareId!: string;
+
+    @Column('text', { nullable: true })
+    restoredFileName!: string;
+
+    @Column('text', { default: 'processing' })
+    status!: string;
+
+    @Column('text', { nullable: true })
+    lastError!: string;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
 // 常用目录表
 @Entity()
 export class CommonFolder {
     @Column('text', { primary: true })
     id!: string;
+
     @Column('integer')
     accountId!: number;
+
+    @ManyToOne(() => Account, { onDelete: 'CASCADE' })
+    @JoinColumn({ name: 'accountId' })
+    account!: Account;
+
     @Column('text')
     path!: string;
+
     @Column('text')
     name!: string;
 }
@@ -272,15 +354,6 @@ export class Subscription {
 
     @Column('integer', { nullable: true, default: 0 })
     totalAccountCount!: number;
-
-    @Column('text', { nullable: true, default: '' })
-    selectedShareCodes!: string;
-
-    @Column('boolean', { default: false })
-    autoCreateTasks!: boolean;
-
-    @Column('text', { nullable: true, default: '' })
-    autoTaskConfig!: string;
 
     @CreateDateColumn({
         transformer: {
@@ -352,21 +425,6 @@ export class SubscriptionResource {
 
     @Column('text', { nullable: true, default: '' })
     verifyDetails!: string;
-
-    @Column('datetime', { nullable: true, transformer: {
-        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
-        to: (date: Date) => date
-    } })
-    autoTaskCreatedAt!: Date;
-
-    @Column('integer', { nullable: true, default: 0 })
-    autoTaskTaskCount!: number;
-
-    @Column('text', { nullable: true, default: '' })
-    autoTaskTaskIds!: string;
-
-    @Column('text', { nullable: true, default: '' })
-    autoTaskLastError!: string;
 
     @CreateDateColumn({
         transformer: {
@@ -455,5 +513,112 @@ export class StrmConfig {
     updatedAt!: Date;
 }
 
+@Entity()
+export class WorkflowRun {
+    @Column('text', { primary: true })
+    id!: string;
 
-export default { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig };
+    @Column('text')
+    type!: string;
+
+    @Column('text')
+    status!: string;
+
+    @Column('simple-json')
+    steps!: any[];
+
+    @Column('integer', { default: 0 })
+    current!: number;
+
+    @Column('simple-json', { nullable: true })
+    context!: Record<string, any>;
+
+    @Column('text', { nullable: true })
+    confirmKey!: string | null;
+
+    @Column('text', { nullable: true })
+    source!: string | null;
+
+    @Column('text', { nullable: true })
+    chatId!: string | null;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+
+@Entity()
+export class SystemLog {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    level!: string; // info, warn, error, debug
+
+    @Column('text')
+    module!: string; // transfer, organizer, ai, tmdb, system
+
+    @Column('text')
+    message!: string;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+}
+
+@Entity()
+@Index(['cacheKey'], { unique: true })
+export class TmdbCache {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    cacheKey!: string;
+
+    @Column('text')
+    category!: string;
+
+    @Column('text')
+    content!: string;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    expiresAt!: Date;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+export default { Account, Task, TaskProcessedFile, CommonFolder, Subscription, SubscriptionResource, StrmConfig, WorkflowRun, TmdbCache };
