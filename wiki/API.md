@@ -12,7 +12,7 @@ Cloud189 Auto Save 提供一组面向自动化脚本和第三方工具的 REST A
 x-api-key: YOUR_SYSTEM_API_KEY
 ```
 
-系统 API Key 可在 [[SystemSettings|系统设置]] 中查看或重新生成。
+系统 API Key 可在 [[SystemSettings]] 中查看或重新生成。
 
 ---
 
