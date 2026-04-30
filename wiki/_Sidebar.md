@@ -10,6 +10,7 @@
 - [[CAS]]
 - [[Organizer]]
 - [[Subscription]]
+- [[PT]]
 
 ### 媒体中心
 - [[Emby]]
