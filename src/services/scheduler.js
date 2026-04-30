@@ -48,6 +48,29 @@ class SchedulerService {
                 await taskService.cleanupLazyTransferredFiles();
             });
         }
+
+        // 5. PT 订阅相关
+        try {
+            const { ptService } = require('./ptService');
+            const ptPollCron = ConfigService.getConfigValue('pt.pollCron');
+            if (ptPollCron) {
+                this.saveDefaultTaskJob('PT-轮询', ptPollCron, async () => {
+                    try { await ptService.runPoll(); } catch (err) { logTaskEvent(`[PT] 轮询失败: ${err.message || err}`); }
+                });
+            }
+            this.saveDefaultTaskJob('PT-处理', '*/2 * * * *', async () => {
+                try { await ptService.runProcessing(); } catch (err) { logTaskEvent(`[PT] 处理失败: ${err.message || err}`); }
+            });
+            const ptCleanupEnabled = ConfigService.getConfigValue('pt.cleanupEnabled', true);
+            const ptCleanupCron = ConfigService.getConfigValue('pt.cleanupCron');
+            if (ptCleanupEnabled && ptCleanupCron) {
+                this.saveDefaultTaskJob('PT-清理', ptCleanupCron, async () => {
+                    try { await ptService.runCleanup(); } catch (err) { logTaskEvent(`[PT] 清理失败: ${err.message || err}`); }
+                });
+            }
+        } catch (err) {
+            logTaskEvent(`[PT] 初始化定时任务失败: ${err.message || err}`);
+        }
     }
 
     static async initStrmConfigJobs(strmConfigRepo, strmConfigService) {
@@ -181,6 +204,32 @@ class SchedulerService {
             '自动清理懒转存文件',
             async () => taskService.cleanupLazyTransferredFiles()
         );
+
+        // PT 相关 cron 变更
+        if (settings.pt) {
+            const { ptService } = require('./ptService');
+            const ptPollCronCurrent = ConfigService.getConfigValue('pt.pollCron');
+            if (settings.pt.pollCron && settings.pt.pollCron !== ptPollCronCurrent) {
+                this.saveDefaultTaskJob('PT-轮询', settings.pt.pollCron, async () => {
+                    try { await ptService.runPoll(); } catch (err) { logTaskEvent(`[PT] 轮询失败: ${err.message || err}`); }
+                });
+            }
+            const ptCleanupEnabledCurrent = !!ConfigService.getConfigValue('pt.cleanupEnabled', true);
+            const ptCleanupCronCurrent = ConfigService.getConfigValue('pt.cleanupCron');
+            handleScheduleTask(
+                ptCleanupEnabledCurrent,
+                !!settings.pt.cleanupEnabled,
+                ptCleanupCronCurrent,
+                settings.pt.cleanupCron,
+                'PT-清理',
+                async () => ptService.runCleanup()
+            );
+            // 下载客户端配置变更后清掉客户端缓存
+            try {
+                const { resetDownloader } = require('./downloader');
+                resetDownloader();
+            } catch (_) {}
+        }
         return true;
     }
 }

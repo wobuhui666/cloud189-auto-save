@@ -1,4 +1,6 @@
 const path = require('path');
+const fs = require('fs');
+const fsp = fs.promises;
 const crypto = require('crypto');
 const got = require('got');
 const { logTaskEvent } = require('../utils/logUtils');
@@ -464,6 +466,86 @@ class CasService {
         throw lastErr || new Error('CAS秒传commit失败');
     }
 
+    /**
+     * 个人秒传：用预先计算好的 md5/sliceMd5 在 189 个人云盘秒传一个文件，返回个人文件 ID
+     * 用于 PT 等场景下：本地已下载完成的大文件流式哈希后秒传到云盘
+     */
+    async _personalRapidUpload(cloud189, parentFolderId, casInfo, fileName) {
+        const sessionKey = await cloud189.getSessionKeyForUpload();
+        const sliceSize = calcCasSliceSize(casInfo.size);
+
+        const initRes = await this._uploadRequest(cloud189, sessionKey, '/person/initMultiUpload', {
+            parentFolderId: String(parentFolderId),
+            fileName: encodeURIComponent(fileName),
+            fileSize: String(casInfo.size),
+            sliceSize: String(sliceSize),
+            lazyCheck: '1'
+        });
+        const uploadFileId = this._jsonGet(initRes, 'data', 'uploadFileId');
+        if (!uploadFileId) {
+            throw new Error(`个人秒传init失败: 缺少uploadFileId`);
+        }
+        let fileDataExists = this._jsonGet(initRes, 'data', 'fileDataExists') === 1;
+
+        await this._sleep(500);
+
+        if (!fileDataExists) {
+            const checkRes = await this._uploadRequest(cloud189, sessionKey, '/person/checkTransSecond', {
+                fileMd5: String(casInfo.md5),
+                sliceMd5: String(casInfo.sliceMd5),
+                uploadFileId: String(uploadFileId)
+            });
+            fileDataExists = this._jsonGet(checkRes, 'data', 'fileDataExists') === 1;
+        }
+        if (!fileDataExists) {
+            throw new Error(`个人秒传失败: 云端不存在该文件数据 (${fileName})`);
+        }
+
+        await this._sleep(500);
+
+        let retry = 0;
+        let lastErr;
+        let commitRes;
+        while (retry < MAX_COMMIT_RETRY) {
+            try {
+                commitRes = await this._uploadRequest(cloud189, sessionKey, '/person/commitMultiUploadFile', {
+                    uploadFileId: String(uploadFileId),
+                    fileMd5: String(casInfo.md5),
+                    sliceMd5: String(casInfo.sliceMd5),
+                    lazyCheck: '1',
+                    opertype: '3'
+                });
+                break;
+            } catch (err) {
+                if (err && err.isBlacklisted) throw err;
+                lastErr = err;
+                retry++;
+                const status = err?.response?.statusCode;
+                if (status === 403 && retry < MAX_COMMIT_RETRY) {
+                    const delay = retry * 2000;
+                    logTaskEvent(`[个人秒传] commit 403，第${retry}次重试，等待${delay}ms`);
+                    this._rsaCache.delete(this._accountKey(cloud189));
+                    await this._sleep(delay);
+                    continue;
+                }
+                throw err;
+            }
+        }
+        if (!commitRes) {
+            throw lastErr || new Error('个人秒传commit失败');
+        }
+
+        const fileId = this._jsonGet(commitRes, 'file', 'userFileId')
+            || this._jsonGet(commitRes, 'file', 'id')
+            || this._jsonGet(commitRes, 'data', 'fileId')
+            || null;
+        if (!fileId) {
+            throw new Error(`个人秒传commit响应缺少文件ID`);
+        }
+        logTaskEvent(`[个人秒传] 完成: ${fileName} → fileId=${fileId}`);
+        return String(fileId);
+    }
+
     // ==================== upload.cloud.189.cn 加密请求 ====================
 
     async _getRsaKeyWithCache(cloud189, sessionKey) {
@@ -608,6 +690,89 @@ class CasService {
             fileId: file.userFileId || file.fileId || file.id || '',
             name: file.fileName || file.name || fileName,
             size: file.fileSize || buffer.length,
+            md5: file.fileMd5 || fileMd5Hex
+        };
+    }
+
+    /**
+     * 流式上传本地文件到 189 云盘（适合大文件，不会把整个文件加载到内存）
+     * 与 _uploadBufferFile 使用相同的 init→upload→commit 流程，但从磁盘逐片读取
+     */
+    async _uploadStreamFile(cloud189, parentFolderId, fileName, filePath, options = {}) {
+        const isFamily = typeof cloud189?.isFamilyAccount === 'function' && cloud189.isFamilyAccount();
+        const sessionKey = await cloud189.getSessionKeyForUpload();
+        const fileSize = (await fsp.stat(filePath)).size;
+        const sliceSize = calcCasSliceSize(fileSize);
+        const uploadPath = isFamily ? '/family' : '/person';
+
+        const initForm = {
+            parentFolderId: String(parentFolderId),
+            fileName: encodeURIComponent(fileName),
+            fileSize: String(fileSize),
+            sliceSize: String(sliceSize),
+            lazyCheck: '1'
+        };
+        if (isFamily) {
+            initForm.familyId = await cloud189.resolveFamilyId();
+        }
+
+        const initRes = await this._uploadRequest(cloud189, sessionKey, `${uploadPath}/initMultiUpload`, initForm);
+        const uploadFileId = this._jsonGet(initRes, 'data', 'uploadFileId');
+        if (!uploadFileId) {
+            throw new Error(`流式上传初始化失败: ${fileName}`);
+        }
+
+        const fileMd5 = crypto.createHash('md5');
+        const sliceMd5Hexs = [];
+        const partCount = Math.max(1, Math.ceil(fileSize / sliceSize));
+        const fd = await fsp.open(filePath, 'r');
+        try {
+            for (let partNumber = 1; partNumber <= partCount; partNumber++) {
+                const start = (partNumber - 1) * sliceSize;
+                const end = Math.min(start + sliceSize, fileSize);
+                const len = end - start;
+                const buf = Buffer.allocUnsafe(len);
+                await fd.read(buf, 0, len, start);
+
+                fileMd5.update(buf);
+                const chunkMd5 = crypto.createHash('md5').update(buf).digest();
+                sliceMd5Hexs.push(chunkMd5.toString('hex').toUpperCase());
+
+                const uploadUrls = await this._getMultiUploadUrls(
+                    cloud189, sessionKey, uploadPath, uploadFileId,
+                    [`${partNumber}-${chunkMd5.toString('base64')}`]
+                );
+                const uploadUrl = uploadUrls[0];
+                if (!uploadUrl?.requestURL) {
+                    throw new Error(`获取上传分片地址失败: ${fileName} part ${partNumber}`);
+                }
+                await this._putUploadPart(uploadUrl.requestURL, uploadUrl.headers, buf);
+            }
+        } finally {
+            await fd.close();
+        }
+
+        const fileMd5Hex = fileMd5.digest('hex').toUpperCase();
+        const sliceMd5Hex = partCount > 1
+            ? crypto.createHash('md5').update(sliceMd5Hexs.join('\n')).digest('hex').toUpperCase()
+            : fileMd5Hex;
+
+        const commitRes = await this._uploadRequest(cloud189, sessionKey, `${uploadPath}/commitMultiUploadFile`, {
+            uploadFileId: String(uploadFileId),
+            fileMd5: fileMd5Hex,
+            sliceMd5: sliceMd5Hex,
+            lazyCheck: '1',
+            isLog: '0',
+            opertype: options.overwrite === false ? '1' : '3'
+        });
+
+        const file = this._jsonGet(commitRes, 'file') || this._jsonGet(commitRes, 'data') || {};
+        logTaskEvent(`[真传] 已上传: ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
+        return {
+            id: file.userFileId || file.fileId || file.id || '',
+            fileId: file.userFileId || file.fileId || file.id || '',
+            name: file.fileName || file.name || fileName,
+            size: file.fileSize || fileSize,
             md5: file.fileMd5 || fileMd5Hex
         };
     }
