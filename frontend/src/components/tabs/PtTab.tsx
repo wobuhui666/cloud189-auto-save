@@ -66,6 +66,7 @@ interface PtSettings {
   cleanupCron: string;
   retryIntervalSec: number;
   autoDeleteSource: boolean;
+  deleteCloudSource: boolean;
   enableStrm: boolean;
   strmOrganize: StrmOrganizeSettings;
   downloader: DownloaderSettings;
@@ -178,6 +179,7 @@ const PtTab: React.FC = () => {
     const d = await r.json();
     if (d.success) {
       const pt = d.data?.pt || {};
+      const cas = d.data?.cas || {};
       const svc = d.data?.proxy?.services || {};
       const strmOrg = pt.strmOrganize || {};
       setSettings({
@@ -187,6 +189,7 @@ const PtTab: React.FC = () => {
         cleanupCron: pt.cleanupCron || '0 */6 * * *',
         retryIntervalSec: Number(pt.retryIntervalSec || 300),
         autoDeleteSource: pt.autoDeleteSource !== false,
+        deleteCloudSource: !!cas.deleteSourceAfterGenerate,
         enableStrm: pt.enableStrm !== false,
         strmOrganize: {
           enabled: strmOrg.enabled || false,
@@ -792,6 +795,11 @@ const PtTab: React.FC = () => {
                   className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
                 <span className="text-sm">生成 .cas 后自动删除本地源文件</span>
               </label>
+              <div className="flex items-center gap-2 mt-2 ml-6">
+                <span className={`text-xs ${settings.deleteCloudSource ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  {settings.deleteCloudSource ? '✓ 网盘源文件会在 CAS 生成后自动删除' : '网盘源文件删除请在「媒体」选项卡中配置「生成后删除源文件」'}
+                </span>
+              </div>
               <label className="flex items-center gap-2 cursor-pointer mt-2">
                 <input type="checkbox" checked={settings.enableStrm}
                   onChange={e => setSettings({ ...settings, enableStrm: e.target.checked })}

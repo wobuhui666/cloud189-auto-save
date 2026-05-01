@@ -315,6 +315,20 @@ class PtService {
             }
         }
 
+        // 删除网盘源文件（复用 cas.deleteSourceAfterGenerate 配置）
+        if (ConfigService.getConfigValue('cas.deleteSourceAfterGenerate', false)) {
+            const isFamily = account.accountType === 'family';
+            for (const entry of manifest) {
+                if (entry.cloudFileId) {
+                    try {
+                        await this.casService.deleteSourceFileAfterGenerate(cloud189, entry.cloudFileId, entry.relativePath, isFamily);
+                    } catch (delErr) {
+                        logTaskEvent(`[PT] 删除网盘源文件失败: ${entry.relativePath} ${delErr.message || delErr}`);
+                    }
+                }
+            }
+        }
+
         // 生成 .cas 后自动删除本地源文件
         if (ConfigService.getConfigValue('pt.autoDeleteSource', true)) {
             try {
