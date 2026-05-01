@@ -6,11 +6,11 @@ on:
       branch:
         description: 'Branch to build'
         required: true
-        default: 'feature/cas-family-transit-update'
+        default: 'feature/pt-subscription'
       tag:
         description: 'Image tag suffix'
         required: true
-        default: 'cas-test'
+        default: 'pt-test'
 
 permissions:
   contents: read
