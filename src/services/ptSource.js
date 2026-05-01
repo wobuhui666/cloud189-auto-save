@@ -194,6 +194,18 @@ class PtSourceService {
             }
         }
 
+        // <enclosure> 标签（Mikan 等站点使用）
+        const enclosurePattern = /<enclosure\b([^>]*?)\/?>/gi;
+        let encMatch = null;
+        while ((encMatch = enclosurePattern.exec(block)) !== null) {
+            const attrs = encMatch[1] || '';
+            const url = this._readAttribute(attrs, 'url');
+            if (url) {
+                const resolved = resolveUrl(baseUrl, decodeHtmlEntities(url));
+                if (resolved) links.push(resolved);
+            }
+        }
+
         links.push(...extractUrlCandidates(description, baseUrl));
         return [...new Set(links.filter(Boolean))];
     }
