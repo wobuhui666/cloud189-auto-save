@@ -1,4 +1,20 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
+import PasswordCrypto from '../utils/passwordCrypto';
+import ConfigService from '../services/ConfigService';
+
+// 获取加密密钥
+const getEncryptionKey = () => {
+    const envKey = PasswordCrypto.getEncryptionKey();
+    if (envKey) return envKey;
+
+    // 从配置文件读取或生成新密钥
+    let configKey = ConfigService.getConfigValue('system.passwordEncryptionKey');
+    if (!configKey) {
+        configKey = PasswordCrypto.generateKey().toString('hex');
+        ConfigService.setConfigValue('system.passwordEncryptionKey', configKey);
+    }
+    return Buffer.from(configKey, 'hex');
+};
 
 @Entity()
 export class Account {
@@ -8,7 +24,31 @@ export class Account {
     @Column('text')
     username!: string;
 
-    @Column('text', { nullable: true})
+    @Column('text', {
+        nullable: true,
+        transformer: {
+            from: (value: string | null) => {
+                if (!value) return value;
+                // 自动解密存储的密码
+                try {
+                    const key = getEncryptionKey();
+                    return PasswordCrypto.decrypt(value, key);
+                } catch {
+                    return value;
+                }
+            },
+            to: (value: string | null) => {
+                if (!value) return value;
+                // 自动加密明文密码
+                try {
+                    const key = getEncryptionKey();
+                    return PasswordCrypto.encrypt(value, key);
+                } catch {
+                    return value;
+                }
+            }
+        }
+    })
     password!: string;
 
     @Column('text', { nullable: true})

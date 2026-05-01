@@ -118,8 +118,9 @@ class ConfigService {
         to: ''                  // 好友令牌，用于指定接收消息的用户
     },
       system: {
-        username: 'admin',
-        password: 'admin',
+        username: process.env.ADMIN_USERNAME || 'admin',
+        password: process.env.ADMIN_PASSWORD || '',
+        sessionSecret: '',
         baseUrl: '',
         apiKey: '',
         streamProxySecret: '',

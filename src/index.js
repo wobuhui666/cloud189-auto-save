@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const crypto = require('crypto');
 const { AppDataSource } = require('./database');
 const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun } = require('./entities');
 const { TaskService } = require('./services/task');
@@ -357,6 +358,23 @@ app.set('trust proxy', true);
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// 生成或读取会话密钥
+const getSessionSecret = () => {
+    // 优先从环境变量读取
+    if (process.env.SESSION_SECRET) {
+        return process.env.SESSION_SECRET;
+    }
+    // 从配置文件读取或生成随机密钥
+    const configSecret = ConfigService.getConfigValue('system.sessionSecret');
+    if (configSecret) {
+        return configSecret;
+    }
+    // 生成随机密钥并保存到配置
+    const newSecret = crypto.randomBytes(32).toString('hex');
+    ConfigService.setConfigValue('system.sessionSecret', newSecret);
+    return newSecret;
+};
+
 app.use(session({
     store: new FileStore({
         path: './data/sessions',  // session文件存储路径
@@ -366,11 +384,14 @@ app.use(session({
         logFn: () => {},      // 禁用内部日志
         reapAsync: true,      // 异步清理过期session
     }),
-    secret: 'LhX2IyUcMAz2',
+    secret: getSessionSecret(),
     resave: false,
     saveUninitialized: false,
-    cookie: { 
-        maxAge: 24 * 60 * 60 * 1000 * 30 // 30天
+    cookie: {
+        maxAge: 24 * 60 * 60 * 1000 * 30, // 30天
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict'
     }
 }));
 
@@ -412,8 +433,32 @@ app.get('/login', async (req, res) => {
 // 登录接口
 app.post('/api/auth/login', (req, res) => {
     const { username, password } = req.body;
-    if (username === ConfigService.getConfigValue('system.username') && 
-        password === ConfigService.getConfigValue('system.password')) {
+    const configUsername = ConfigService.getConfigValue('system.username');
+    const configPassword = ConfigService.getConfigValue('system.password');
+
+    // 检查用户名是否匹配
+    if (username !== configUsername) {
+        res.json({ success: false, error: '用户名或密码错误' });
+        return;
+    }
+
+    // 检查是否已设置密码
+    if (!configPassword) {
+        // 首次登录，强制设置密码
+        if (!password || password.length < 6) {
+            res.json({ success: false, error: '首次登录请设置密码（至少6位）', requireSetPassword: true });
+            return;
+        }
+        // 保存新密码
+        ConfigService.setConfigValue('system.password', password);
+        req.session.authenticated = true;
+        req.session.username = username;
+        res.json({ success: true, message: '密码设置成功' });
+        return;
+    }
+
+    // 验证密码
+    if (password === configPassword) {
         req.session.authenticated = true;
         req.session.username = username;
         res.json({ success: true });
