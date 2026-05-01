@@ -20,9 +20,12 @@
 </div>
 
 ---
-本项目仅供学习交流，请勿用于非法用途。开发者不对任何资源内容负责。
-精力有限，更新速度可能不是很快，敬请谅解。
-问题反馈与功能请求，请提交 [Issues](https://github.com/wobuhui666/cloud189-auto-save/issues) 
+本项目仅供学习交流，请勿用于非法用途。开发者不对任何资源内容负责。  
+精力有限，更新速度可能不是很快，敬请谅解。  
+问题反馈与功能请求，请提交 [Issues](https://github.com/wobuhui666/cloud189-auto-save/issues)  
+
+- 📖 [**Wiki 文档**](https://github.com/wobuhui666/cloud189-auto-save/wiki) - 完整功能文档与配置指南
+- 🤖 [**DeepWiki**](https://deepwiki.com/wobuhui666/cloud189-auto-save) - AI 驱动的项目文档与代码解读
 
 ## 核心亮点
 
@@ -47,6 +50,12 @@
 - **Web 控制台**：直观的 Web 管理界面，支持暗黑模式，多用户权限管理。
 - **Telegram Bot**：全功能机器人，支持远程搜资源、加任务、查进度、收推送。
 - **全平台通知**：支持企业微信、Telegram、Bark、WxPusher 等多种推送渠道。
+
+## 功能特性
+- **PT 订阅**：支持 Mikan、AniBT 等 PT 站点 RSS 订阅，自动下载上传并组织 STRM 文件，支持 qBittorrent
+- **Web 管理面板**：Express + Vite SPA，支持多用户、暗色模式、任务 / 账号 / 订阅管理
+- **Emby反代**：内置代理服务（端口 8097），支持302重定向，下一集预热
+- **CAS 秒传**：通过内容寻址存储实现文件秒传和恢复
 
 ---
 
@@ -79,21 +88,6 @@ docker run -d \
 
 ---
 
-## 详细指南
-
-- [📖 **Wiki 文档**](https://github.com/wobuhui666/cloud189-auto-save/wiki) - 完整功能文档与配置指南
-- [🤖 **DeepWiki**](https://deepwiki.com/wobuhui666/cloud189-auto-save) - AI 驱动的项目文档与代码解读
-
-### 内置文档
-
-- [🚀 安装与配置](./doc/setup.md) - 详细的环境变量与基础设置。
-- [🔑 账号管理](./doc/setup.md#账号配置) - 如何安全地获取 Cookie 登录。
-- [📺 媒体中心配置](./doc/features.md#媒体中心联动) - Emby/Jellyfin 的路径替换与通知。
-- [🤖 Telegram 机器人](./doc/bot.md) - 机器人功能详解与指令列表。
-- [🔌 API 文档](./doc/api.md) - 为开发者提供的 REST 接口参考。
-
----
-
 ## 社区与支持
 
 - **问题反馈**：请提交 [Issues](https://github.com/wobuhui666/cloud189-auto-save/issues)
@@ -114,4 +108,11 @@ docker run -d \
 - [OpenList-CAS](https://github.com/GitYuA/OpenList-CAS) - CAS 功能参考
 ---
 
-**Disclaimer**: 本项目仅供学习交流，请勿用于非法用途。开发者不对任何资源内容负责。
+## 免责声明
+
+1. 本项目（Cloud189 Auto Save）为开源学习交流项目，**严禁用于任何商业用途或非法目的**。
+2. 使用本项目所产生的一切后果由使用者自行承担，**开发者不承担任何直接或间接责任**。
+3. 本项目不存储、分发或托管任何用户数据及云盘资源，所有操作均在用户本地环境完成。
+4. 使用本项目即表示您已阅读并同意本声明。如不同意，请立即停止使用并删除本项目。
+5. 本项目涉及天翼云盘账号操作，请妥善保管账号信息，因账号泄露或违规使用造成的损失由用户自行负责。
+6. 本项目可能因第三方接口变动而随时失效，开发者不保证项目的持续可用性。
