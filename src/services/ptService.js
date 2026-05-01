@@ -318,8 +318,28 @@ class PtService {
         // 生成 .cas 后自动删除本地源文件
         if (ConfigService.getConfigValue('pt.autoDeleteSource', true)) {
             try {
-                await fsp.rm(localPath, { recursive: true, force: true });
-                logTaskEvent(`[PT] 已删除本地源文件: ${localPath}`);
+                if (fs.statSync(localPath).isDirectory()) {
+                    // 共享目录：检查同订阅其他 release 是否还在使用
+                    const otherActive = await releaseRepo.findOne({
+                        where: {
+                            subscriptionId: release.subscriptionId,
+                            status: In([STATUS.DOWNLOADING, STATUS.DOWNLOADED]),
+                        }
+                    });
+                    if (otherActive) {
+                        logTaskEvent(`[PT] 跳过删除共享目录（其他 release 仍在使用）: ${localPath}`);
+                    } else {
+                        for (const f of localFiles) {
+                            await fsp.unlink(f.fullPath).catch(() => {});
+                        }
+                        await this._cleanupEmptyDirs(localPath);
+                        logTaskEvent(`[PT] 已删除本地源文件: ${localPath}`);
+                    }
+                } else {
+                    await fsp.unlink(localPath).catch(() => {});
+                    await this._cleanupEmptyDirs(path.dirname(localPath));
+                    logTaskEvent(`[PT] 已删除本地源文件: ${localPath}`);
+                }
             } catch (delErr) {
                 logTaskEvent(`[PT] 删除本地源文件失败（不影响整体）: ${delErr.message || delErr}`);
             }
@@ -384,6 +404,20 @@ class PtService {
             }
         }
         throw lastErr || new Error('所有上传策略均失败');
+    }
+
+    async _cleanupEmptyDirs(dirPath) {
+        const downloadRoot = String(ConfigService.getConfigValue('pt.downloadRoot', '') || '').trim();
+        try {
+            const entries = await fsp.readdir(dirPath);
+            if (entries.length === 0 && dirPath !== downloadRoot) {
+                await fsp.rmdir(dirPath);
+                const parent = path.dirname(dirPath);
+                if (parent !== dirPath) {
+                    await this._cleanupEmptyDirs(parent);
+                }
+            }
+        } catch {}
     }
 
     async _ensureSubFolder(cloud189, parentFolderId, folderName) {
