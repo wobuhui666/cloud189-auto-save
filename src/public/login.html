@@ -131,13 +131,21 @@
 <body>
     <main class="card">
         <div class="eyebrow">Cloud189 Auto Save</div>
-        <h1>登录</h1>
-        <p>输入系统账号后进入控制台。</p>
+        <h1 id="pageTitle">登录</h1>
+        <p id="pageDesc">输入系统账号后进入控制台。</p>
         <form id="loginForm">
-            <label for="username">用户名</label>
-            <input id="username" name="username" type="text" autocomplete="username" required placeholder="请输入用户名" />
-            <label for="password">密码</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="请输入密码" />
+            <div id="usernameSection">
+                <label for="username" id="usernameLabel">用户名</label>
+                <input id="username" name="username" type="text" autocomplete="username" required placeholder="请输入用户名" value="admin" />
+            </div>
+            <div id="passwordSection">
+                <label for="password" id="passwordLabel">密码</label>
+                <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入密码" />
+            </div>
+            <div id="credentialHint" style="display:none; margin-top:-8px; margin-bottom:16px; font-size:13px; color:var(--primary); font-weight:500; line-height:1.5;">
+                首次登录，请设置管理员用户名和密码以保护系统安全。<br>
+                密码至少需要6位。
+            </div>
             <button id="submitButton" type="submit">登录</button>
             <div id="errorMessage" class="error"></div>
         </form>
@@ -146,23 +154,87 @@
         const form = document.getElementById('loginForm');
         const submitButton = document.getElementById('submitButton');
         const errorMessage = document.getElementById('errorMessage');
+        const pageTitle = document.getElementById('pageTitle');
+        const pageDesc = document.getElementById('pageDesc');
+        const usernameLabel = document.getElementById('usernameLabel');
+        const usernameInput = document.getElementById('username');
+        const passwordLabel = document.getElementById('passwordLabel');
+        const passwordInput = document.getElementById('password');
+        const credentialHint = document.getElementById('credentialHint');
+
+        // 检测是否为首次登录（密码为空）
+        let isFirstLogin = false;
+
+        // 切换到设置凭证模式
+        function switchToSetupMode() {
+            isFirstLogin = true;
+            pageTitle.textContent = '设置管理员账号';
+            pageDesc.textContent = '首次登录，请设置管理员用户名和密码以保护系统安全。';
+            usernameLabel.textContent = '设置用户名';
+            usernameInput.setAttribute('placeholder', '请设置用户名');
+            usernameInput.setAttribute('required', 'true');
+            passwordLabel.textContent = '设置密码';
+            passwordInput.setAttribute('placeholder', '请设置密码（至少6位）');
+            passwordInput.setAttribute('required', 'true');
+            credentialHint.style.display = 'block';
+            submitButton.textContent = '设置并登录';
+        }
+
+        // 页面加载时检测
+        async function checkFirstLogin() {
+            try {
+                // 先尝试用空密码登录来检测是否首次
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: usernameInput.value || 'admin',
+                        password: ''
+                    })
+                });
+                const data = await response.json();
+                if (data.requireSetCredentials) {
+                    switchToSetupMode();
+                }
+            } catch (error) {
+                // 忽略错误
+            }
+        }
+
+        // 页面加载时检测
+        window.addEventListener('load', () => {
+            setTimeout(checkFirstLogin, 100);
+        });
+
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
             errorMessage.textContent = '';
             submitButton.disabled = true;
             try {
+                const requestBody = {
+                    username: usernameInput.value,
+                    password: passwordInput.value
+                };
+
+                // 如果是首次登录，添加新凭证字段
+                if (isFirstLogin) {
+                    requestBody.newUsername = usernameInput.value;
+                    requestBody.newPassword = passwordInput.value;
+                }
+
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: document.getElementById('username').value,
-                        password: document.getElementById('password').value
-                    })
+                    body: JSON.stringify(requestBody)
                 });
                 const data = await response.json();
                 if (data.success) {
                     window.location.href = '/';
                     return;
+                }
+                // 如果返回 requireSetCredentials，更新页面显示
+                if (data.requireSetCredentials) {
+                    switchToSetupMode();
                 }
                 errorMessage.textContent = data.error || '登录失败';
             } catch (error) {

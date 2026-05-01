@@ -3,12 +3,12 @@ import PasswordCrypto from '../utils/passwordCrypto';
 import ConfigService from '../services/ConfigService';
 
 // 获取加密密钥
-const getEncryptionKey = () => {
+const getEncryptionKey = (): Buffer => {
     const envKey = PasswordCrypto.getEncryptionKey();
     if (envKey) return envKey;
 
     // 从配置文件读取或生成新密钥
-    let configKey = ConfigService.getConfigValue('system.passwordEncryptionKey');
+    let configKey = ConfigService.getConfigValue('system.passwordEncryptionKey') as unknown as string;
     if (!configKey) {
         configKey = PasswordCrypto.generateKey().toString('hex');
         ConfigService.setConfigValue('system.passwordEncryptionKey', configKey);

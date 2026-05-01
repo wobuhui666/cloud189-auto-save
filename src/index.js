@@ -432,28 +432,40 @@ app.get('/login', async (req, res) => {
 
 // 登录接口
 app.post('/api/auth/login', (req, res) => {
-    const { username, password } = req.body;
+    const { username, password, newUsername, newPassword } = req.body;
     const configUsername = ConfigService.getConfigValue('system.username');
     const configPassword = ConfigService.getConfigValue('system.password');
+
+    // 检查是否为首次设置（密码为空）
+    if (!configPassword) {
+        // 首次登录，需要设置用户名和密码
+        const usernameToSet = newUsername || username;
+        const passwordToSet = newPassword || password;
+
+        // 验证用户名
+        if (!usernameToSet || usernameToSet.trim().length === 0) {
+            res.json({ success: false, error: '请设置用户名', requireSetCredentials: true });
+            return;
+        }
+
+        // 验证密码
+        if (!passwordToSet || passwordToSet.length < 6) {
+            res.json({ success: false, error: '请设置密码（至少6位）', requireSetCredentials: true });
+            return;
+        }
+
+        // 保存用户名和密码
+        ConfigService.setConfigValue('system.username', usernameToSet.trim());
+        ConfigService.setConfigValue('system.password', passwordToSet);
+        req.session.authenticated = true;
+        req.session.username = usernameToSet.trim();
+        res.json({ success: true, message: '用户名和密码设置成功' });
+        return;
+    }
 
     // 检查用户名是否匹配
     if (username !== configUsername) {
         res.json({ success: false, error: '用户名或密码错误' });
-        return;
-    }
-
-    // 检查是否已设置密码
-    if (!configPassword) {
-        // 首次登录，强制设置密码
-        if (!password || password.length < 6) {
-            res.json({ success: false, error: '首次登录请设置密码（至少6位）', requireSetPassword: true });
-            return;
-        }
-        // 保存新密码
-        ConfigService.setConfigValue('system.password', password);
-        req.session.authenticated = true;
-        req.session.username = username;
-        res.json({ success: true, message: '密码设置成功' });
         return;
     }
 
