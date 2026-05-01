@@ -103,6 +103,15 @@ async function handleCancel(svc, msg) {
     session.search.active = false;
     session.search.resultMap.clear();
 
+    // 清除 PT 搜索模式
+    if (session.ptSearch.timeoutRef) {
+        clearTimeout(session.ptSearch.timeoutRef);
+        session.ptSearch.timeoutRef = null;
+    }
+    session.ptSearch.active = false;
+    session.ptSearch.results = [];
+    session.ptSearch.groups = [];
+
     // 清除待分享
     session.pendingShare.link = null;
     session.pendingShare.accessCode = null;

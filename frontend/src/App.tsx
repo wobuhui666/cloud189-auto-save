@@ -17,6 +17,7 @@ import {
   Moon,
   Sun,
   Zap,
+  Magnet,
   CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,9 +40,10 @@ import StrmConfigTab from './components/tabs/StrmConfigTab';
 import MediaTab from './components/tabs/MediaTab';
 import SettingsTab from './components/tabs/SettingsTab';
 import CasTab from './components/tabs/CasTab';
+import PtTab from './components/tabs/PtTab';
 
 // --- Types ---
-type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'settings';
+export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'settings';
 type ThemeMode = 'light' | 'dark' | 'system';
 
 const appVersionLabel = `v${__APP_VERSION__}`;
@@ -169,8 +171,9 @@ export default function App() {
     { id: 'organizer', label: '整理器', icon: LayoutGrid },
     { id: 'subscription', label: '订阅', icon: Rss },
     { id: 'strmConfig', label: 'STRM', icon: Link2 },
-    { id: 'media', label: '媒体', icon: Monitor },
     { id: 'cas', label: '秒传', icon: Zap },
+    { id: 'pt', label: 'PT', icon: Magnet },
+    { id: 'media', label: '媒体', icon: Monitor },
     { id: 'settings', label: '系统', icon: Settings },
   ];
 
@@ -401,6 +404,7 @@ export default function App() {
                 {activeTab === 'strmConfig' && <StrmConfigTab />}
                 {activeTab === 'media' && <MediaTab key={Date.now()} />}
                 {activeTab === 'cas' && <CasTab onNavigate={setActiveTab} key={Date.now()} />}
+                {activeTab === 'pt' && <PtTab />}
                 {activeTab === 'settings' && <SettingsTab />}
               </motion.div>
             </AnimatePresence>

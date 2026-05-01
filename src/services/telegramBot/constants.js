@@ -19,6 +19,8 @@ const CB = {
     HELP_NAV: 'hn',            // help 快捷导航
     SUBS_PAGE: 'sp',           // 订阅分页
     SILENT_MODE: 'sm',         // 静默模式
+    PT_SEARCH_SITE: 'ps',      // PT 搜索选择站点
+    PT_SEARCH_GROUP: 'pg',     // PT 搜索选择字幕组
 };
 
 // 任务状态枚举

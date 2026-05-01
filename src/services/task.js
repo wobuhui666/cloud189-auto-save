@@ -2281,7 +2281,7 @@ class TaskService {
             throw new Error('批量任务处理失败');
         }
         if (resp.res_code != 0) {
-            const error = new Error(resp.res_msg || '批量任务处理失败');
+            const error = new Error(resp.res_msg || resp.res_message || '批量任务处理失败');
             error.code = resp.res_code;
             error.response = resp;
             throw error;

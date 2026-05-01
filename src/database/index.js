@@ -1,5 +1,17 @@
 const { DataSource } = require('typeorm');
-const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun, TmdbCache } = require('../entities');
+const {
+    Account,
+    Task,
+    CommonFolder,
+    Subscription,
+    SubscriptionResource,
+    StrmConfig,
+    TaskProcessedFile,
+    WorkflowRun,
+    TmdbCache,
+    PtSubscription,
+    PtRelease
+} = require('../entities');
 const path = require('path');
 const dotenv = require('dotenv');
 
@@ -13,7 +25,7 @@ const AppDataSource = new DataSource({
     maxQueryExecutionTime: 1000, // 查询超时设置
     enableWAL: true,   // 启用 WAL 模式提升性能
     busyTimeout: 3000, // 设置超时时间
-    entities: [Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun, TmdbCache],
+    entities: [Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun, TmdbCache, PtSubscription, PtRelease],
     subscribers: [],
     migrations: [],
     timezone: '+08:00',  // 添加时区设置
@@ -50,6 +62,8 @@ const getSubscriptionResourceRepository = () => AppDataSource.getRepository(Subs
 const getStrmConfigRepository = () => AppDataSource.getRepository(StrmConfig);
 const getTaskProcessedFileRepository = () => AppDataSource.getRepository(TaskProcessedFile);
 const getWorkflowRunRepository = () => AppDataSource.getRepository(WorkflowRun);
+const getPtSubscriptionRepository = () => AppDataSource.getRepository(PtSubscription);
+const getPtReleaseRepository = () => AppDataSource.getRepository(PtRelease);
 
 module.exports = {
     AppDataSource,
@@ -61,5 +75,7 @@ module.exports = {
     getSubscriptionResourceRepository,
     getStrmConfigRepository,
     getTaskProcessedFileRepository,
-    getWorkflowRunRepository
+    getWorkflowRunRepository,
+    getPtSubscriptionRepository,
+    getPtReleaseRepository
 };

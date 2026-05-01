@@ -18,7 +18,7 @@ class TMDBService {
                     language: this.language,
                     ...params
                 },
-                agent: proxy
+                ...proxy
             }).json();
             return response;
         } catch (error) {

@@ -27,8 +27,9 @@ class SessionStore {
      */
     clear(chatId) {
         const session = this.sessions.get(chatId);
-        if (session && session.search.timeoutRef) {
-            clearTimeout(session.search.timeoutRef);
+        if (session) {
+            if (session.search.timeoutRef) clearTimeout(session.search.timeoutRef);
+            if (session.ptSearch.timeoutRef) clearTimeout(session.ptSearch.timeoutRef);
         }
         this.sessions.delete(chatId);
     }
@@ -98,6 +99,13 @@ class SessionStore {
                 active: false,
                 timeoutRef: null,
                 resultMap: new Map(),
+            },
+            ptSearch: {
+                active: false,
+                preset: null,
+                results: [],
+                groups: [],
+                timeoutRef: null,
             },
             callbackLocks: new Map(),
             updatedAt: Date.now(),

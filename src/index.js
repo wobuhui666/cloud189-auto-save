@@ -1977,6 +1977,175 @@ AppDataSource.initialize().then(async () => {
     });
 
     // ==================== END CAS API ====================
+
+    // ==================== PT 订阅 API ====================
+    const { ptService } = require('./services/ptService');
+    const { getPtSubscriptionRepository, getPtReleaseRepository } = require('./database');
+    const ptSubscriptionRepo = getPtSubscriptionRepository();
+    const ptReleaseRepo = getPtReleaseRepository();
+
+    app.get('/api/pt/sources/presets', (req, res) => {
+        try {
+            res.json({ success: true, data: ptService.getSourcePresets() });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/pt/sources/search', async (req, res) => {
+        try {
+            const { preset, keyword } = req.query;
+            if (!preset || !keyword) {
+                return res.json({ success: false, error: '缺少 preset 或 keyword 参数' });
+            }
+            const results = await ptService.searchSource(String(preset), String(keyword));
+            res.json({ success: true, data: results });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/pt/sources/groups', async (req, res) => {
+        try {
+            const { preset, bgmId, bangumiUrl } = req.query;
+            if (!preset) {
+                return res.json({ success: false, error: '缺少 preset 参数' });
+            }
+            const results = await ptService.getSourceGroups(String(preset), { bgmId, bangumiUrl });
+            res.json({ success: true, data: results });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/pt/downloader/test', async (req, res) => {
+        try {
+            const result = await ptService.testDownloader();
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/pt/subscriptions', async (req, res) => {
+        try {
+            const subs = await ptSubscriptionRepo.find({ order: { id: 'DESC' } });
+            res.json({ success: true, data: subs });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/pt/subscriptions', async (req, res) => {
+        try {
+            const sub = ptSubscriptionRepo.create({
+                name: String(req.body.name || '').trim(),
+                sourcePreset: req.body.sourcePreset || 'generic',
+                rssUrl: String(req.body.rssUrl || '').trim(),
+                includePattern: req.body.includePattern || '',
+                excludePattern: req.body.excludePattern || '',
+                accountId: Number(req.body.accountId),
+                targetFolderId: String(req.body.targetFolderId || ''),
+                targetFolder: req.body.targetFolder || '',
+                enabled: req.body.enabled !== false
+            });
+            if (!sub.name) throw new Error('订阅名称不能为空');
+            if (!sub.rssUrl && sub.sourcePreset === 'generic') throw new Error('通用 RSS 必须填写 RSS URL');
+            if (!sub.accountId) throw new Error('未选择账号');
+            if (!sub.targetFolderId) throw new Error('未选择目标目录');
+            await ptSubscriptionRepo.save(sub);
+            res.json({ success: true, data: sub });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/pt/subscriptions/:id', async (req, res) => {
+        try {
+            const sub = await ptSubscriptionRepo.findOneBy({ id: Number(req.params.id) });
+            if (!sub) throw new Error('订阅不存在');
+            const fields = ['name', 'sourcePreset', 'rssUrl', 'includePattern', 'excludePattern', 'accountId', 'targetFolderId', 'targetFolder', 'enabled'];
+            fields.forEach((f) => {
+                if (req.body[f] !== undefined) sub[f] = req.body[f];
+            });
+            await ptSubscriptionRepo.save(sub);
+            res.json({ success: true, data: sub });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/pt/subscriptions/:id', async (req, res) => {
+        try {
+            const id = Number(req.params.id);
+            // 同时清理该订阅下的 release（不删 qb 任务，避免误删尚未完成的下载）
+            await ptReleaseRepo.delete({ subscriptionId: id });
+            await ptSubscriptionRepo.delete({ id });
+            res.json({ success: true });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/pt/subscriptions/:id/refresh', async (req, res) => {
+        try {
+            const result = await ptService.runPoll(Number(req.params.id));
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/pt/subscriptions/:id/releases', async (req, res) => {
+        try {
+            const releases = await ptReleaseRepo.find({
+                where: { subscriptionId: Number(req.params.id) },
+                order: { id: 'DESC' }
+            });
+            res.json({ success: true, data: releases });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/pt/releases', async (req, res) => {
+        try {
+            const limit = Math.min(Number(req.query.limit || 100), 500);
+            const releases = await ptReleaseRepo.find({ order: { id: 'DESC' }, take: limit });
+            res.json({ success: true, data: releases });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/pt/releases/:id/retry', async (req, res) => {
+        try {
+            const release = await ptService.retryRelease(Number(req.params.id));
+            res.json({ success: true, data: release });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/pt/releases/:id', async (req, res) => {
+        try {
+            const deleteFiles = req.query.deleteFiles !== 'false';
+            await ptService.deleteRelease(Number(req.params.id), deleteFiles);
+            res.json({ success: true });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/pt/process', async (req, res) => {
+        try {
+            const result = await ptService.runProcessing();
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+    // ==================== END PT API ====================
     
     // 全局错误处理中间件
     app.use((err, req, res, next) => {

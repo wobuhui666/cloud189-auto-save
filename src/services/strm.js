@@ -209,7 +209,7 @@ class StrmService {
             : strmFileName;
     }
 
-    async generateCustom(targetRoot, files, contentResolver, overwrite = false, compare = false) {
+    async generateCustom(targetRoot, files, contentResolver, overwrite = false, compare = false, renameMode = 'default') {
         if (!this.enable) {
             logTaskEvent('STRM生成未启用, 请启用后执行');
             return;
@@ -223,7 +223,12 @@ class StrmService {
 
         const mediaFiles = files.filter(file => this._checkFileSuffix(file, mediaSuffixs));
         const expectedStrmPaths = new Set(
-            mediaFiles.map(file => this._buildRelativeStrmPath(file.relativeDir || '', file.name))
+            mediaFiles.map(file => {
+                if (renameMode === 'organized' && file.organizedFileName) {
+                    return file.organizedFileName;
+                }
+                return this._buildRelativeStrmPath(file.relativeDir || '', file.name);
+            })
         );
 
         if (compare) {
@@ -254,8 +259,15 @@ class StrmService {
                 continue;
             }
             try {
-                const strmRelativePath = this._buildRelativeStrmPath(file.relativeDir || '', file.name);
-                const strmPath = path.join(targetDir, strmRelativePath);
+                // 根据重命名模式决定文件名
+                let strmFileName;
+                if (renameMode === 'organized' && file.organizedFileName) {
+                    strmFileName = file.organizedFileName;
+                } else {
+                    strmFileName = this._buildRelativeStrmPath(file.relativeDir || '', file.name);
+                }
+
+                const strmPath = path.join(targetDir, strmFileName);
                 await this._ensureDirectoryExists(path.dirname(strmPath));
                 try {
                     await fs.access(strmPath);

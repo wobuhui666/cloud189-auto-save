@@ -81,7 +81,10 @@ docker run -d \
 
 ## 详细指南
 
-请查看项目内置文档以获取更多深度使用教程：
+- [📖 **Wiki 文档**](https://github.com/wobuhui666/cloud189-auto-save/wiki) - 完整功能文档与配置指南
+- [🤖 **DeepWiki**](https://deepwiki.com/wobuhui666/cloud189-auto-save) - AI 驱动的项目文档与代码解读
+
+### 内置文档
 
 - [🚀 安装与配置](./doc/setup.md) - 详细的环境变量与基础设置。
 - [🔑 账号管理](./doc/setup.md#账号配置) - 如何安全地获取 Cookie 登录。

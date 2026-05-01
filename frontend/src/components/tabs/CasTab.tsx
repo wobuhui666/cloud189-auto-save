@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Zap, Download, Search, RefreshCw, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
+import type { TabType } from '../../App';
 
 interface Account {
   id: number;
@@ -19,7 +20,7 @@ interface CasConfig {
 
 interface CasTabProps {
   onShowToast?: (message: string, type: 'success' | 'error' | 'info') => void;
-  onNavigate?: (tab: string) => void;
+  onNavigate?: (tab: TabType) => void;
 }
 
 const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
@@ -285,6 +286,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
         isOpen={isFolderSelectorOpen}
         onClose={() => setIsFolderSelectorOpen(false)}
         accountId={selectedAccountId || 0}
+        accountName={accounts.find(a => a.id === selectedAccountId)?.username || ''}
         onSelect={(folder) => {
           setTargetFolder(folder);
           setIsFolderSelectorOpen(false);

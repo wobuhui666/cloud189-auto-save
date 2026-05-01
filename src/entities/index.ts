@@ -621,4 +621,155 @@ export class TmdbCache {
     updatedAt!: Date;
 }
 
-export default { Account, Task, TaskProcessedFile, CommonFolder, Subscription, SubscriptionResource, StrmConfig, WorkflowRun, TmdbCache };
+@Entity()
+export class PtSubscription {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    name!: string;
+
+    @Column('text', { default: 'generic' })
+    sourcePreset!: string;
+
+    @Column('text')
+    rssUrl!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    includePattern!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    excludePattern!: string;
+
+    @Column('integer')
+    accountId!: number;
+
+    @ManyToOne(() => Account, { nullable: true })
+    @JoinColumn({ name: 'accountId' })
+    account!: Account;
+
+    @Column('text')
+    targetFolderId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    targetFolder!: string;
+
+    @Column('boolean', { default: true })
+    enabled!: boolean;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    lastCheckTime!: Date | null;
+
+    @Column('text', { nullable: true, default: 'unknown' })
+    lastStatus!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    lastMessage!: string;
+
+    @Column('integer', { nullable: true, default: 0 })
+    releaseCount!: number;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+@Entity()
+export class PtRelease {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('integer')
+    subscriptionId!: number;
+
+    @ManyToOne(() => PtSubscription, { nullable: true })
+    @JoinColumn({ name: 'subscriptionId' })
+    subscription!: PtSubscription;
+
+    @Column('text')
+    guid!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    infoHash!: string;
+
+    @Column('text')
+    title!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    magnetUrl!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    torrentUrl!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    detailsUrl!: string;
+
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    publishedAt!: Date | null;
+
+    @Column('text', { nullable: true, default: '' })
+    qbTorrentHash!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    downloadPath!: string;
+
+    @Column('text', { nullable: true, default: 'pending' })
+    status!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    manifestJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    casMetadataJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    lastError!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    localRootName!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    cloudFolderId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    cloudFolderName!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    streamRootPath!: string;
+
+    @CreateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    createdAt!: Date;
+
+    @UpdateDateColumn({
+        transformer: {
+            from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+            to: (date: Date) => date
+        }
+    })
+    updatedAt!: Date;
+}
+
+export default { Account, Task, TaskProcessedFile, CommonFolder, Subscription, SubscriptionResource, StrmConfig, WorkflowRun, TmdbCache, PtSubscription, PtRelease };

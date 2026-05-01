@@ -57,7 +57,7 @@ class TelegramService extends MessageService {
                 timeout: {
                     request: 5000
                 },
-                agent: this._proxy()
+                ...this._proxy()
             };
 
             let apiUrl = 'https://api.telegram.org';
@@ -104,7 +104,7 @@ class TelegramService extends MessageService {
                 timeout: {
                     request: 5000
                 },
-                agent: this._proxy()
+                ...this._proxy()
             };
 
             let apiUrl = 'https://api.telegram.org';

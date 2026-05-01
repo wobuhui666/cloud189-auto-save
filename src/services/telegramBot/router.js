@@ -20,6 +20,7 @@ function getHandlers() {
             stats: require('./handlers/stats'),
             logs: require('./handlers/logs'),
             subs: require('./handlers/subs'),
+            ptSearch: require('./handlers/ptSearch'),
         };
     }
     return _handlers;
@@ -225,6 +226,11 @@ function registerCommands(svc) {
         await getHandlers().basics.handleSilentMode(svc, msg);
     });
 
+    bot.onText(/^\/pt_search$/, async (msg) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        await getHandlers().ptSearch.handlePtSearch(svc, msg);
+    });
+
     // ═══════════ 分享链接（非命令文本） ═══════════
 
     bot.onText(/cloud\.189\.cn/, async (msg) => {
@@ -237,6 +243,12 @@ function registerCommands(svc) {
     bot.on('message', async (msg) => {
         if (!svc.checkChatId(msg.chat.id)) return;
         if (msg.text?.startsWith('/')) return;
+        // PT 搜索模式优先
+        const session = svc.sessionStore.get(msg.chat.id);
+        if (session.ptSearch.active) {
+            await getHandlers().ptSearch.handlePtSearchMessage(svc, msg);
+            return;
+        }
         await getHandlers().search.handleSearchMessage(svc, msg);
     });
 
@@ -326,6 +338,9 @@ function registerCommands(svc) {
                         break;
                     case CB.SILENT_MODE:
                         await getHandlers().basics.handleSilentModeCallback(svc, chatId, data, messageId);
+                        break;
+                    case CB.PT_SEARCH_SITE:
+                        await getHandlers().ptSearch.handleSiteSelect(svc, chatId, messageId, data.s);
                         break;
                     default:
                         break;
