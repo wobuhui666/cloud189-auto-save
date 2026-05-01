@@ -21,10 +21,13 @@ class ProxyUtil {
     }
     static getProxyAgent(service) {
         const proxy = this.getProxy(service);
-        return !proxy?{}:{
-            http: new HttpProxyAgent(proxy),
-            https: new HttpsProxyAgent(proxy)
-        }
+        if (!proxy) return {};
+        return {
+            agent: {
+                http: new HttpProxyAgent(proxy),
+                https: new HttpsProxyAgent(proxy)
+            }
+        };
     }
     static _checkServiceEnabled(service) {
         return !!ConfigService.getConfigValue(`proxy.services.${service}`);

@@ -102,7 +102,7 @@ class CustomPushService extends MessageService {
             timeout: { request: 5000 }, // 使用配置的timeout或默认值
             retry: { limit: 1 },     // 使用配置的retries或默认值
             throwHttpErrors: false,
-            agent // 应用代理
+            ...agent // 应用代理
         };
 
         // 根据 contentType 设置请求体和 Content-Type 请求头
