@@ -138,9 +138,14 @@ class PtSourceService {
             this._getFirstTagText(block, ['guid', 'id'])
             || ''
         );
-        const infoHashTag = normalizeWhitespace(this._getFirstTagText(block, ['infoHash', 'nyaa:infoHash']));
+        const infoHashTag = normalizeWhitespace(this._getFirstTagText(block, ['infoHash', 'nyaa:infoHash', 'torrent:infohash']));
         const publishedRaw = this._getFirstTagText(block, ['pubDate', 'published', 'updated']);
         const linkCandidates = this._collectLinkCandidates(block, description, baseUrl);
+        // torrent:magneturi 自定义标签（AniBT 等站点使用）
+        const torrentMagnet = normalizeWhitespace(this._getFirstTagText(block, ['torrent:magneturi']));
+        if (torrentMagnet && /^magnet:/i.test(torrentMagnet)) {
+            linkCandidates.push(torrentMagnet);
+        }
         const magnetUrl = linkCandidates.find((link) => /^magnet:/i.test(link)) || '';
         const torrentUrl = linkCandidates.find((link) => this._looksLikeTorrentUrl(link)) || '';
         const detailsUrl = linkCandidates.find((link) => /^https?:/i.test(link) && !this._looksLikeTorrentUrl(link)) || '';
