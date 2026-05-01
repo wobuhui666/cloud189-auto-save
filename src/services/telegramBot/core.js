@@ -94,6 +94,7 @@ class TelegramBotService {
             { command: 'start', description: '首次使用引导' },
             { command: 'help', description: '帮助信息' },
             { command: 'search_cs', description: '搜索CloudSaver资源' },
+            { command: 'pt_search', description: '搜索PT站点资源' },
             { command: 'series', description: '自动追剧(正常任务)' },
             { command: 'lazy_series', description: '自动追剧(懒转存STRM)' },
             { command: 'accounts', description: '账号列表' },
