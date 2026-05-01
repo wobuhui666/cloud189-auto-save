@@ -161,10 +161,12 @@ class PtService {
             infoHash: release.infoHash || undefined
         });
 
-        if (torrent && torrent.hash) {
-            release.qbTorrentHash = torrent.hash;
-            release.downloadPath = torrent.savePath || savePath;
+        if (!torrent || !torrent.hash) {
+            throw new Error('种子添加超时，未能获取到种子哈希');
         }
+
+        release.qbTorrentHash = torrent.hash;
+        release.downloadPath = torrent.savePath || savePath;
         release.status = STATUS.DOWNLOADING;
         await releaseRepo.save(release);
         logTaskEvent(`[PT] 已投递到下载器: ${release.title} (tag=${tag})`);
@@ -305,7 +307,7 @@ class PtService {
         logTaskEvent(`[PT] release 上传完成: ${release.title} (共 ${manifest.length} 个文件)`);
 
         // 生成 STRM 文件
-        if (ConfigService.getConfigValue('pt.enableStrm', true) && ConfigService.getConfigValue('strm.enable')) {
+        if (ConfigService.getConfigValue('pt.enableStrm', true)) {
             try {
                 await this._generateStrmForRelease(account, subscription, release, manifest);
             } catch (strmErr) {
@@ -337,8 +339,21 @@ class PtService {
             const familyId = String(familyInfo.familyId);
             const familyFolderId = await cloud189.getFamilyRootFolderId(familyId);
             const familyFileId = await this.casService._familyRapidUpload(cloud189, familyId, familyFolderId, casInfo, fileName);
-            await this.casService._copyFamilyFileToPersonal(cloud189, familyId, familyFileId, parentFolderId, familyFolderId, fileName);
-            return { fileId: familyFileId, via: 'family-transit' };
+            try {
+                await this.casService._copyFamilyFileToPersonal(cloud189, familyId, familyFileId, parentFolderId, familyFolderId, fileName);
+            } catch (copyErr) {
+                await this.casService._safeDeleteFamilyFile(cloud189, familyId, familyFileId, fileName);
+                throw copyErr;
+            }
+            // 清理家庭临时文件
+            await this.casService._safeDeleteFamilyFile(cloud189, familyId, familyFileId, fileName);
+            // 查找拷贝到个人存储后的文件 ID
+            const listing = await cloud189.listFiles(parentFolderId);
+            const personalFile = (listing?.fileListAO?.fileList || []).find(f => f.name === fileName);
+            if (!personalFile?.id) {
+                throw new Error('家庭中转完成但未找到个人文件');
+            }
+            return { fileId: String(personalFile.id), via: 'family-transit' };
         };
 
         const tryRealUpload = async () => {
@@ -368,7 +383,7 @@ class PtService {
                 }
             }
         }
-        return tryRealUpload();
+        throw lastErr || new Error('所有上传策略均失败');
     }
 
     async _ensureSubFolder(cloud189, parentFolderId, folderName) {

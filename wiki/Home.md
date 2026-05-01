@@ -42,20 +42,20 @@
 7.  [[PT]] - PT 站点 RSS 订阅、自动下载、秒传和 STRM 生成。
 
 ### 媒体中心
-7.  [[Emby]] - 路径替换、自动刷新与入库通知。
-8.  [[StrmGuide]] - STRM 文件生成与代理配置。
-9.  [[Alist]] - 本项目与 Alist 的完美契合。
+8.  [[Emby]] - 路径替换、自动刷新与入库通知。
+9.  [[StrmGuide]] - STRM 文件生成与代理配置。
+10. [[Alist]] - 本项目与 Alist 的完美契合。
 
 ### 系统配置
-10. [[MediaSettings]] - AI、TMDB、Emby 等媒体相关配置。
-11. [[SystemSettings]] - 通知、调度、用户管理等系统配置。
+11. [[MediaSettings]] - AI、TMDB、Emby 等媒体相关配置。
+12. [[SystemSettings]] - 通知、调度、用户管理等系统配置。
 
 ### 开发者
-12. [[Bot]] - 全功能 Bot 设置与操作指南。
-13. [[API]] - 面向开发者的 REST 接口。
-14. [[Regex]] - 过滤规则与重命名技巧。
+13. [[Bot]] - 全功能 Bot 设置与操作指南。
+14. [[API]] - 面向开发者的 REST 接口。
+15. [[Regex]] - 过滤规则与重命名技巧。
 
 ### 其他
-15. [[CloudSaver]] - 资源搜索功能。
-16. [[FAQ]] - 解决登录失败、任务延迟等问题。
-17. [[SystemDesign]] - 为什么我们坚持单层目录设计。
+16. [[CloudSaver]] - 资源搜索功能。
+17. [[FAQ]] - 解决登录失败、任务延迟等问题。
+18. [[SystemDesign]] - 为什么我们坚持单层目录设计。

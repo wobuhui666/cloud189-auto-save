@@ -125,7 +125,11 @@ class QbittorrentClient {
         if (!hash) {
             return null;
         }
-        const torrents = await this.listTorrents();
+        const response = await this._request('GET', '/api/v2/torrents/info', {
+            responseType: 'json',
+            searchParams: { hashes: String(hash).toLowerCase() }
+        });
+        const torrents = Array.isArray(response.body) ? response.body : [];
         const found = torrents.find((torrent) => String(torrent.hash || '').toUpperCase() === String(hash).toUpperCase()) || null;
         return found ? this._normalizeTorrent(found) : null;
     }

@@ -158,12 +158,14 @@ const PtTab: React.FC = () => {
   };
 
   const fetchMeta = async () => {
-    const [accR, presetR] = await Promise.all([
-      fetch('/api/accounts').then(r => r.json()),
-      fetch('/api/pt/sources/presets').then(r => r.json())
-    ]);
-    if (accR.success) setAccounts(accR.data || []);
-    if (presetR.success) setPresets(presetR.data || []);
+    try {
+      const [accR, presetR] = await Promise.all([
+        fetch('/api/accounts').then(r => r.json()),
+        fetch('/api/pt/sources/presets').then(r => r.json())
+      ]);
+      if (accR.success) setAccounts(accR.data || []);
+      if (presetR.success) setPresets(presetR.data || []);
+    } catch { /* 静默处理 */ }
   };
 
   const fetchSettings = async () => {
@@ -239,6 +241,7 @@ const PtTab: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.accountId) { alert('请选择天翼云盘账号'); return; }
     try {
       const url = editing ? `/api/pt/subscriptions/${editing.id}` : '/api/pt/subscriptions';
       const r = await fetch(url, {
@@ -260,34 +263,41 @@ const PtTab: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     if (!confirm('删除订阅会一并清理其 release 记录（不会立即删除 qb 中已经在下的任务）。继续？')) return;
-    const r = await fetch(`/api/pt/subscriptions/${id}`, { method: 'DELETE' });
-    const d = await r.json();
-    if (d.success) fetchSubs();
-    else alert('删除失败: ' + d.error);
+    try {
+      const r = await fetch(`/api/pt/subscriptions/${id}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) fetchSubs();
+      else alert('删除失败: ' + d.error);
+    } catch { alert('网络错误'); }
   };
 
   const handleToggle = async (sub: PtSubscription) => {
-    const r = await fetch(`/api/pt/subscriptions/${sub.id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: !sub.enabled })
-    });
-    const d = await r.json();
-    if (d.success) fetchSubs();
+    try {
+      const r = await fetch(`/api/pt/subscriptions/${sub.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !sub.enabled })
+      });
+      const d = await r.json();
+      if (d.success) fetchSubs();
+    } catch { alert('网络错误'); }
   };
 
   const handleRefresh = async (id: number) => {
-    const r = await fetch(`/api/pt/subscriptions/${id}/refresh`, { method: 'POST' });
-    const d = await r.json();
-    if (d.success) {
-      alert(`本次新增 ${d.data?.processed ?? 0} 条`);
-      fetchSubs();
-    } else {
-      alert('刷新失败: ' + d.error);
-    }
+    try {
+      const r = await fetch(`/api/pt/subscriptions/${id}/refresh`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        alert(`本次新增 ${d.data?.processed ?? 0} 条`);
+        fetchSubs();
+      } else {
+        alert('刷新失败: ' + d.error);
+      }
+    } catch { alert('网络错误'); }
   };
 
   const openReleases = async (sub: PtSubscription) => {
     setCurrentSub(sub);
+    setReleases([]);
     setIsReleasesOpen(true);
     setReleasesLoading(true);
     try {
@@ -301,24 +311,30 @@ const PtTab: React.FC = () => {
 
   const refreshReleases = async () => {
     if (!currentSub) return;
-    const r = await fetch(`/api/pt/subscriptions/${currentSub.id}/releases`);
-    const d = await r.json();
-    if (d.success) setReleases(d.data || []);
+    try {
+      const r = await fetch(`/api/pt/subscriptions/${currentSub.id}/releases`);
+      const d = await r.json();
+      if (d.success) setReleases(d.data || []);
+    } catch { /* 静默处理 */ }
   };
 
   const handleRetryRelease = async (id: number) => {
-    const r = await fetch(`/api/pt/releases/${id}/retry`, { method: 'POST' });
-    const d = await r.json();
-    if (d.success) refreshReleases();
-    else alert('重试失败: ' + d.error);
+    try {
+      const r = await fetch(`/api/pt/releases/${id}/retry`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) refreshReleases();
+      else alert('重试失败: ' + d.error);
+    } catch { alert('网络错误'); }
   };
 
   const handleDeleteRelease = async (id: number) => {
     if (!confirm('删除 release 同时会从 qb 中删掉对应任务（含本地文件），是否继续？')) return;
-    const r = await fetch(`/api/pt/releases/${id}`, { method: 'DELETE' });
-    const d = await r.json();
-    if (d.success) refreshReleases();
-    else alert('删除失败: ' + d.error);
+    try {
+      const r = await fetch(`/api/pt/releases/${id}`, { method: 'DELETE' });
+      const d = await r.json();
+      if (d.success) refreshReleases();
+      else alert('删除失败: ' + d.error);
+    } catch { alert('网络错误'); }
   };
 
   const openSettings = async () => {
@@ -338,7 +354,7 @@ const PtTab: React.FC = () => {
         proxy: { ...cur.data.proxy, services: { ...cur.data.proxy?.services, ...proxyServices } }
       };
       const r = await fetch('/api/settings', {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(merged)
       });
       const d = await r.json();
@@ -361,7 +377,7 @@ const PtTab: React.FC = () => {
       const cur = await fetch('/api/settings').then(r => r.json());
       if (cur.success) {
         await fetch('/api/settings', {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...cur.data, pt: settings, proxy: { ...cur.data.proxy, services: { ...cur.data.proxy?.services, ...proxyServices } } })
         });
       }
@@ -871,7 +887,7 @@ const PtTab: React.FC = () => {
       </Modal>
 
       {/* 搜索 RSS */}
-      <Modal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} title={searchStep === 'search' ? '搜索番剧' : `选择字幕组 - ${searchSelectedTitle}`} footer={null}>
+      <Modal isOpen={isSearchOpen} onClose={() => { setIsSearchOpen(false); setSearchKeyword(''); setSearchResults([]); setSearchGroups([]); setSearchStep('search'); setSearchSelectedTitle(''); }} title={searchStep === 'search' ? '搜索番剧' : `选择字幕组 - ${searchSelectedTitle}`} footer={null}>
         <div className="space-y-4">
           {searchStep === 'search' && (
             <>
