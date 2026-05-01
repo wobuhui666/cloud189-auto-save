@@ -6,7 +6,7 @@ import FolderSelector, { SelectedFolder } from '../FolderSelector';
 interface SearchResult { id: string; title: string; cover: string; url: string; source: string; directRss?: boolean; preview?: string[]; groups?: GroupResult[]; }
 interface GroupResult { name: string; rssUrl: string; itemCount?: number; source: string; }
 
-interface Account { id: number; name: string; }
+interface Account { id: number; username: string; alias?: string; }
 interface SourcePreset { key: string; label: string; description: string; defaultRssUrl: string; }
 
 interface PtSubscription {
@@ -81,6 +81,11 @@ const DEFAULT_FORM = {
   targetFolderId: '',
   targetFolder: '',
   enabled: true
+};
+
+const PT_DIR_MEMORY_KEY = 'ptLastUsedDir';
+const getLastUsedDir = () => {
+  try { const r = localStorage.getItem(PT_DIR_MEMORY_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
 };
 
 const formatDateTime = (s: string | null) => {
@@ -219,7 +224,13 @@ const PtTab: React.FC = () => {
 
   const openAdd = () => {
     setEditing(null);
-    setFormData({ ...DEFAULT_FORM, accountId: accounts[0]?.id || 0 });
+    const lastDir = getLastUsedDir();
+    setFormData({
+      ...DEFAULT_FORM,
+      accountId: lastDir?.accountId || accounts[0]?.id || 0,
+      targetFolderId: lastDir?.targetFolderId || '',
+      targetFolder: lastDir?.targetFolder || '',
+    });
     setIsModalOpen(true);
   };
 
@@ -251,6 +262,11 @@ const PtTab: React.FC = () => {
       });
       const d = await r.json();
       if (d.success) {
+        localStorage.setItem(PT_DIR_MEMORY_KEY, JSON.stringify({
+          accountId: formData.accountId,
+          targetFolderId: formData.targetFolderId,
+          targetFolder: formData.targetFolder,
+        }));
         setIsModalOpen(false);
         fetchSubs();
       } else {
@@ -600,7 +616,7 @@ const PtTab: React.FC = () => {
             <select value={formData.accountId} onChange={e => setFormData({ ...formData, accountId: Number(e.target.value), targetFolderId: '', targetFolder: '' })}
               className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" required>
               <option value={0}>请选择</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.alias?.trim() || a.username}</option>)}
             </select>
           </div>
 
@@ -631,7 +647,7 @@ const PtTab: React.FC = () => {
         isOpen={folderSelectorOpen}
         onClose={() => setFolderSelectorOpen(false)}
         accountId={formData.accountId}
-        accountName={accounts.find(a => a.id === formData.accountId)?.name || ''}
+        accountName={(() => { const acc = accounts.find(a => a.id === formData.accountId); return acc ? (acc.alias?.trim() || acc.username) : ''; })()}
         onSelect={(folder: SelectedFolder) => {
           setFormData({ ...formData, targetFolderId: folder.id, targetFolder: folder.path || folder.name });
           setFolderSelectorOpen(false);
