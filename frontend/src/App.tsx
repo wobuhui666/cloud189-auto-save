@@ -82,6 +82,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(getStoredThemeMode);
   const [systemPrefersDark, setSystemPrefersDark] = useState(getSystemPrefersDark);
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const [username, setUsername] = useState('');
 
   const resolvedTheme = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -100,6 +101,17 @@ export default function App() {
     return () => {
       mediaQuery.removeEventListener('change', handleChange);
     };
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.username) {
+          setUsername(data.username);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -374,7 +386,7 @@ export default function App() {
               <Bell size={22} />
             </button>
             <div className="w-9 h-9 rounded-full bg-[#0b57d0] text-white flex items-center justify-center font-medium text-sm ml-2 cursor-pointer hover:shadow-md transition-shadow">
-              U
+              {username ? username.charAt(0).toUpperCase() : 'U'}
             </div>
           </div>
         </header>

@@ -490,6 +490,14 @@ app.post('/api/auth/logout', (req, res) => {
     });
 });
 
+app.get('/api/auth/me', (req, res) => {
+    if (!req.session.authenticated) {
+        res.json({ success: false, error: '未登录' });
+        return;
+    }
+    res.json({ success: true, username: req.session.username || '' });
+});
+
 app.use(express.static(publicDir));
 // 为所有路由添加认证（除了登录页和登录接口）
 app.use((req, res, next) => {

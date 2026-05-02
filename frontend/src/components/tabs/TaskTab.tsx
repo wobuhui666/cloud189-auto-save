@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, ChevronRight, Filter, Search, RefreshCw, Files, PlayCircle, MoreVertical, CheckCircle2, AlertCircle, Clock, Trash2, ClipboardList, Edit3 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -96,6 +97,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [deleteCloud, setDeleteCloud] = useState(false);
   const [isTopMenuOpen, setIsTopMenuOpen] = useState(false);
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number } | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -123,7 +126,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       if (!target?.closest('[data-task-top-menu]')) {
         setIsTopMenuOpen(false);
       }
-      if (!target?.closest('[data-task-item-menu]')) {
+      if (!target?.closest('[data-task-item-menu]') && !target?.closest('[data-task-item-menu-dropdown]')) {
         setOpenTaskMenuId(null);
       }
     };
@@ -142,6 +145,18 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (openTaskMenuId !== null && menuButtonRef.current) {
+      const rect = menuButtonRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + 4,
+        right: window.innerWidth - rect.right,
+      });
+    } else {
+      setDropdownPos(null);
+    }
+  }, [openTaskMenuId]);
 
   const availableTagFilters: TaskFilterTag[] = [
     ...TASK_FEATURE_FILTERS
@@ -574,7 +589,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           return (
             <div 
               key={task.id}
-              className={`rounded-3xl border bg-white p-6 shadow-sm transition-all hover:shadow-md group relative ${
+              className={`rounded-3xl border bg-white p-6 shadow-sm transition-all hover:shadow-md group relative overflow-hidden ${
                 isSelected ? 'border-[#0b57d0] ring-1 ring-[#0b57d0]/20' : 'border-slate-200/60'
               } ${task.status === 'completed' ? 'opacity-80' : ''}`}
             >
@@ -640,13 +655,18 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                     <div className="relative" data-task-item-menu>
                       <button
                         type="button"
+                        ref={openTaskMenuId === task.id ? menuButtonRef : undefined}
                         onClick={() => setOpenTaskMenuId(prev => prev === task.id ? null : task.id)}
                         className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-slate-900 transition-colors"
                       >
                         <MoreVertical size={18} />
                       </button>
-                      {openTaskMenuId === task.id && (
-                        <div className="absolute right-0 top-full mt-1 w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-50">
+                      {openTaskMenuId === task.id && dropdownPos && createPortal(
+                        <div
+                          data-task-item-menu-dropdown
+                          className="fixed w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-[9999]"
+                          style={{ top: dropdownPos.top, right: dropdownPos.right }}
+                        >
                           <button
                             onClick={() => {
                               setOpenTaskMenuId(null);
@@ -665,7 +685,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                           >
                             <Trash2 size={14} /> 删除任务
                           </button>
-                        </div>
+                        </div>,
+                        document.body
                       )}
                     </div>
                   </div>
