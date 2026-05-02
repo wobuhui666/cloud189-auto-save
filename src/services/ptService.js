@@ -60,6 +60,10 @@ class PtService {
         return this.sourceService.getGroups(preset, params);
     }
 
+    async getSourceGroupItems(rssUrl, preset) {
+        return this.sourceService.getGroupItems(rssUrl, preset);
+    }
+
     // ==================== 轮询 ====================
 
     async runPoll(subscriptionId = null) {
@@ -220,10 +224,14 @@ class PtService {
             return;
         }
         release.downloadPath = torrent.contentPath || torrent.savePath || release.downloadPath;
+        release.progress = Math.round((torrent.progress || 0) * 100);
         if (torrent.isCompleted) {
             release.status = STATUS.DOWNLOADED;
+            release.progress = 100;
             await releaseRepo.save(release);
             logTaskEvent(`[PT] 下载完成: ${release.title}`);
+        } else {
+            await releaseRepo.save(release);
         }
     }
 
@@ -267,6 +275,8 @@ class PtService {
         const manifest = [];
         const enableFamilyTransit = !!ConfigService.getConfigValue('cas.enableFamilyTransit', true);
         const familyTransitFirst = !!ConfigService.getConfigValue('cas.familyTransitFirst', false);
+        const totalFiles = localFiles.length;
+        let uploadedFiles = 0;
 
         for (const file of localFiles) {
             const subDirId = await this._ensureNestedFolder(cloud189, releaseFolderId, file.relativeDir);
@@ -297,6 +307,9 @@ class PtService {
                 cloudFileId: uploadResult.fileId,
                 via: uploadResult.via
             });
+            uploadedFiles++;
+            release.progress = Math.round((uploadedFiles / totalFiles) * 100);
+            await releaseRepo.save(release);
         }
 
         release.manifestJson = JSON.stringify(manifest);

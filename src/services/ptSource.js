@@ -278,6 +278,16 @@ class PtSourceService {
         }
     }
 
+    async getGroupItems(rssUrl, preset) {
+        const proxyService = this._getProxyService(preset || 'generic');
+        const feedXml = await this._fetch(rssUrl, proxyService);
+        const items = this.parseFeedItems(feedXml, rssUrl);
+        return items.slice(0, 50).map(item => ({
+            title: item.title,
+            publishedAt: item.publishedAt || null
+        }));
+    }
+
     _getProxyService(preset) {
         const map = { mikan: 'ptMikan', anibt: 'ptAnibt', animegarden: 'ptAnimegarden', nyaa: 'ptNyaa', dmhy: 'ptDmhy' };
         return map[preset] || '';

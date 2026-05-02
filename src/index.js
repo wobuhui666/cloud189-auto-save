@@ -2075,6 +2075,19 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    app.get('/api/pt/sources/group-items', async (req, res) => {
+        try {
+            const { rssUrl, preset } = req.query;
+            if (!rssUrl) {
+                return res.json({ success: false, error: '缺少 rssUrl 参数' });
+            }
+            const items = await ptService.getSourceGroupItems(String(rssUrl), String(preset || 'generic'));
+            res.json({ success: true, data: items });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.post('/api/pt/downloader/test', async (req, res) => {
         try {
             const result = await ptService.testDownloader();
@@ -2111,7 +2124,14 @@ AppDataSource.initialize().then(async () => {
             if (!sub.accountId) throw new Error('未选择账号');
             if (!sub.targetFolderId) throw new Error('未选择目标目录');
             await ptSubscriptionRepo.save(sub);
-            res.json({ success: true, data: sub });
+            // 新增订阅后自动触发一次 RSS 轮询
+            let refreshResult = null;
+            try {
+                refreshResult = await ptService.runPoll(sub.id);
+            } catch (refreshErr) {
+                refreshResult = { processed: 0, error: refreshErr.message };
+            }
+            res.json({ success: true, data: sub, refreshResult });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }

@@ -125,6 +125,27 @@ function taskActionRow(taskId) {
 }
 
 /**
+ * 构建 PT 订阅操作按钮行
+ */
+function ptSubActionRow(subId, enabled) {
+    return [
+        { text: '🔄 刷新', callback_data: serializeCb({ t: CB.PT_SUB_REFRESH, i: subId }) },
+        { text: enabled ? '❌ 禁用' : '✅ 启用', callback_data: serializeCb({ t: CB.PT_SUB_TOGGLE, i: subId }) },
+        { text: '📋 Releases', callback_data: serializeCb({ t: CB.PT_RELEASE_PAGE, i: subId, p: 1 }) },
+    ];
+}
+
+/**
+ * 构建 PT Release 操作按钮行
+ */
+function ptReleaseActionRow(releaseId) {
+    return [
+        { text: '🔁 重试', callback_data: serializeCb({ t: CB.PT_RELEASE_RETRY, i: releaseId }) },
+        { text: '🗑 删除', callback_data: serializeCb({ t: CB.PT_RELEASE_DEL, i: releaseId }) },
+    ];
+}
+
+/**
  * 构建 help 快捷导航键盘
  */
 function helpNavKeyboard() {
@@ -148,5 +169,7 @@ module.exports = {
     multiColumn,
     folderKeyboard,
     taskActionRow,
+    ptSubActionRow,
+    ptReleaseActionRow,
     helpNavKeyboard,
 };

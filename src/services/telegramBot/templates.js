@@ -144,6 +144,12 @@ function helpText() {
         `📋 ${bold('日志与订阅')}\n` +
         `/logs - 查看最近日志\n` +
         `/subs - 查看订阅列表\n\n` +
+        `📡 ${bold('PT 管理')}\n` +
+        `/pt_subs - PT 订阅列表\n` +
+        `/pt_detail_[ID] - PT 订阅详情\n` +
+        `/pt_refresh_[ID] - 刷新 PT 订阅\n` +
+        `/pt_releases_[ID] - 查看 Releases\n` +
+        `/pt_search - PT 站点搜索\n\n` +
         `📥 ${bold('创建任务')}\n` +
         `直接发送天翼云盘分享链接即可创建任务\n` +
         `格式：链接（支持访问码的链接）\n\n` +
@@ -179,6 +185,65 @@ function searchResults(results) {
     return header + items;
 }
 
+/**
+ * PT Release 状态格式化
+ */
+function ptStatusFormat(status) {
+    const map = {
+        pending: '⏳ 排队中',
+        downloading: '⬇️ 下载中',
+        downloaded: '📦 已下载',
+        uploading: '☁️ 秒传中',
+        completed: '✅ 已完成',
+        failed: '❌ 失败',
+        upload_failed: '❌ 秒传失败',
+    };
+    return map[status] || status;
+}
+
+/**
+ * PT 订阅卡片
+ */
+function ptSubCard(sub, index) {
+    const status = sub.enabled ? '✅ 启用' : '❌ 禁用';
+    const lastCheck = sub.lastCheckTime
+        ? new Date(sub.lastCheckTime).toLocaleString('zh-CN')
+        : '从未';
+    const lastStatus = sub.lastStatus === 'ok' ? '✅ 正常' : sub.lastStatus === 'error' ? '❌ 异常' : '未知';
+
+    return (
+        `${index != null ? `${index}. ` : ''}📡 ${bold(escapeHtml(sub.name))}\n` +
+        `   来源：${escapeHtml(sub.sourcePreset)}\n` +
+        `   状态：${status}\n` +
+        `   最后检查：${escapeHtml(lastCheck)}\n` +
+        `   检查结果：${lastStatus}\n` +
+        `   Release 数：${sub.releaseCount || 0}\n` +
+        `   📝 详情：/pt_detail_${sub.id}\n` +
+        `   🔄 刷新：/pt_refresh_${sub.id}\n` +
+        `   📋 Releases：/pt_releases_${sub.id}`
+    );
+}
+
+/**
+ * PT Release 卡片
+ */
+function ptReleaseCard(rel, index) {
+    const status = ptStatusFormat(rel.status);
+    const progress = (rel.status === 'downloading' || rel.status === 'uploading') && rel.progress > 0
+        ? ` (${rel.progress}%)`
+        : '';
+    const updated = rel.updatedAt
+        ? new Date(rel.updatedAt).toLocaleString('zh-CN')
+        : '-';
+    const error = rel.lastError ? `\n   ❗ ${escapeHtml(rel.lastError.substring(0, 100))}` : '';
+
+    return (
+        `${index != null ? `${index}. ` : ''}${bold(escapeHtml(rel.title))}\n` +
+        `   状态：${status}${progress}\n` +
+        `   更新：${escapeHtml(updated)}${error}`
+    );
+}
+
 module.exports = {
     formatStatus,
     desensitizeUsername,
@@ -188,4 +253,7 @@ module.exports = {
     helpText,
     commonFolderList,
     searchResults,
+    ptStatusFormat,
+    ptSubCard,
+    ptReleaseCard,
 };

@@ -774,6 +774,9 @@ export class PtRelease {
     @Column('text', { nullable: true, default: 'pending' })
     status!: string;
 
+    @Column('float', { nullable: true, default: 0 })
+    progress!: number;
+
     @Column('text', { nullable: true, default: '' })
     manifestJson!: string;
 

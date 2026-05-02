@@ -21,6 +21,7 @@ function getHandlers() {
             logs: require('./handlers/logs'),
             subs: require('./handlers/subs'),
             ptSearch: require('./handlers/ptSearch'),
+            ptSubs: require('./handlers/ptSubs'),
         };
     }
     return _handlers;
@@ -231,6 +232,57 @@ function registerCommands(svc) {
         await getHandlers().ptSearch.handlePtSearch(svc, msg);
     });
 
+    bot.onText(/^\/pt_subs$/, async (msg) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        await getHandlers().ptSubs.handlePtSubs(svc, msg);
+    });
+
+    bot.onText(/^\/pt_detail_(\d+)$/, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        await getHandlers().ptSubs.handlePtDetail(svc, msg, match[1]);
+    });
+
+    bot.onText(/^\/pt_refresh_(\d+)$/, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        if (!svc.checkAdmin(msg.chat.id)) {
+            await send(bot, msg.chat.id, '⚠️ 仅管理员可执行该操作');
+            return;
+        }
+        await getHandlers().ptSubs.handlePtRefresh(svc, msg, match[1]);
+    });
+
+    bot.onText(/^\/pt_toggle_(\d+)$/, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        if (!svc.checkAdmin(msg.chat.id)) {
+            await send(bot, msg.chat.id, '⚠️ 仅管理员可执行该操作');
+            return;
+        }
+        await getHandlers().ptSubs.handlePtToggle(svc, msg.chat.id, match[1]);
+    });
+
+    bot.onText(/^\/pt_releases_(\d+)$/, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        await getHandlers().ptSubs.handlePtReleases(svc, msg, match[1]);
+    });
+
+    bot.onText(/^\/pt_retry_(\d+)$/, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        if (!svc.checkAdmin(msg.chat.id)) {
+            await send(bot, msg.chat.id, '⚠️ 仅管理员可执行该操作');
+            return;
+        }
+        await getHandlers().ptSubs.handlePtReleaseRetry(svc, msg, match[1]);
+    });
+
+    bot.onText(/^\/pt_del_(\d+)$/, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        if (!svc.checkAdmin(msg.chat.id)) {
+            await send(bot, msg.chat.id, '⚠️ 仅管理员可执行该操作');
+            return;
+        }
+        await getHandlers().ptSubs.handlePtReleaseDelete(svc, msg, match[1]);
+    });
+
     // ═══════════ 分享链接（非命令文本） ═══════════
 
     bot.onText(/cloud\.189\.cn/, async (msg) => {
@@ -341,6 +393,40 @@ function registerCommands(svc) {
                         break;
                     case CB.PT_SEARCH_SITE:
                         await getHandlers().ptSearch.handleSiteSelect(svc, chatId, messageId, data.s);
+                        break;
+                    case CB.PT_SUB_PAGE:
+                        await getHandlers().ptSubs.handlePtSubsPage(svc, chatId, data.p, messageId);
+                        break;
+                    case CB.PT_RELEASE_PAGE:
+                        await getHandlers().ptSubs.handlePtReleasesPage(svc, chatId, data.i, data.p, messageId);
+                        break;
+                    case CB.PT_SUB_TOGGLE:
+                        if (!svc.checkAdmin(chatId)) {
+                            await send(bot, chatId, '⚠️ 仅管理员可执行该操作');
+                            return;
+                        }
+                        await getHandlers().ptSubs.handlePtToggle(svc, chatId, data.i, messageId);
+                        break;
+                    case CB.PT_SUB_REFRESH:
+                        if (!svc.checkAdmin(chatId)) {
+                            await send(bot, chatId, '⚠️ 仅管理员可执行该操作');
+                            return;
+                        }
+                        await getHandlers().ptSubs.handlePtRefreshCb(svc, chatId, data.i, messageId);
+                        break;
+                    case CB.PT_RELEASE_RETRY:
+                        if (!svc.checkAdmin(chatId)) {
+                            await send(bot, chatId, '⚠️ 仅管理员可执行该操作');
+                            return;
+                        }
+                        await getHandlers().ptSubs.handlePtReleaseRetry(svc, { chat: { id: chatId } }, data.i);
+                        break;
+                    case CB.PT_RELEASE_DEL:
+                        if (!svc.checkAdmin(chatId)) {
+                            await send(bot, chatId, '⚠️ 仅管理员可执行该操作');
+                            return;
+                        }
+                        await getHandlers().ptSubs.handlePtReleaseDelete(svc, { chat: { id: chatId } }, data.i);
                         break;
                     default:
                         break;

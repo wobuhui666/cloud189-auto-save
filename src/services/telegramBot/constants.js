@@ -21,6 +21,12 @@ const CB = {
     SILENT_MODE: 'sm',         // 静默模式
     PT_SEARCH_SITE: 'ps',      // PT 搜索选择站点
     PT_SEARCH_GROUP: 'pg',     // PT 搜索选择字幕组
+    PT_SUB_PAGE: 'pp',         // PT 订阅列表分页
+    PT_RELEASE_PAGE: 'pr',     // PT Release 列表分页
+    PT_SUB_TOGGLE: 'pt',       // PT 订阅启用/禁用
+    PT_SUB_REFRESH: 'px',      // PT 订阅刷新
+    PT_RELEASE_RETRY: 'pk',    // PT Release 重试
+    PT_RELEASE_DEL: 'pd',      // PT Release 删除
 };
 
 // 任务状态枚举

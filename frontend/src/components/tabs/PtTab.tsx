@@ -31,6 +31,7 @@ interface PtRelease {
   subscriptionId: number;
   title: string;
   status: string;
+  progress?: number;
   qbTorrentHash: string;
   downloadPath: string;
   cloudFolderName: string;
@@ -152,6 +153,11 @@ const PtTab: React.FC = () => {
   const [searchStep, setSearchStep] = useState<'search' | 'groups'>('search');
   const [searchSelectedTitle, setSearchSelectedTitle] = useState('');
 
+  // 字幕组文件预览状态
+  const [previewGroupIdx, setPreviewGroupIdx] = useState<number | null>(null);
+  const [groupItems, setGroupItems] = useState<any[]>([]);
+  const [groupItemsLoading, setGroupItemsLoading] = useState(false);
+
   const fetchSubs = async () => {
     setLoading(true);
     try {
@@ -225,6 +231,15 @@ const PtTab: React.FC = () => {
     fetchMeta();
   }, []);
 
+  // 当 releases 弹窗打开且存在活跃任务时，每 5 秒自动刷新进度
+  useEffect(() => {
+    if (!isReleasesOpen || !currentSub) return;
+    const hasActive = releases.some(r => r.status === 'downloading' || r.status === 'uploading');
+    if (!hasActive) return;
+    const interval = setInterval(() => { refreshReleases(); }, 5000);
+    return () => clearInterval(interval);
+  }, [isReleasesOpen, currentSub, releases]);
+
   const openAdd = () => {
     setEditing(null);
     const lastDir = getLastUsedDir();
@@ -272,6 +287,13 @@ const PtTab: React.FC = () => {
         }));
         setIsModalOpen(false);
         fetchSubs();
+        // 新增订阅后显示自动刷新结果
+        if (!editing && d.refreshResult) {
+          const count = d.refreshResult.processed ?? 0;
+          if (count > 0) {
+            alert(`订阅已添加，本次新增 ${count} 条 release`);
+          }
+        }
       } else {
         alert('保存失败: ' + d.error);
       }
@@ -484,6 +506,19 @@ const PtTab: React.FC = () => {
     setSearchStep('search');
   };
 
+  const handlePreviewGroup = async (idx: number, group: GroupResult) => {
+    if (previewGroupIdx === idx) { setPreviewGroupIdx(null); return; }
+    setPreviewGroupIdx(idx);
+    setGroupItemsLoading(true);
+    setGroupItems([]);
+    try {
+      const r = await fetch(`/api/pt/sources/group-items?rssUrl=${encodeURIComponent(group.rssUrl)}&preset=${encodeURIComponent(group.source)}`);
+      const d = await r.json();
+      if (d.success) setGroupItems(d.data || []);
+    } catch { setGroupItems([]); }
+    finally { setGroupItemsLoading(false); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -688,7 +723,17 @@ const PtTab: React.FC = () => {
                       {rel.lastError && <div className="text-[11px] text-red-500 mt-0.5 truncate max-w-[300px]" title={rel.lastError}>{rel.lastError}</div>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-1 rounded-full text-xs ${statusColor(rel.status)}`}>{statusLabel(rel.status)}</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded-full text-xs ${statusColor(rel.status)}`}>{statusLabel(rel.status)}</span>
+                        {(rel.status === 'downloading' || rel.status === 'uploading') && rel.progress != null && rel.progress > 0 && (
+                          <span className="text-xs text-slate-500 font-mono">{rel.progress}%</span>
+                        )}
+                      </div>
+                      {(rel.status === 'downloading' || rel.status === 'uploading') && rel.progress != null && rel.progress > 0 && (
+                        <div className="mt-1 w-full bg-slate-100 rounded-full h-1">
+                          <div className="bg-[#0b57d0] h-1 rounded-full transition-all" style={{ width: `${rel.progress}%` }}></div>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-mono text-[10px] text-slate-400">{rel.qbTorrentHash ? rel.qbTorrentHash.slice(0, 12) + '…' : '-'}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{formatDateTime(rel.updatedAt)}</td>
@@ -962,14 +1007,33 @@ const PtTab: React.FC = () => {
                   <p className="text-center text-slate-400 text-sm py-8">未找到字幕组</p>
                 )}
                 {searchGroups.map((group, idx) => (
-                  <button key={idx} type="button" onClick={() => handleSelectGroup(group)}
-                    className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 border border-slate-200 text-left transition-colors">
-                    <div>
-                      <div className="text-sm font-medium text-slate-800">{group.name}</div>
-                      {group.itemCount != null && <div className="text-xs text-slate-400">{group.itemCount} 个资源</div>}
+                  <div key={idx}>
+                    <div className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 border border-slate-200 text-left transition-colors">
+                      <button type="button" onClick={() => handleSelectGroup(group)} className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-slate-800">{group.name}</div>
+                        {group.itemCount != null && <div className="text-xs text-slate-400">{group.itemCount} 个资源</div>}
+                      </button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); handlePreviewGroup(idx, group); }}
+                        className="ml-2 px-3 py-1.5 text-xs text-slate-500 hover:text-[#0b57d0] hover:bg-[#0b57d0]/10 rounded-full transition-colors">
+                        {previewGroupIdx === idx ? '收起' : '预览'}
+                      </button>
                     </div>
-                    <span className="text-xs text-[#0b57d0] font-medium">使用此 RSS</span>
-                  </button>
+                    {previewGroupIdx === idx && (
+                      <div className="ml-4 mt-1 mb-2 space-y-1">
+                        {groupItemsLoading ? (
+                          <div className="text-xs text-slate-400 py-2"><Loader2 size={12} className="animate-spin inline mr-1" />加载中...</div>
+                        ) : groupItems.length === 0 ? (
+                          <div className="text-xs text-slate-400 py-2">暂无资源</div>
+                        ) : (
+                          <div className="max-h-48 overflow-y-auto space-y-1">
+                            {groupItems.map((item: any, i: number) => (
+                              <div key={i} className="text-xs text-slate-600 py-0.5 truncate" title={item.title}>{item.title}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 ))}
                 {searchLoading && (
                   <div className="flex items-center justify-center gap-2 py-8 text-slate-400 text-sm">
