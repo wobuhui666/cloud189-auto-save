@@ -511,9 +511,11 @@ class PtSourceService {
         const rssUrl = `https://nyaa.si/?page=rss&q=${encodeURIComponent(keyword)}`;
         let preview = [];
         let groups = [];
+        let totalCount = 0;
         try {
             const feedXml = await this._fetch(rssUrl, 'ptNyaa');
             const items = this.parseFeedItems(feedXml, rssUrl);
+            totalCount = items.length;
             preview = items.slice(0, 5).map(item => item.title);
 
             // 从标题提取 [字幕组名] 模式
@@ -546,6 +548,7 @@ class PtSourceService {
             cover: '',
             url: rssUrl,
             source: 'nyaa',
+            itemCount: totalCount,
             preview,
             groups,
             directRss: true
@@ -558,9 +561,11 @@ class PtSourceService {
         const rssUrl = `https://share.dmhy.org/topics/rss/rss.xml?keyword=${encodeURIComponent(keyword)}`;
         let preview = [];
         let groups = [];
+        let totalCount = 0;
         try {
             const feedXml = await this._fetch(rssUrl, 'ptDmhy');
             const items = this.parseFeedItems(feedXml, rssUrl);
+            totalCount = items.length;
             preview = items.slice(0, 5).map(item => item.title);
 
             // 从 RSS <author> 标签提取字幕组
@@ -589,6 +594,7 @@ class PtSourceService {
             cover: '',
             url: rssUrl,
             source: 'dmhy',
+            itemCount: totalCount,
             preview,
             groups,
             directRss: true

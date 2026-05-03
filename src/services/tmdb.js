@@ -255,6 +255,92 @@ class TMDBService {
             return null;
         }
     }
+
+    /**
+     * 获取趋势内容
+     * @param {string} mediaType - 'all' | 'movie' | 'tv'
+     * @param {string} timeWindow - 'day' | 'week'
+     */
+    async getTrending(mediaType = 'all', timeWindow = 'week', page = 1) {
+        try {
+            const response = await this._request(`/trending/${mediaType}/${timeWindow}`, { page });
+            return (response.results || []).map(item => ({
+                id: item.id,
+                title: item.title || item.name,
+                originalTitle: item.original_title || item.original_name,
+                overview: item.overview,
+                releaseDate: item.release_date || item.first_air_date,
+                posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '',
+                backdropPath: item.backdrop_path ? `https://image.tmdb.org/t/p/w500${item.backdrop_path}` : '',
+                voteAverage: item.vote_average,
+                type: item.media_type || mediaType,
+            }));
+        } catch (error) {
+            console.error(`获取趋势内容失败: ${error.message}`);
+            return [];
+        }
+    }
+
+    /**
+     * 发现内容（支持筛选）
+     * @param {string} mediaType - 'movie' | 'tv'
+     * @param {object} params - 筛选参数
+     */
+    async discover(mediaType = 'movie', params = {}) {
+        try {
+            const response = await this._request(`/discover/${mediaType}`, {
+                sort_by: params.sortBy || 'popularity.desc',
+                with_genres: params.genres || '',
+                page: params.page || 1,
+                ...params,
+            });
+            return {
+                results: (response.results || []).map(item => ({
+                    id: item.id,
+                    title: item.title || item.name,
+                    originalTitle: item.original_title || item.original_name,
+                    overview: item.overview,
+                    releaseDate: item.release_date || item.first_air_date,
+                    posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '',
+                    voteAverage: item.vote_average,
+                    type: mediaType,
+                })),
+                totalPages: response.total_pages || 1,
+                totalResults: response.total_results || 0,
+            };
+        } catch (error) {
+            console.error(`发现内容失败: ${error.message}`);
+            return { results: [], totalPages: 0, totalResults: 0 };
+        }
+    }
+
+    /**
+     * 获取高分内容
+     * @param {string} mediaType - 'movie' | 'tv'
+     * @param {number} page - 页码
+     */
+    async getTopRated(mediaType = 'movie', page = 1) {
+        try {
+            const response = await this._request(`/${mediaType}/top_rated`, { page });
+            return {
+                results: (response.results || []).map(item => ({
+                    id: item.id,
+                    title: item.title || item.name,
+                    originalTitle: item.original_title || item.original_name,
+                    overview: item.overview,
+                    releaseDate: item.release_date || item.first_air_date,
+                    posterPath: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '',
+                    voteAverage: item.vote_average,
+                    type: mediaType,
+                })),
+                totalPages: response.total_pages || 1,
+                totalResults: response.total_results || 0,
+            };
+        } catch (error) {
+            console.error(`获取高分内容失败: ${error.message}`);
+            return { results: [], totalPages: 0, totalResults: 0 };
+        }
+    }
 }
 
 module.exports = { TMDBService };

@@ -33,6 +33,7 @@ const { OrganizerService } = require('./services/organizer');
 const { AutoSeriesService } = require('./services/autoSeries');
 const TelegramService = require('./services/message/TelegramService');
 const { CasService } = require('./services/casService');
+const { DoubanService } = require('./services/douban');
 
 const appPort = Number(process.env.PORT || 3000);
 let embyStandaloneProxyServer = null;
@@ -547,6 +548,7 @@ AppDataSource.initialize().then(async () => {
     const lazyShareStrmService = new LazyShareStrmService(accountRepo, taskService);
     const autoSeriesService = new AutoSeriesService(taskService, accountRepo, lazyShareStrmService);
     const tmdbService = new TMDBService();
+    const doubanService = new DoubanService();
     const embyService = new EmbyService(taskService)
     const embyPrewarmService = new EmbyPrewarmService(embyService);
     embyService.attachPrewarmService(embyPrewarmService);
@@ -1746,6 +1748,40 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    // TMDB 扩展路由（必须放在 :type/:id 通配路由之前，否则会被吞掉）
+    app.get('/api/tmdb/trending/:mediaType/:timeWindow', async (req, res) => {
+        try {
+            const { mediaType, timeWindow } = req.params;
+            const page = parseInt(req.query.page) || 1;
+            const data = await tmdbService.getTrending(mediaType, timeWindow, page);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/tmdb/discover/:mediaType', async (req, res) => {
+        try {
+            const { mediaType } = req.params;
+            const data = await tmdbService.discover(mediaType, req.query);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/tmdb/:mediaType/top_rated', async (req, res) => {
+        try {
+            const { mediaType } = req.params;
+            const page = parseInt(req.query.page) || 1;
+            const data = await tmdbService.getTopRated(mediaType, page);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 通配详情路由 — 必须放在所有具体子路径之后
     app.get('/api/tmdb/:type/:id', async (req, res) => {
         try {
             const { type, id } = req.params;
@@ -1761,6 +1797,97 @@ AppDataSource.initialize().then(async () => {
             if (!data) {
                 throw new Error('获取 TMDB 详情失败');
             }
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== 豆瓣代理 API ====================
+    app.get('/api/douban/recent_hot/:kind', async (req, res) => {
+        try {
+            const { kind } = req.params;
+            const start = parseInt(req.query.start) || 0;
+            const limit = parseInt(req.query.limit) || 20;
+            const data = await doubanService.getRecentHot(kind, start, limit);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/douban/search', async (req, res) => {
+        try {
+            const { tag, type = 'movie', start = 0, count = 20 } = req.query;
+            if (!tag) {
+                return res.json({ success: false, error: '缺少 tag 参数' });
+            }
+            const data = await doubanService.searchSubjects(tag, type, parseInt(start), parseInt(count));
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/douban/top250', async (req, res) => {
+        try {
+            const page = parseInt(req.query.page) || 1;
+            const data = await doubanService.getTop250(page);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== Bangumi 代理 API ====================
+    app.get('/api/bangumi/calendar', async (req, res) => {
+        try {
+            const data = await doubanService.getBangumiCalendar();
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/bangumi/today', async (req, res) => {
+        try {
+            const data = await doubanService.getBangumiToday();
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/bangumi/ranking', async (req, res) => {
+        try {
+            const limit = parseInt(req.query.limit) || 30;
+            const data = await doubanService.getBangumiRanking(limit);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/bangumi/weekday/:id', async (req, res) => {
+        try {
+            const id = parseInt(req.params.id);
+            if (Number.isNaN(id) || id < 1 || id > 7) {
+                return res.json({ success: false, error: '无效的星期 id' });
+            }
+            const data = await doubanService.getBangumiByWeekday(id);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/bangumi/search', async (req, res) => {
+        try {
+            const { keyword } = req.query;
+            if (!keyword) {
+                return res.json({ success: false, error: '缺少 keyword 参数' });
+            }
+            const data = await doubanService.searchBangumi(keyword);
             res.json({ success: true, data });
         } catch (error) {
             res.json({ success: false, error: error.message });
@@ -2070,6 +2197,28 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    // PT 聚合搜索 - 同时搜索所有支持搜索的源
+    app.get('/api/pt/sources/search-all', async (req, res) => {
+        try {
+            const { keyword } = req.query;
+            if (!keyword) {
+                return res.json({ success: false, error: '缺少 keyword 参数' });
+            }
+            const searchablePresets = ['mikan', 'anibt', 'animegarden', 'nyaa', 'dmhy'];
+            const results = await Promise.allSettled(
+                searchablePresets.map(preset => ptService.searchSource(preset, String(keyword)))
+            );
+            const aggregated = results.flatMap((r, i) =>
+                r.status === 'fulfilled'
+                    ? r.value.map(item => ({ ...item, source: searchablePresets[i] }))
+                    : []
+            );
+            res.json({ success: true, data: aggregated });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.get('/api/pt/sources/groups', async (req, res) => {
         try {
             const { preset, bgmId, bangumiUrl } = req.query;
@@ -2231,7 +2380,63 @@ AppDataSource.initialize().then(async () => {
         }
     });
     // ==================== END PT API ====================
-    
+
+    // ==================== 榜单订阅 API ====================
+    const { ListSubscriptionService } = require('./services/listSubscription');
+    const listSubscriptionService = new ListSubscriptionService({
+        doubanService,
+        tmdbService,
+        autoSeriesService,
+        ptService,
+        ptSubscriptionRepo
+    });
+    listSubscriptionService.initAll();
+
+    app.get('/api/list-subscriptions', (req, res) => {
+        try {
+            res.json({ success: true, data: listSubscriptionService.list() });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/list-subscriptions', (req, res) => {
+        try {
+            const created = listSubscriptionService.create(req.body || {});
+            res.json({ success: true, data: created });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/list-subscriptions/:id', (req, res) => {
+        try {
+            const updated = listSubscriptionService.update(req.params.id, req.body || {});
+            res.json({ success: true, data: updated });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/list-subscriptions/:id', (req, res) => {
+        try {
+            listSubscriptionService.remove(req.params.id);
+            res.json({ success: true });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/list-subscriptions/:id/run', async (req, res) => {
+        try {
+            const result = await listSubscriptionService.run(req.params.id);
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+    // ==================== END 榜单订阅 API ====================
+
     // 全局错误处理中间件
     app.use((err, req, res, next) => {
         console.error('捕获到全局异常:', err.message);

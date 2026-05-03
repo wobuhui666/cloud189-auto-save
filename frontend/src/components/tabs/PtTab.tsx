@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, Loader2 } from 'lucide-react';
 import Modal from '../Modal';
+import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
 
 interface SearchResult { id: string; title: string; cover: string; url: string; source: string; directRss?: boolean; preview?: string[]; groups?: GroupResult[]; }
@@ -121,7 +122,18 @@ const statusLabel = (status: string) => {
   return map[status] || status;
 };
 
-const PtTab: React.FC = () => {
+export interface PtPrefillData {
+  name: string;
+  rssUrl: string;
+  sourcePreset: string;
+}
+
+interface PtTabProps {
+  prefill?: PtPrefillData | null;
+  onPrefillConsumed?: () => void;
+}
+
+const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   const [subs, setSubs] = useState<PtSubscription[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [presets, setPresets] = useState<SourcePreset[]>([]);
@@ -146,12 +158,15 @@ const PtTab: React.FC = () => {
 
   // 搜索状态
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  // 顶部「搜索创建」入口的弹窗（与海报墙复用同组件）
+  const [isExternalSearchOpen, setIsExternalSearchOpen] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchGroups, setSearchGroups] = useState<GroupResult[]>([]);
   const [searchStep, setSearchStep] = useState<'search' | 'groups'>('search');
   const [searchSelectedTitle, setSearchSelectedTitle] = useState('');
+  const [aggregateSearch, setAggregateSearch] = useState(true);
 
   // 字幕组文件预览状态
   const [previewGroupIdx, setPreviewGroupIdx] = useState<number | null>(null);
@@ -230,6 +245,27 @@ const PtTab: React.FC = () => {
     fetchSubs();
     fetchMeta();
   }, []);
+
+  // 当外部传入预填数据（如海报墙跳转过来），自动打开创建对话框并填充
+  useEffect(() => {
+    if (!prefill) return;
+    if (accounts.length === 0) return; // 等账号加载完再打开
+    setEditing(null);
+    const lastDir = getLastUsedDir();
+    setFormData({
+      ...DEFAULT_FORM,
+      name: prefill.name || '',
+      rssUrl: prefill.rssUrl || '',
+      sourcePreset: prefill.sourcePreset || 'generic',
+      accountId: lastDir?.accountId || accounts[0]?.id || 0,
+      targetFolderId: lastDir?.targetFolderId || '',
+      targetFolder: lastDir?.targetFolder || '',
+    });
+    setIsModalOpen(true);
+    onPrefillConsumed?.();
+    // 仅在 prefill 引用变化或账号到位时触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, accounts.length]);
 
   // 当 releases 弹窗打开且存在活跃任务时，每 5 秒自动刷新进度
   useEffect(() => {
@@ -438,7 +474,10 @@ const PtTab: React.FC = () => {
     setSearchGroups([]);
     setSearchStep('search');
     try {
-      const r = await fetch(`/api/pt/sources/search?preset=${encodeURIComponent(formData.sourcePreset)}&keyword=${encodeURIComponent(searchKeyword)}`);
+      const endpoint = aggregateSearch
+        ? `/api/pt/sources/search-all?keyword=${encodeURIComponent(searchKeyword)}`
+        : `/api/pt/sources/search?preset=${encodeURIComponent(formData.sourcePreset)}&keyword=${encodeURIComponent(searchKeyword)}`;
+      const r = await fetch(endpoint);
       const text = await r.text();
       let d: any;
       try { d = JSON.parse(text); } catch { throw new Error(`服务器返回非 JSON: ${text.slice(0, 200)}`); }
@@ -519,12 +558,36 @@ const PtTab: React.FC = () => {
     finally { setGroupItemsLoading(false); }
   };
 
+  // 顶部「搜索创建」选完后：直接打开本地创建对话框并预填
+  const handleExternalSearchSubmit = (data: PtSubscriptionPrefill) => {
+    setIsExternalSearchOpen(false);
+    setEditing(null);
+    const lastDir = getLastUsedDir();
+    setFormData({
+      ...DEFAULT_FORM,
+      name: data.name,
+      rssUrl: data.rssUrl,
+      sourcePreset: data.sourcePreset,
+      accountId: lastDir?.accountId || accounts[0]?.id || 0,
+      targetFolderId: lastDir?.targetFolderId || '',
+      targetFolder: lastDir?.targetFolder || '',
+    });
+    setIsModalOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex gap-2">
           <button onClick={openAdd} className="bg-[#0b57d0] text-white px-6 py-2.5 rounded-full text-sm font-medium hover:bg-[#0b57d0]/90 transition-all shadow-sm flex items-center gap-2">
             <Plus size={18} /> 添加 PT 订阅
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsExternalSearchOpen(true)}
+            className="bg-white border border-slate-300 text-slate-700 px-5 py-2.5 rounded-full text-sm font-medium hover:bg-slate-50 flex items-center gap-2 transition-colors"
+          >
+            <Search size={16} /> 搜索创建
           </button>
           <button onClick={openSettings} className="border border-slate-200 px-5 py-2.5 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-2">
             <SettingsIcon size={16} /> PT 设置
@@ -971,6 +1034,17 @@ const PtTab: React.FC = () => {
                   搜索
                 </button>
               </div>
+              <div className="flex items-center gap-2 px-1">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={aggregateSearch}
+                    onChange={(e) => setAggregateSearch(e.target.checked)}
+                    className="w-4 h-4 text-[#0b57d0] rounded focus:ring-[#0b57d0]"
+                  />
+                  <span className="text-sm text-slate-600">聚合搜索（同时搜索所有源）</span>
+                </label>
+              </div>
               <div className="max-h-96 overflow-y-auto space-y-2">
                 {searchResults.length === 0 && !searchLoading && (
                   <p className="text-center text-slate-400 text-sm py-8">
@@ -1045,6 +1119,16 @@ const PtTab: React.FC = () => {
           )}
         </div>
       </Modal>
+
+      {/* 顶部「搜索创建」入口：复用与海报墙相同的搜索弹窗 */}
+      <PTSearchModal
+        isOpen={isExternalSearchOpen}
+        onClose={() => setIsExternalSearchOpen(false)}
+        defaultKeyword=""
+        isAnime
+        autoSearchOnOpen={false}
+        onCreatePtSubscription={handleExternalSearchSubmit}
+      />
     </div>
   );
 };
