@@ -1,5 +1,6 @@
 const path = require('path');
 const { safeFileName } = require('./ptUtils');
+const ConfigService = require('./ConfigService');
 
 // 默认集数提取正则（参考 ani-rss）
 const DEFAULT_EPISODE_REGEX = '(第\\d+[话話集]|EP?\\d+(\\.5)?| - \\d+(\\.5)?|\\[\\d+(\\.5)?\\]|【\\d+(\\.5)?】)';
@@ -181,6 +182,106 @@ class PtRenameService {
         }
 
         return safeFileName(result, '');
+    }
+
+    /**
+     * 用 AI 解析结果整理 STRM 文件路径（复用自动追剧的配置）
+     * - 分类目录：optionalCategoryName（如 ptService 用 TMDB 算出来的）；缺省时按 type 取 organizer.categories.{tv|movie}
+     * - 文件名模板：openai.rename.{template|movieTemplate}
+     * - 目录结构：{categoryName}/{title} ({year})/Season XX
+     *
+     * @param {object} subscription - 订阅对象
+     * @param {object} release - release 对象
+     * @param {object} file - 文件信息 { name, relativeDir, originalFileName, id }
+     * @param {object} _config - PT 自身的 strmOrganize 配置（AI 模式下不再使用，保留参数仅为兼容）
+     * @param {object} aiBase - AI 解析的基础信息 { name, year, type, season }
+     * @param {object|null} aiEpisode - AI 解析的剧集信息 { id, season, episode, extension, name }
+     * @param {string|null} optionalCategoryName - 外部传入的分类名（如 TMDB 决定的）
+     * @returns {{ dirName: string, fileName: string }} 整理后的目录名和文件名
+     */
+    organizePathByAi(subscription, release, file, _config, aiBase, aiEpisode, optionalCategoryName = null) {
+        const isMovie = (aiBase && aiBase.type) === 'movie';
+
+        // 分类目录：优先用外部（TMDB）算好的；否则按 type 走默认
+        const categoryName = optionalCategoryName || (isMovie
+            ? ConfigService.getConfigValue('organizer.categories.movie', '电影')
+            : ConfigService.getConfigValue('organizer.categories.tv', '电视剧'));
+
+        // 文件名模板：与自动追剧 _processRename 一致
+        const template = isMovie
+            ? (ConfigService.getConfigValue('openai.rename.movieTemplate') || '{name} ({year}){ext}')
+            : (ConfigService.getConfigValue('openai.rename.template') || '{name} - {se}{ext}');
+
+        // 标题与年份
+        const title = (aiBase && aiBase.name) || subscription.name || '未知';
+        const year = (aiBase && Number(aiBase.year) > 0) ? Number(aiBase.year) : '';
+        const resourceFolderName = year ? `${title} (${year})` : title;
+
+        // 季数
+        let seasonRaw = (aiBase && aiBase.season) || (aiEpisode && aiEpisode.season) || '01';
+        let seasonNum = parseInt(String(seasonRaw), 10);
+        if (!seasonNum || isNaN(seasonNum)) seasonNum = 1;
+        const seasonStr = String(seasonNum).padStart(2, '0');
+
+        // 集数
+        let episodeStr = '';
+        let episodeNum = 0;
+        if (aiEpisode && aiEpisode.episode != null) {
+            const n = parseInt(String(aiEpisode.episode), 10);
+            if (!isNaN(n)) {
+                episodeNum = n;
+                episodeStr = n < 100 ? String(n).padStart(2, '0') : String(n);
+            }
+        }
+
+        // 原始扩展（先用 AI 给的 extension，再回退到原文件名）
+        const originalName = file.originalFileName || file.name || '';
+        const originalExt = path.extname(originalName);
+        const ext = (aiEpisode && aiEpisode.extension) || originalExt || '';
+
+        // 占位符替换（与 task._generateFileName 一致）
+        const replaceMap = {
+            '{name}': title,
+            '{year}': year ? String(year) : '',
+            '{s}': seasonStr,
+            '{e}': episodeStr || '01',
+            '{sn}': seasonNum || 1,
+            '{en}': episodeNum || 1,
+            '{ext}': ext,
+            '{se}': `S${seasonStr}E${episodeStr || '01'}`
+        };
+
+        let baseName = template;
+        for (const [key, value] of Object.entries(replaceMap)) {
+            const escaped = key.replace(/[{}]/g, c => '\\' + c);
+            baseName = baseName.replace(new RegExp(escaped, 'g'), String(value));
+        }
+        // 模板里的 {ext} 已经把原始扩展拼上了，去掉以便统一换成 .strm
+        if (ext && baseName.endsWith(ext)) {
+            baseName = baseName.slice(0, -ext.length);
+        }
+        baseName = baseName.trim().replace(/\s+/g, ' ');
+
+        // movie 模板没有 {se}，但 baseName 此时已经是 "{name} ({year})" 形式；
+        // tv 在缺集数时退回原文件名，避免出现 SXXE01 占位
+        if (!isMovie && !episodeStr) {
+            baseName = path.basename(originalName, originalExt);
+        }
+        if (!baseName) {
+            baseName = path.basename(originalName, originalExt) || resourceFolderName;
+        }
+
+        const fileName = `${safeFileName(baseName, '')}.strm`;
+
+        // 目录：categoryName/{title} ({year})/Season XX，电影不带 Season
+        let dirName;
+        if (isMovie) {
+            dirName = `${safeFileName(categoryName, '')}/${safeFileName(resourceFolderName, '')}`;
+        } else {
+            dirName = `${safeFileName(categoryName, '')}/${safeFileName(resourceFolderName, '')}/Season ${seasonStr}`;
+        }
+
+        return { dirName, fileName };
     }
 
     /**

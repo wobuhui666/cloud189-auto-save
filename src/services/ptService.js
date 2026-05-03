@@ -12,6 +12,8 @@ const { logTaskEvent } = require('../utils/logUtils');
 const { getDownloader, resetDownloader } = require('./downloader');
 const { PtSourceService } = require('./ptSource');
 const { ptRenameService } = require('./ptRename');
+const aiService = require('./ai');
+const { TMDBService } = require('./tmdb');
 const { computeFileHashes, collectLocalFiles, normalizeWhitespace, matchReleaseTitle, extractInfoHashFromMagnet, safeFileName } = require('./ptUtils');
 const {
     getPtSubscriptionRepository,
@@ -485,7 +487,57 @@ class PtService {
         const strmService = new StrmService();
         const streamProxyService = new StreamProxyService();
         const strmOrganize = ConfigService.getConfigValue('pt.strmOrganize', {});
-        const organizeEnabled = strmOrganize.enabled && strmOrganize.mode === 'regex';
+        const allowedModes = ['regex', 'ai'];
+        const organizeEnabled = !!(strmOrganize.enabled && allowedModes.includes(strmOrganize.mode));
+
+        // AI 模式：先把 manifest 整体丢给 AI 拿结构化结果
+        let aiBaseInfo = null;
+        let aiEpisodeMap = null;
+        let aiCategoryName = null;
+        if (organizeEnabled && strmOrganize.mode === 'ai') {
+            try {
+                if (!aiService.isEnabled()) {
+                    throw new Error('AI 服务未启用，请先在系统设置开启 OpenAI');
+                }
+                const filesForAi = manifest
+                    .filter(m => m.cloudFileId)
+                    .map(m => ({
+                        id: String(m.cloudFileId),
+                        name: path.basename(m.relativePath)
+                    }));
+                if (!filesForAi.length) {
+                    throw new Error('manifest 中没有可分析的文件');
+                }
+                const resourcePath = release.title || subscription.name || `release-${release.id}`;
+                logTaskEvent(`[PT] AI 整理：开始解析 ${filesForAi.length} 个文件 (${resourcePath})`);
+                const resp = await aiService.simpleChatCompletion(resourcePath, filesForAi);
+                if (!resp.success) {
+                    throw new Error(resp.error || 'AI 解析失败');
+                }
+                const data = resp.data || {};
+                aiBaseInfo = {
+                    name: data.name,
+                    year: Number(data.year) || 0,
+                    type: data.type || 'tv',
+                    season: data.season || ''
+                };
+                aiEpisodeMap = new Map(
+                    (Array.isArray(data.episode) ? data.episode : []).map(ep => [String(ep.id), ep])
+                );
+                logTaskEvent(`[PT] AI 整理：解析成功 -> ${aiBaseInfo.name}${aiBaseInfo.year ? ' (' + aiBaseInfo.year + ')' : ''} type=${aiBaseInfo.type} season=${aiBaseInfo.season || '?'} 集数=${aiEpisodeMap.size}`);
+
+                // 接 TMDB 查 genre，按 organizer._resolveCategoryName 规则定分类
+                aiCategoryName = await this._resolveCategoryNameByTmdb(aiBaseInfo);
+                if (aiCategoryName) {
+                    logTaskEvent(`[PT] AI 整理：TMDB 分类 -> ${aiCategoryName}`);
+                }
+            } catch (err) {
+                logTaskEvent(`[PT] AI 整理失败，降级到正则模式: ${err.message || err}`);
+                aiBaseInfo = null;
+                aiEpisodeMap = null;
+                aiCategoryName = null;
+            }
+        }
 
         // 从 manifest 构建文件列表，供 generateCustom 使用
         const files = manifest
@@ -499,16 +551,29 @@ class PtService {
                     originalFileName
                 };
 
-                // 如果启用了整理，计算整理后的路径
                 if (organizeEnabled) {
-                    const { dirName, fileName } = ptRenameService.organizePath(
-                        subscription,
-                        release,
-                        file,
-                        strmOrganize
-                    );
-                    file.organizedDir = dirName;
-                    file.organizedFileName = fileName;
+                    let organized;
+                    if (aiBaseInfo) {
+                        const aiEp = aiEpisodeMap?.get(String(m.cloudFileId)) || null;
+                        organized = ptRenameService.organizePathByAi(
+                            subscription,
+                            release,
+                            file,
+                            strmOrganize,
+                            aiBaseInfo,
+                            aiEp,
+                            aiCategoryName
+                        );
+                    } else {
+                        organized = ptRenameService.organizePath(
+                            subscription,
+                            release,
+                            file,
+                            strmOrganize
+                        );
+                    }
+                    file.organizedDir = organized.dirName;
+                    file.organizedFileName = organized.fileName;
                 }
 
                 return file;
@@ -555,6 +620,61 @@ class PtService {
         );
 
         logTaskEvent(`[PT] STRM 生成完成: ${targetRoot} (共 ${files.length} 个文件)`);
+    }
+
+    // ==================== AI/TMDB 分类 ====================
+
+    /**
+     * 按 organizer._resolveCategoryName 的规则，调 TMDB 拿 genres 决定分类目录
+     * @param {{name:string, year:number, type:'tv'|'movie'}} aiBase
+     * @returns {Promise<string|null>} 分类名，失败返回 null（调用方会按 type 取默认）
+     */
+    async _resolveCategoryNameByTmdb(aiBase) {
+        try {
+            if (!aiBase || !aiBase.name) return null;
+
+            const apiKey = ConfigService.getConfigValue('tmdb.tmdbApiKey') || ConfigService.getConfigValue('tmdb.apiKey');
+            if (!apiKey) {
+                logTaskEvent(`[PT] TMDB API Key 未配置，按 type 默认取分类`);
+                return aiBase.type === 'movie'
+                    ? ConfigService.getConfigValue('organizer.categories.movie', '电影')
+                    : ConfigService.getConfigValue('organizer.categories.tv', '电视剧');
+            }
+
+            const tmdb = new TMDBService();
+            const year = aiBase.year && aiBase.year > 0 ? aiBase.year : '';
+            let detail;
+            if (aiBase.type === 'movie') {
+                detail = await tmdb.searchMovie(aiBase.name, year);
+            } else {
+                detail = await tmdb.searchTV(aiBase.name, year, 0);
+            }
+
+            const genreIds = Array.isArray(detail?.genres)
+                ? detail.genres.map(g => Number(g.id)).filter(Number.isFinite)
+                : [];
+
+            const cats = {
+                tv: ConfigService.getConfigValue('organizer.categories.tv', '电视剧'),
+                anime: ConfigService.getConfigValue('organizer.categories.anime', '动漫'),
+                movie: ConfigService.getConfigValue('organizer.categories.movie', '电影'),
+                variety: ConfigService.getConfigValue('organizer.categories.variety', '综艺'),
+                documentary: ConfigService.getConfigValue('organizer.categories.documentary', '纪录片')
+            };
+
+            if (aiBase.type === 'movie') {
+                return genreIds.includes(99) ? cats.documentary : cats.movie;
+            }
+            if (genreIds.includes(16)) return cats.anime;
+            if (genreIds.includes(99)) return cats.documentary;
+            if (genreIds.includes(10764) || genreIds.includes(10767)) return cats.variety;
+            return cats.tv;
+        } catch (err) {
+            logTaskEvent(`[PT] TMDB 分类查询失败，按 type 默认取分类: ${err.message || err}`);
+            return aiBase?.type === 'movie'
+                ? ConfigService.getConfigValue('organizer.categories.movie', '电影')
+                : ConfigService.getConfigValue('organizer.categories.tv', '电视剧');
+        }
     }
 
     // ==================== 清理 ====================
