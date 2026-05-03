@@ -7,7 +7,7 @@ const { paginationRow, ptSubActionRow, ptReleaseActionRow, serializeCb } = requi
 const { friendlyError } = require('../errors');
 const { CB } = require('../constants');
 const { ptSubCard, ptReleaseCard, ptStatusFormat } = require('../templates');
-const { getPtSubscriptionRepository, getPtReleaseRepository } = require('../../database');
+const { getPtSubscriptionRepository, getPtReleaseRepository } = require('../../../database');
 
 // ─── /pt_subs ───
 async function handlePtSubs(svc, msg) {
