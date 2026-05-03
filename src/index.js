@@ -2197,7 +2197,7 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
-    // PT 聚合搜索 - 同时搜索所有支持搜索的源
+    // PT 聚合搜索 - 同时搜索所有支持搜索的源，单源超时跳过
     app.get('/api/pt/sources/search-all', async (req, res) => {
         try {
             const { keyword } = req.query;
@@ -2205,8 +2205,13 @@ AppDataSource.initialize().then(async () => {
                 return res.json({ success: false, error: '缺少 keyword 参数' });
             }
             const searchablePresets = ['mikan', 'anibt', 'animegarden', 'nyaa', 'dmhy'];
+            const PER_SOURCE_TIMEOUT = 25000;
+            const withTimeout = (promise, ms) => Promise.race([
+                promise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+            ]);
             const results = await Promise.allSettled(
-                searchablePresets.map(preset => ptService.searchSource(preset, String(keyword)))
+                searchablePresets.map(preset => withTimeout(ptService.searchSource(preset, String(keyword)), PER_SOURCE_TIMEOUT))
             );
             const aggregated = results.flatMap((r, i) =>
                 r.status === 'fulfilled'
