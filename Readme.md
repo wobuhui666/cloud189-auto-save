@@ -102,6 +102,7 @@ docker run -d \
 
 - 感谢所有贡献者与用户提供的宝贵建议。
 - 感谢 Claude Codex GeminiCLI
+- 感谢ktff大佬的cors代理
 - [oceanxux/cloud189-auto-save](https://github.com/oceanxux/cloud189-auto-save)
 - [原版项目](https://github.com/1307super/cloud189-auto-save)
 - [my-cloud189-auto-save](https://github.com/ymting/my-cloud189-auto-save)
