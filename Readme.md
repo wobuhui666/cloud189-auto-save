@@ -49,6 +49,7 @@
 ### 多端管理与通知
 - **Web 控制台**：直观的 Web 管理界面，支持暗黑模式，多用户权限管理。
 - **Telegram Bot**：全功能机器人，支持远程搜资源、加任务、查进度、收推送。
+- **AstrBot 全平台机器人**：通过 [astrbot_plugin_cloud189_auto_save](https://github.com/wobuhui666/astrbot_plugin_cloud189_auto_save) 插件，可在 QQ / 微信 / Discord / Lark / 钉钉等所有 AstrBot 支持的平台上获得与 TG 机器人一致的体验。
 - **全平台通知**：支持企业微信、Telegram、Bark、WxPusher 等多种推送渠道。
 
 ## 功能特性
