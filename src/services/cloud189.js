@@ -240,7 +240,7 @@ class Cloud189Service {
     // 递归获取所有文件列表
     async getShareFiles(shareId, fileId, shareMode, accessCode, isFolder = true) {
         const result = await this.listShareDir(shareId, fileId, shareMode, accessCode, isFolder);
-        if (!result || !result.fileListAO.fileList) {
+        if (!result?.fileListAO?.fileList) {
             return [];
         }
         return result.fileListAO.fileList;

@@ -163,6 +163,13 @@ class SchedulerService {
     static handleScheduleTasks(settings,taskService) {
         // 如果定时任务和清空回收站任务与配置文件不一致, 则修改定时任务
         if (settings.task.taskCheckCron && settings.task.taskCheckCron != ConfigService.getConfigValue('task.taskCheckCron')) {
+            // 先清理所有旧的"任务定时检查-N"任务，避免新 cron 列表变短时残留
+            const stalePattern = /^任务定时检查-\d+$/;
+            for (const jobName of [...this.taskJobs.keys()]) {
+                if (typeof jobName === 'string' && stalePattern.test(jobName)) {
+                    this.removeTaskJob(jobName);
+                }
+            }
             let taskCheckCrons = settings.task.taskCheckCron.split('|');
             // 遍历每个cron表达式
             taskCheckCrons.forEach((cronExpression, index) => {

@@ -256,13 +256,14 @@ class PtSourceService {
 
     // ==================== 搜索 ====================
 
-    async searchSource(preset, keyword) {
+    async searchSource(preset, keyword, options = {}) {
+        const signal = options.signal || null;
         switch (preset) {
-            case 'mikan': return this._searchMikan(keyword);
-            case 'anibt': return this._searchAniBT(keyword);
-            case 'animegarden': return this._searchAnimeGarden(keyword);
-            case 'nyaa': return this._searchNyaa(keyword);
-            case 'dmhy': return this._searchDmhy(keyword);
+            case 'mikan': return this._searchMikan(keyword, signal);
+            case 'anibt': return this._searchAniBT(keyword, signal);
+            case 'animegarden': return this._searchAnimeGarden(keyword, signal);
+            case 'nyaa': return this._searchNyaa(keyword, signal);
+            case 'dmhy': return this._searchDmhy(keyword, signal);
             default:
                 throw new Error(`预设 ${preset} 不支持搜索`);
         }
@@ -295,7 +296,7 @@ class PtSourceService {
 
     // --- Mikan (HTML 爬取) ---
 
-    async _searchMikan(keyword) {
+    async _searchMikan(keyword, externalSignal = null) {
         const MIRRORS = ['https://mikan.tangbai.cc', 'https://mikanani.me'];
         const searchPath = `/Home/Search?searchstr=${encodeURIComponent(keyword)}`;
 
@@ -303,10 +304,14 @@ class PtSourceService {
         let html = '';
         let host = MIRRORS[0];
         for (const mirror of MIRRORS) {
+            if (externalSignal?.aborted) throw new Error('请求已取消');
             try {
-                html = await this._streamFetch(mirror + searchPath, 60000, 20000, 'ptMikan');
+                html = await this._streamFetch(mirror + searchPath, 60000, 20000, 'ptMikan', externalSignal);
                 if (html) { host = mirror; break; }
-            } catch { /* 镜像超时，尝试下一个 */ }
+            } catch (e) {
+                if (externalSignal?.aborted) throw e;
+                /* 镜像超时，尝试下一个 */
+            }
         }
         if (!html) return [];
         const results = [];
@@ -325,9 +330,9 @@ class PtSourceService {
             });
         }
 
-        // 备用：简化解析
+        // 备用：简化解析（兼容相对路径与绝对 URL）
         if (!results.length) {
-            const linkPattern = /<a\b[^>]*href="(\/Home\/Bangumi\/(\d+))"[^>]*>/gi;
+            const linkPattern = /<a\b[^>]*href="([^"]*\/Home\/Bangumi\/(\d+))"[^>]*>/gi;
             const titlePattern = /<div\b[^>]*class="an-text"[^>]*>([\s\S]*?)<\/div>/gi;
             const titles = [];
             let tm;
@@ -341,7 +346,7 @@ class PtSourceService {
                         id: match[2],
                         title: titles[idx],
                         cover: '',
-                        url: host + match[1],
+                        url: match[1].startsWith('http') ? match[1] : host + match[1],
                         source: 'mikan'
                     });
                 }
@@ -353,15 +358,14 @@ class PtSourceService {
     }
 
     // 流式读取：拿到足够数据或超时就返回，不等完整响应
-    async _streamFetch(url, maxBytes = 60000, timeoutMs = 20000, proxyService = null) {
+    async _streamFetch(url, maxBytes = 60000, timeoutMs = 20000, proxyService = null, externalSignal = null) {
         const proxyAgent = proxyService ? ProxyUtil.getProxyAgent(proxyService) : {};
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const { signal, cleanup } = this._combineSignals(timeoutMs, externalSignal);
         try {
             const stream = got.stream(url, {
                 method: 'GET',
                 headers: DEFAULT_HEADERS,
-                signal: controller.signal,
+                signal,
                 retry: { limit: 0 },
                 ...proxyAgent
             });
@@ -374,10 +378,18 @@ class PtSourceService {
             }
             return Buffer.concat(chunks).toString('utf8');
         } catch (e) {
-            if (e.name === 'AbortError' || e.code === 'ERR_ABORTED') return '';
+            const isAbort = e?.name === 'AbortError'
+                || e?.code === 'ERR_ABORTED'
+                || e?.code === 'ABORT_ERR'
+                || e?.cause?.name === 'AbortError';
+            if (isAbort) {
+                if (externalSignal?.aborted) return '';
+                // 流式自身超时不视作错误（按原行为返回空串）
+                return '';
+            }
             throw e;
         } finally {
-            clearTimeout(timeoutId);
+            cleanup();
         }
     }
 
@@ -429,32 +441,39 @@ class PtSourceService {
 
     // --- AniBT (JSON API) ---
 
-    async _searchAniBT(keyword) {
+    async _searchAniBT(keyword, externalSignal = null) {
         const host = 'https://site.anibt.net';
         // 先获取当前季度和可用季度列表
-        const currentBody = await this._fetchJSON(`${host}/api/seasons/anime`, {}, 'ptAnibt');
+        const currentBody = await this._fetchJSON(`${host}/api/seasons/anime`, {}, 'ptAnibt', 45000, externalSignal);
         const availableSeasons = currentBody?.data?.availableSeasons || [];
         const currentSeason = currentBody?.data?.currentSeason || '';
 
-        // 搜索所有可用季度
-        const seasonsToSearch = [...availableSeasons];
-
-        // 并发获取多个季度的数据
+        // 收集 anime（先吃掉首次响应的数据，避免重复请求）
         const seenIds = new Set();
         const allAnime = [];
-        const fetchSeason = async (season) => {
-            try {
-                const body = await this._fetchJSON(`${host}/api/seasons/anime?season=${encodeURIComponent(season)}`, {}, 'ptAnibt');
-                for (const day of (body?.data?.byWeekday || [])) {
-                    for (const anime of (day.animes || [])) {
-                        const id = anime.bgmId || anime.animeId;
-                        if (id && !seenIds.has(id)) {
-                            seenIds.add(id);
-                            allAnime.push(anime);
-                        }
+        const collectFromBody = (body) => {
+            for (const day of (body?.data?.byWeekday || [])) {
+                for (const anime of (day.animes || [])) {
+                    const id = anime.bgmId || anime.animeId;
+                    if (id && !seenIds.has(id)) {
+                        seenIds.add(id);
+                        allAnime.push(anime);
                     }
                 }
-            } catch {}
+            }
+        };
+        // 首次响应（无 season 参数）的数据通常即为当前季度
+        collectFromBody(currentBody);
+
+        // 并发获取剩余季度（排除已通过首次响应取到的当前季度）
+        const seasonsToSearch = availableSeasons.filter(s => s && s !== currentSeason);
+        const fetchSeason = async (season) => {
+            try {
+                const body = await this._fetchJSON(`${host}/api/seasons/anime?season=${encodeURIComponent(season)}`, {}, 'ptAnibt', 45000, externalSignal);
+                collectFromBody(body);
+            } catch (e) {
+                if (externalSignal?.aborted) throw e;
+            }
         };
         await Promise.all(seasonsToSearch.map(fetchSeason));
 
@@ -502,10 +521,10 @@ class PtSourceService {
 
     // --- AnimeGarden (JSON API) ---
 
-    async _searchAnimeGarden(keyword) {
+    async _searchAnimeGarden(keyword, externalSignal = null) {
         const host = 'https://api.animes.garden';
         const url = `${host}/subjects`;
-        const body = await this._fetchJSON(url, null, 'ptAnimegarden');
+        const body = await this._fetchJSON(url, null, 'ptAnimegarden', 45000, externalSignal);
         const subjects = body?.subjects || body?.data?.subjects || [];
         const kw = (keyword || '').toLowerCase();
         const results = [];
@@ -557,13 +576,13 @@ class PtSourceService {
 
     // --- Nyaa (RSS 搜索) ---
 
-    async _searchNyaa(keyword) {
+    async _searchNyaa(keyword, externalSignal = null) {
         const rssUrl = `https://nyaa.si/?page=rss&q=${encodeURIComponent(keyword)}`;
         let preview = [];
         let groups = [];
         let totalCount = 0;
         try {
-            const feedXml = await this._fetch(rssUrl, 'ptNyaa');
+            const feedXml = await this._fetch(rssUrl, 'ptNyaa', 45000, externalSignal);
             const items = this.parseFeedItems(feedXml, rssUrl);
             totalCount = items.length;
             preview = items.slice(0, 5).map(item => item.title);
@@ -591,7 +610,7 @@ class PtSourceService {
                     itemCount: count,
                     source: 'nyaa'
                 }));
-        } catch {}
+        } catch (e) { if (externalSignal?.aborted) throw e; }
         return [{
             id: 'nyaa-search',
             title: `Nyaa 搜索: ${keyword}`,
@@ -607,13 +626,13 @@ class PtSourceService {
 
     // --- 动漫花园 (RSS 搜索) ---
 
-    async _searchDmhy(keyword) {
+    async _searchDmhy(keyword, externalSignal = null) {
         const rssUrl = `https://share.dmhy.org/topics/rss/rss.xml?keyword=${encodeURIComponent(keyword)}`;
         let preview = [];
         let groups = [];
         let totalCount = 0;
         try {
-            const feedXml = await this._fetch(rssUrl, 'ptDmhy');
+            const feedXml = await this._fetch(rssUrl, 'ptDmhy', 45000, externalSignal);
             const items = this.parseFeedItems(feedXml, rssUrl);
             totalCount = items.length;
             preview = items.slice(0, 5).map(item => item.title);
@@ -637,7 +656,7 @@ class PtSourceService {
                     itemCount: count,
                     source: 'dmhy'
                 }));
-        } catch {}
+        } catch (e) { if (externalSignal?.aborted) throw e; }
         return [{
             id: 'dmhy-search',
             title: `动漫花园搜索: ${keyword}`,
@@ -653,31 +672,69 @@ class PtSourceService {
 
     // --- 通用 HTTP ---
 
-    async _fetch(url, proxyService, timeoutMs = 45000) {
-        const proxyAgent = proxyService ? ProxyUtil.getProxyAgent(proxyService) : {};
+    /**
+     * 把外部 AbortSignal 与内部超时合并，得到一个可被任一方触发的 signal。
+     * 调用方在 finally 里调 cleanup() 释放定时器与监听。
+     */
+    _combineSignals(timeoutMs, externalSignal) {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const timeoutId = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+        let externalListener = null;
+        if (externalSignal) {
+            if (externalSignal.aborted) {
+                clearTimeout(timeoutId);
+                controller.abort(externalSignal.reason || new Error('aborted'));
+            } else {
+                externalListener = () => controller.abort(externalSignal.reason || new Error('aborted'));
+                externalSignal.addEventListener('abort', externalListener, { once: true });
+            }
+        }
+        const cleanup = () => {
+            clearTimeout(timeoutId);
+            if (externalListener && externalSignal) {
+                externalSignal.removeEventListener('abort', externalListener);
+            }
+        };
+        return { signal: controller.signal, cleanup };
+    }
+
+    _abortToError(e, externalSignal, timeoutMs) {
+        const isAbort = e?.name === 'AbortError'
+            || e?.code === 'ERR_ABORTED'
+            || e?.code === 'ABORT_ERR'
+            || e?.cause?.name === 'AbortError';
+        if (isAbort) {
+            if (externalSignal?.aborted) {
+                return new Error('请求已取消');
+            }
+            return new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)`);
+        }
+        return e;
+    }
+
+    async _fetch(url, proxyService, timeoutMs = 45000, externalSignal = null) {
+        const proxyAgent = proxyService ? ProxyUtil.getProxyAgent(proxyService) : {};
+        const { signal, cleanup } = this._combineSignals(timeoutMs, externalSignal);
         try {
             const resp = await got(url, {
                 method: 'GET',
                 responseType: 'text',
                 headers: DEFAULT_HEADERS,
-                signal: controller.signal,
+                signal,
                 retry: { limit: 0 },
                 ...proxyAgent
             });
             return resp.body || '';
         } catch (e) {
-            if (e.name === 'AbortError' || e.code === 'ERR_ABORTED') {
-                throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)`);
-            }
+            const wrapped = this._abortToError(e, externalSignal, timeoutMs);
+            if (wrapped !== e) throw wrapped;
             throw e;
         } finally {
-            clearTimeout(timeoutId);
+            cleanup();
         }
     }
 
-    async _fetchJSON(url, params, proxyService, timeoutMs = 45000) {
+    async _fetchJSON(url, params, proxyService, timeoutMs = 45000, externalSignal = null) {
         let reqUrl = url;
         if (params) {
             const qs = Object.entries(params)
@@ -687,25 +744,23 @@ class PtSourceService {
             if (qs) reqUrl += (url.includes('?') ? '&' : '?') + qs;
         }
         const proxyAgent = proxyService ? ProxyUtil.getProxyAgent(proxyService) : {};
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const { signal, cleanup } = this._combineSignals(timeoutMs, externalSignal);
         try {
             const resp = await got(reqUrl, {
                 method: 'GET',
                 responseType: 'text',
                 headers: DEFAULT_HEADERS,
-                signal: controller.signal,
+                signal,
                 retry: { limit: 0 },
                 ...proxyAgent
             });
             try { return JSON.parse(resp.body || '{}'); } catch { return {}; }
         } catch (e) {
-            if (e.name === 'AbortError' || e.code === 'ERR_ABORTED') {
-                throw new Error(`请求超时 (${Math.round(timeoutMs / 1000)}s)`);
-            }
+            const wrapped = this._abortToError(e, externalSignal, timeoutMs);
+            if (wrapped !== e) throw wrapped;
             throw e;
         } finally {
-            clearTimeout(timeoutId);
+            cleanup();
         }
     }
 }

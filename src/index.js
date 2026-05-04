@@ -2206,13 +2206,18 @@ AppDataSource.initialize().then(async () => {
             }
             const searchablePresets = ['mikan', 'anibt', 'animegarden', 'nyaa', 'dmhy'];
             const PER_SOURCE_TIMEOUT = 25000;
-            const withTimeout = (promise, ms) => Promise.race([
-                promise,
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
-            ]);
-            const results = await Promise.allSettled(
-                searchablePresets.map(preset => withTimeout(ptService.searchSource(preset, String(keyword)), PER_SOURCE_TIMEOUT))
-            );
+            // 每个 preset 单独一个 AbortController，超时时真正取消底层 HTTP 请求
+            const searchOne = (preset) => {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(
+                    () => controller.abort(new Error(`${preset} timeout`)),
+                    PER_SOURCE_TIMEOUT
+                );
+                return ptService
+                    .searchSource(preset, String(keyword), { signal: controller.signal })
+                    .finally(() => clearTimeout(timeoutId));
+            };
+            const results = await Promise.allSettled(searchablePresets.map(searchOne));
             const aggregated = results.flatMap((r, i) =>
                 r.status === 'fulfilled'
                     ? r.value.map(item => ({ ...item, source: searchablePresets[i] }))

@@ -54,8 +54,8 @@ class PtService {
         return this.sourceService.getPresets();
     }
 
-    async searchSource(preset, keyword) {
-        return this.sourceService.searchSource(preset, keyword);
+    async searchSource(preset, keyword, options = {}) {
+        return this.sourceService.searchSource(preset, keyword, options);
     }
 
     async getSourceGroups(preset, params) {

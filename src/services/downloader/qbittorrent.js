@@ -226,14 +226,16 @@ class QbittorrentClient {
             throw new Error(`qBittorrent 加种失败: ${body}`);
         }
 
+        // 注意：waitForTorrentByHash 内部已归一化，waitForTorrentByTag 返回原始对象
         let torrent = null;
         if (options.infoHash) {
             torrent = await this.waitForTorrentByHash(options.infoHash, 10000);
         }
         if (!torrent && options.tag) {
-            torrent = await this.waitForTorrentByTag(options.tag, 10000);
+            const rawTorrent = await this.waitForTorrentByTag(options.tag, 10000);
+            torrent = rawTorrent ? this._normalizeTorrent(rawTorrent) : null;
         }
-        return torrent ? this._normalizeTorrent(torrent) : null;
+        return torrent;
     }
 
     async waitForTorrentByHash(hash, timeoutMs = 10000) {

@@ -77,7 +77,7 @@ class MessageService {
                 // 加粗标题
                 .replace(/^(.*?)更新/gm, '🎉<b>$1</b>更新')
                 // 替换引用格式为列表项
-                .replace(/&gt;s*/g, '   - ');
+                .replace(/&gt;\s*/g, '   - ');
     }
 
     /**
@@ -94,7 +94,7 @@ class MessageService {
                 .replace(/<font color="info">/g, '`')
                 .replace(/<\/font>/g, '`')
                 // 替换引用格式为列表项
-                .replace(/>s*/g, '   - ');
+                .replace(/^>\s*/gm, '   - ');
     }
 
 }
