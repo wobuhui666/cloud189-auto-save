@@ -270,7 +270,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         <div className="flex gap-5">
           <div className="flex-shrink-0 w-32 aspect-[2/3] rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-800 ring-1 ring-slate-200/60 dark:ring-slate-700/60 shadow-sm">
             {item.poster ? (
-              <img src={item.poster} alt={item.title} className="w-full h-full object-cover" referrerPolicy="no-referrer-when-downgrade" />
+              <img src={item.poster} alt={item.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : (
               <div className="w-full h-full flex items-center justify-center">
                 <Clapperboard className="w-12 h-12 text-slate-400" />

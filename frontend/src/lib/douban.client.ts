@@ -110,12 +110,25 @@ async function fetchDoubanAPI<T>(url: string, cacheKey: string): Promise<T> {
   }
 }
 
+// 将豆瓣图片 URL 转换为代理 URL（解决防盗链问题）
+const IMAGE_CORS_PROXY = 'https://cors.jsdelivr.fyi/';
+function proxyImageUrl(url: string): string {
+  if (!url) return '';
+  // 如果已经是代理 URL，直接返回
+  if (url.startsWith(IMAGE_CORS_PROXY)) return url;
+  // 如果是豆瓣图片 URL，使用 CORS 代理
+  if (url.includes('doubanio.com')) {
+    return IMAGE_CORS_PROXY + url;
+  }
+  return url;
+}
+
 // 将豆瓣数据转换为统一格式
 function normalizeSearchItem(item: DoubanSearchResult, type: 'movie' | 'tv' = 'movie'): DoubanItem {
   return {
     id: item.id,
     title: item.title,
-    poster: item.cover || item.cover_xl || '',
+    poster: proxyImageUrl(item.cover || item.cover_xl || ''),
     rate: item.rate || '',
     year: '',
     source: 'douban',
@@ -128,7 +141,7 @@ function normalizeCategoryItem(item: DoubanCategoryItem, type: 'movie' | 'tv' = 
   return {
     id: item.id,
     title: item.title,
-    poster: item.pic?.normal || item.pic?.large || '',
+    poster: proxyImageUrl(item.pic?.normal || item.pic?.large || ''),
     rate: item.rating?.value?.toFixed(1) || '',
     year: yearMatch ? yearMatch[1] : '',
     source: 'douban',
@@ -155,7 +168,7 @@ export async function getDoubanHotMovies(start = 0, count = 40): Promise<DoubanI
         const items = json.data.map((it: any): DoubanItem => ({
           id: String(it.id),
           title: it.title || '',
-          poster: it.poster || '',
+          poster: proxyImageUrl(it.poster || ''),
           rate: it.rate || '',
           year: it.year || '',
           source: 'douban',
@@ -196,7 +209,7 @@ export async function getDoubanHotTV(start = 0, count = 40): Promise<DoubanItem[
         const items = json.data.map((it: any): DoubanItem => ({
           id: String(it.id),
           title: it.title || '',
-          poster: it.poster || '',
+          poster: proxyImageUrl(it.poster || ''),
           rate: it.rate || '',
           year: it.year || '',
           source: 'douban',
@@ -243,7 +256,7 @@ export async function searchDouban(
         const items = json.data.map((it: any): DoubanItem => ({
           id: String(it.id),
           title: it.title || '',
-          poster: it.poster || '',
+          poster: proxyImageUrl(it.poster || ''),
           rate: it.rate || '',
           year: it.year || '',
           source: 'douban',

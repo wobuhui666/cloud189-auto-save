@@ -1839,6 +1839,47 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    // ==================== 图片代理 API（解决豆瓣防盗链） ====================
+    app.get('/api/image-proxy', async (req, res) => {
+        try {
+            const { url } = req.query;
+            if (!url) {
+                return res.status(400).json({ success: false, error: '缺少 url 参数' });
+            }
+
+            // 安全检查：只允许代理豆瓣图片
+            const allowedHosts = ['img1.doubanio.com', 'img2.doubanio.com', 'img3.doubanio.com', 'img9.doubanio.com'];
+            try {
+                const parsedUrl = new URL(url);
+                if (!allowedHosts.includes(parsedUrl.hostname)) {
+                    return res.status(403).json({ success: false, error: '不允许的图片源' });
+                }
+            } catch {
+                return res.status(400).json({ success: false, error: '无效的 URL' });
+            }
+
+            const proxy = ProxyUtil.getProxyAgent('douban');
+            const response = await got(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                    'Referer': 'https://movie.douban.com/',
+                },
+                timeout: { request: 10000 },
+                ...proxy,
+                responseType: 'buffer',
+            });
+
+            // 设置正确的 Content-Type 和缓存头
+            const contentType = response.headers['content-type'] || 'image/jpeg';
+            res.set('Content-Type', contentType);
+            res.set('Cache-Control', 'public, max-age=86400'); // 缓存 24 小时
+            res.send(response.body);
+        } catch (error) {
+            console.error('图片代理请求失败:', error.message);
+            res.status(500).json({ success: false, error: '图片加载失败' });
+        }
+    });
+
     // ==================== Bangumi 代理 API ====================
     app.get('/api/bangumi/calendar', async (req, res) => {
         try {
