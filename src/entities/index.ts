@@ -101,6 +101,9 @@ export class Account {
 }
 
 @Entity()
+@Index('idx_task_status_proxy_id', ['status', 'enableSystemProxy', 'id'])
+@Index('idx_task_retry_status_time', ['status', 'nextRetryTime'])
+@Index('idx_task_cron_enabled_id', ['enableCron', 'id'])
 export class Task {
     @PrimaryGeneratedColumn()
     id!: number;
@@ -285,6 +288,8 @@ export class Task {
 
 @Entity()
 @Index(['taskId', 'sourceFileId'], { unique: true })
+@Index('idx_task_processed_task_status_updated', ['taskId', 'status', 'updatedAt'])
+@Index('idx_task_processed_task_updated', ['taskId', 'updatedAt'])
 export class TaskProcessedFile {
     @PrimaryGeneratedColumn()
     id!: number;
@@ -413,6 +418,8 @@ export class Subscription {
 }
 
 @Entity()
+@Index('idx_subscription_resource_sub_status', ['subscriptionId', 'verifyStatus'])
+@Index('idx_subscription_resource_sub_id', ['subscriptionId', 'id'])
 export class SubscriptionResource {
     @PrimaryGeneratedColumn()
     id!: number;
@@ -662,6 +669,7 @@ export class TmdbCache {
 }
 
 @Entity()
+@Index('idx_pt_subscription_enabled_id', ['enabled', 'id'])
 export class PtSubscription {
     @PrimaryGeneratedColumn()
     id!: number;
@@ -730,6 +738,8 @@ export class PtSubscription {
 }
 
 @Entity()
+@Index('idx_pt_release_sub_status_id', ['subscriptionId', 'status', 'id'])
+@Index('idx_pt_release_sub_guid', ['subscriptionId', 'guid'])
 export class PtRelease {
     @PrimaryGeneratedColumn()
     id!: number;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, Loader2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, Loader2, Wand2 } from 'lucide-react';
 import Modal from '../Modal';
 import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
@@ -142,6 +142,8 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editing, setEditing] = useState<PtSubscription | null>(null);
   const [formData, setFormData] = useState({ ...DEFAULT_FORM });
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeduping, setIsDeduping] = useState(false);
 
   const [folderSelectorOpen, setFolderSelectorOpen] = useState(false);
 
@@ -306,7 +308,9 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return; // 防连点重入
     if (!formData.accountId) { alert('请选择天翼云盘账号'); return; }
+    setIsSaving(true);
     try {
       const url = editing ? `/api/pt/subscriptions/${editing.id}` : '/api/pt/subscriptions';
       const r = await fetch(url, {
@@ -327,7 +331,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
         if (!editing && d.refreshResult) {
           const count = d.refreshResult.processed ?? 0;
           if (count > 0) {
-            alert(`订阅已添加，本次新增 ${count} 条 release`);
+            alert(`订阅已添加,本次新增 ${count} 条 release`);
           }
         }
       } else {
@@ -335,17 +339,45 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       }
     } catch {
       alert('操作失败');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('删除订阅会一并清理其 release 记录（不会立即删除 qb 中已经在下的任务）。继续？')) return;
+    if (!confirm('删除订阅会一并清理其 release 记录(不会立即删除 qb 中已经在下的任务)。继续?')) return;
     try {
       const r = await fetch(`/api/pt/subscriptions/${id}`, { method: 'DELETE' });
       const d = await r.json();
       if (d.success) fetchSubs();
       else alert('删除失败: ' + d.error);
     } catch { alert('网络错误'); }
+  };
+
+  const handleDedupe = async () => {
+    if (isDeduping) return;
+    if (!confirm('将合并 (账号 + RSS URL) 完全相同的订阅,保留最早一条,其余删除并把 release 转移过去。继续?')) return;
+    setIsDeduping(true);
+    try {
+      const r = await fetch('/api/pt/subscriptions/dedupe', { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        const removed = d.data?.removed ?? 0;
+        const merged = d.data?.mergedReleases ?? 0;
+        if (removed === 0) {
+          alert('未发现重复订阅');
+        } else {
+          alert(`已合并 ${removed} 条重复订阅,迁移 ${merged} 条 release`);
+        }
+        fetchSubs();
+      } else {
+        alert('清理失败: ' + d.error);
+      }
+    } catch {
+      alert('网络错误');
+    } finally {
+      setIsDeduping(false);
+    }
   };
 
   const handleToggle = async (sub: PtSubscription) => {
@@ -592,6 +624,9 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           <button onClick={openSettings} className="border border-slate-200 px-5 py-2.5 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-2">
             <SettingsIcon size={16} /> PT 设置
           </button>
+          <button onClick={handleDedupe} disabled={isDeduping} className="border border-slate-200 px-5 py-2.5 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2" title="合并 (账号 + RSS) 完全相同的订阅">
+            <Wand2 size={16} className={isDeduping ? 'animate-pulse' : ''} /> {isDeduping ? '清理中...' : '清理重复'}
+          </button>
         </div>
       </div>
 
@@ -738,8 +773,8 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           </label>
 
           <div className="flex justify-end gap-3 pt-4">
-            <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-2.5 rounded-full text-sm font-medium text-[#0b57d0] hover:bg-[#0b57d0]/10">取消</button>
-            <button type="submit" className="px-6 py-2.5 rounded-full text-sm font-medium bg-[#0b57d0] text-white hover:bg-[#0b57d0]/90 shadow-sm">保存</button>
+            <button type="button" onClick={() => setIsModalOpen(false)} disabled={isSaving} className="px-6 py-2.5 rounded-full text-sm font-medium text-[#0b57d0] hover:bg-[#0b57d0]/10 disabled:opacity-50 disabled:cursor-not-allowed">取消</button>
+            <button type="submit" disabled={isSaving} className="px-6 py-2.5 rounded-full text-sm font-medium bg-[#0b57d0] text-white hover:bg-[#0b57d0]/90 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">{isSaving ? '保存中...' : '保存'}</button>
           </div>
         </form>
       </Modal>

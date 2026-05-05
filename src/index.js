@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const { AppDataSource } = require('./database');
+const { AppDataSource, ensureDatabaseIndexes } = require('./database');
 const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun } = require('./entities');
 const { TaskService } = require('./services/task');
 const { Cloud189Service } = require('./services/cloud189');
@@ -38,6 +38,14 @@ const { DoubanService } = require('./services/douban');
 const appPort = Number(process.env.PORT || 3000);
 let embyStandaloneProxyServer = null;
 const publicDir = path.join(__dirname, 'public');
+const PASSWORD_HASH_ALGORITHM = 'pbkdf2_sha256';
+const PASSWORD_HASH_ITERATIONS = 210000;
+const PASSWORD_HASH_KEY_LENGTH = 32;
+const PASSWORD_HASH_DIGEST = 'sha256';
+const LOGIN_FAILURE_DELAY_MS = Number(process.env.LOGIN_FAILURE_DELAY_MS || 500);
+const LOGIN_RATE_LIMIT_WINDOW_MS = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const LOGIN_RATE_LIMIT_MAX = Number(process.env.LOGIN_RATE_LIMIT_MAX || 10);
+const loginFailures = new Map();
 
 const normalizeTelegramSettings = (settings = {}) => {
     const normalized = JSON.parse(JSON.stringify(settings || {}));
@@ -70,11 +78,181 @@ const normalizeTelegramSettings = (settings = {}) => {
     return normalized;
 };
 
+const parseOrigin = (value = '') => {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+        return '';
+    }
+    try {
+        return new URL(/^https?:\/\//i.test(normalized) ? normalized : `http://${normalized}`).origin;
+    } catch {
+        return '';
+    }
+};
+
+const getAllowedCorsOrigins = () => {
+    const envOrigins = String(process.env.CORS_ORIGINS || process.env.CORS_ORIGIN || '')
+        .split(',')
+        .map(parseOrigin)
+        .filter(Boolean);
+    const configuredBaseUrl = parseOrigin(ConfigService.getConfigValue('system.baseUrl') || process.env.PUBLIC_BASE_URL || '');
+    return new Set([
+        ...envOrigins,
+        configuredBaseUrl
+    ].filter(Boolean));
+};
+
+const isDevelopmentCorsOrigin = (origin = '') => {
+    if (process.env.NODE_ENV === 'production') {
+        return false;
+    }
+    return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(origin);
+};
+
 const corsOptions = {
-    origin: '*',
+    origin: (origin, callback) => {
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+        if (getAllowedCorsOrigins().has(origin) || isDevelopmentCorsOrigin(origin)) {
+            callback(null, true);
+            return;
+        }
+        callback(null, false);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-api-key'],
     credentials: true
+};
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const pbkdf2 = (password, salt, iterations) => new Promise((resolve, reject) => {
+    crypto.pbkdf2(password, salt, iterations, PASSWORD_HASH_KEY_LENGTH, PASSWORD_HASH_DIGEST, (error, derivedKey) => {
+        if (error) {
+            reject(error);
+            return;
+        }
+        resolve(derivedKey);
+    });
+});
+
+const timingSafeCompare = (left = '', right = '') => {
+    const leftDigest = crypto.createHash('sha256').update(String(left)).digest();
+    const rightDigest = crypto.createHash('sha256').update(String(right)).digest();
+    return crypto.timingSafeEqual(leftDigest, rightDigest);
+};
+
+const isPasswordHash = (value = '') => String(value || '').startsWith(`${PASSWORD_HASH_ALGORITHM}$`);
+
+const hashPassword = async (password) => {
+    const salt = crypto.randomBytes(16).toString('base64url');
+    const derivedKey = await pbkdf2(String(password), salt, PASSWORD_HASH_ITERATIONS);
+    return `${PASSWORD_HASH_ALGORITHM}$${PASSWORD_HASH_ITERATIONS}$${salt}$${derivedKey.toString('base64url')}`;
+};
+
+const verifyPassword = async (password, storedPassword) => {
+    if (!password || !storedPassword) {
+        return false;
+    }
+    if (!isPasswordHash(storedPassword)) {
+        return timingSafeCompare(password, storedPassword);
+    }
+
+    const parts = String(storedPassword).split('$');
+    if (parts.length !== 4 || parts[0] !== PASSWORD_HASH_ALGORITHM) {
+        return false;
+    }
+    const iterations = Number(parts[1]);
+    const salt = parts[2];
+    const storedKey = parts[3];
+    if (!Number.isInteger(iterations) || iterations <= 0 || !salt || !storedKey) {
+        return false;
+    }
+    const derivedKey = await pbkdf2(String(password), salt, iterations);
+    return timingSafeCompare(derivedKey.toString('base64url'), storedKey);
+};
+
+const getLoginRateLimitKey = (req) => {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return forwarded || req.ip || req.socket?.remoteAddress || 'unknown';
+};
+
+const getLoginFailureState = (key) => {
+    const now = Date.now();
+    const state = loginFailures.get(key);
+    if (!state || state.resetAt <= now) {
+        return { count: 0, resetAt: now + LOGIN_RATE_LIMIT_WINDOW_MS };
+    }
+    return state;
+};
+
+const getLoginRetryAfterSeconds = (req) => {
+    if (LOGIN_RATE_LIMIT_MAX <= 0) {
+        return 0;
+    }
+    const state = getLoginFailureState(getLoginRateLimitKey(req));
+    if (state.count < LOGIN_RATE_LIMIT_MAX) {
+        return 0;
+    }
+    return Math.max(1, Math.ceil((state.resetAt - Date.now()) / 1000));
+};
+
+const recordLoginFailure = (req) => {
+    if (LOGIN_RATE_LIMIT_MAX <= 0) {
+        return;
+    }
+    const key = getLoginRateLimitKey(req);
+    const state = getLoginFailureState(key);
+    loginFailures.set(key, {
+        count: state.count + 1,
+        resetAt: state.resetAt
+    });
+};
+
+const clearLoginFailures = (req) => {
+    loginFailures.delete(getLoginRateLimitKey(req));
+};
+
+const sendLoginFailure = async (req, res, extra = {}) => {
+    recordLoginFailure(req);
+    await delay(LOGIN_FAILURE_DELAY_MS);
+    res.json({ success: false, error: '用户名或密码错误', ...extra });
+};
+
+const prepareSettingsForSave = async (settings) => {
+    if (!settings.system) {
+        return settings;
+    }
+    const incomingPassword = settings.system.password;
+    const currentPassword = ConfigService.getConfigValue('system.password') || '';
+    if (!incomingPassword) {
+        settings.system.password = currentPassword && !isPasswordHash(currentPassword)
+            ? await hashPassword(currentPassword)
+            : currentPassword;
+        return settings;
+    }
+    if (!isPasswordHash(incomingPassword)) {
+        settings.system.password = await hashPassword(incomingPassword);
+    }
+    return settings;
+};
+
+const redactSettingsForClient = (settings = {}) => {
+    const redacted = JSON.parse(JSON.stringify(settings || {}));
+    if (redacted.system?.password) {
+        redacted.system.password = '';
+    }
+    return redacted;
+};
+
+const parsePaginationInt = (value, fallback, maxValue = 200) => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+        return fallback;
+    }
+    return Math.min(parsed, maxValue);
 };
 
 const getStandaloneEmbyProxyPort = () => {
@@ -355,9 +533,10 @@ const syncStandaloneEmbyProxyServer = async (embyService) => {
 };
 
 const app = express();
+app.disable('x-powered-by');
 app.set('trust proxy', true);
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 
 // 生成或读取会话密钥
 const getSessionSecret = () => {
@@ -401,7 +580,7 @@ app.use(session({
 const authenticateSession = (req, res, next) => {
     const apiKey = req.headers['x-api-key'];
     const configApiKey = ConfigService.getConfigValue('system.apiKey');
-    if (apiKey && configApiKey && apiKey === configApiKey) {
+    if (apiKey && configApiKey && timingSafeCompare(apiKey, configApiKey)) {
         return next();
     }
     if (req.session.authenticated) {
@@ -432,51 +611,68 @@ app.get('/login', async (req, res) => {
 });
 
 // 登录接口
-app.post('/api/auth/login', (req, res) => {
-    const { username, password, newUsername, newPassword } = req.body;
-    const configUsername = ConfigService.getConfigValue('system.username');
-    const configPassword = ConfigService.getConfigValue('system.password');
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const retryAfterSeconds = getLoginRetryAfterSeconds(req);
+        if (retryAfterSeconds > 0) {
+            res.set('Retry-After', String(retryAfterSeconds));
+            res.status(429).json({ success: false, error: `登录失败次数过多，请 ${retryAfterSeconds} 秒后再试` });
+            return;
+        }
 
-    // 检查是否为首次设置（密码为空）
-    if (!configPassword) {
-        // 首次登录，需要设置用户名和密码
-        const usernameToSet = newUsername || username;
-        const passwordToSet = newPassword || password;
+        const { username, password, newUsername, newPassword } = req.body || {};
+        const configUsername = ConfigService.getConfigValue('system.username');
+        const configPassword = ConfigService.getConfigValue('system.password');
 
-        // 验证用户名
-        if (!usernameToSet || usernameToSet.trim().length === 0) {
-            res.json({ success: false, error: '请设置用户名', requireSetCredentials: true });
+        // 检查是否为首次设置（密码为空）
+        if (!configPassword) {
+            // 首次登录，需要设置用户名和密码
+            const usernameToSet = newUsername || username;
+            const passwordToSet = newPassword || password;
+
+            // 验证用户名
+            if (!usernameToSet || usernameToSet.trim().length === 0) {
+                res.json({ success: false, error: '请设置用户名', requireSetCredentials: true });
+                return;
+            }
+
+            // 验证密码
+            if (!passwordToSet || passwordToSet.length < 6) {
+                res.json({ success: false, error: '请设置密码（至少6位）', requireSetCredentials: true });
+                return;
+            }
+
+            // 保存用户名和密码
+            ConfigService.setConfigValue('system.username', usernameToSet.trim());
+            ConfigService.setConfigValue('system.password', await hashPassword(passwordToSet));
+            clearLoginFailures(req);
+            req.session.authenticated = true;
+            req.session.username = usernameToSet.trim();
+            res.json({ success: true, message: '用户名和密码设置成功' });
+            return;
+        }
+
+        // 检查用户名是否匹配
+        if (!timingSafeCompare(username || '', configUsername || '')) {
+            await sendLoginFailure(req, res);
             return;
         }
 
         // 验证密码
-        if (!passwordToSet || passwordToSet.length < 6) {
-            res.json({ success: false, error: '请设置密码（至少6位）', requireSetCredentials: true });
-            return;
+        if (await verifyPassword(password || '', configPassword)) {
+            if (!isPasswordHash(configPassword)) {
+                ConfigService.setConfigValue('system.password', await hashPassword(password));
+            }
+            clearLoginFailures(req);
+            req.session.authenticated = true;
+            req.session.username = username;
+            res.json({ success: true });
+        } else {
+            await sendLoginFailure(req, res);
         }
-
-        // 保存用户名和密码
-        ConfigService.setConfigValue('system.username', usernameToSet.trim());
-        ConfigService.setConfigValue('system.password', passwordToSet);
-        req.session.authenticated = true;
-        req.session.username = usernameToSet.trim();
-        res.json({ success: true, message: '用户名和密码设置成功' });
-        return;
-    }
-
-    // 检查用户名是否匹配
-    if (username !== configUsername) {
-        res.json({ success: false, error: '用户名或密码错误' });
-        return;
-    }
-
-    // 验证密码
-    if (password === configPassword) {
-        req.session.authenticated = true;
-        req.session.username = username;
-        res.json({ success: true });
-    } else {
-        res.json({ success: false, error: '用户名或密码错误' });
+    } catch (error) {
+        console.error('登录处理失败:', error);
+        res.status(500).json({ success: false, error: '登录失败' });
     }
 });
 
@@ -520,6 +716,7 @@ AppDataSource.initialize().then(async () => {
     const currentVersion = packageJson.version;
     console.log(`当前系统版本: ${currentVersion}`);
     console.log('数据库连接成功');
+    await ensureDatabaseIndexes();
 
     // 初始化 STRM 目录权限
     const strmBaseDir = path.join(__dirname, '../strm');
@@ -713,7 +910,11 @@ AppDataSource.initialize().then(async () => {
     })
     // 任务相关API
     app.get('/api/tasks', async (req, res) => {
-        const { status, search } = req.query;
+        const { status } = req.query;
+        const search = String(req.query.search || '').trim().slice(0, 100);
+        const shouldPaginate = req.query.page != null || req.query.pageSize != null || req.query.limit != null;
+        const page = parsePaginationInt(req.query.page, 1, Number.MAX_SAFE_INTEGER);
+        const pageSize = parsePaginationInt(req.query.pageSize || req.query.limit, 50, 200);
         let whereClause = { }; // 用于构建最终的 where 条件
 
         // 基础条件（AND）
@@ -741,7 +942,7 @@ AppDataSource.initialize().then(async () => {
                 whereClause = searchConditions;
             }
         }
-        const tasks = await taskRepo.find({
+        const findOptions = {
             order: { id: 'DESC' },
             relations: {
                 account: true
@@ -753,14 +954,36 @@ AppDataSource.initialize().then(async () => {
                     accountType: true
                 }
             },
-            where: whereClause
-        });
+            where: whereClause,
+            ...(shouldPaginate ? {
+                skip: (page - 1) * pageSize,
+                take: pageSize
+            } : {})
+        };
+        const [tasks, total] = shouldPaginate
+            ? await taskRepo.findAndCount(findOptions)
+            : [await taskRepo.find(findOptions), undefined];
         // username脱敏
         tasks.forEach(task => {
-            task.account.username = task.account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
-            task.account.accountType = task.account.accountType || 'personal';
+            if (task.account?.username) {
+                task.account.username = task.account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
+            }
+            if (task.account) {
+                task.account.accountType = task.account.accountType || 'personal';
+            }
         });
-        res.json({ success: true, data: tasks });
+        res.json({
+            success: true,
+            data: tasks,
+            ...(shouldPaginate ? {
+                pagination: {
+                    page,
+                    pageSize,
+                    total,
+                    totalPages: Math.max(1, Math.ceil(total / pageSize))
+                }
+            } : {})
+        });
     });
 
     app.get('/api/organizer/tasks', async (req, res) => {
@@ -1429,11 +1652,11 @@ AppDataSource.initialize().then(async () => {
 
     // 系统设置
     app.get('/api/settings', async (req, res) => {
-        res.json({success: true, data: normalizeTelegramSettings(ConfigService.getConfig())})
+        res.json({success: true, data: redactSettingsForClient(normalizeTelegramSettings(ConfigService.getConfig()))})
     })
 
     app.post('/api/settings', async (req, res) => {
-        const settings = normalizeTelegramSettings(req.body);
+        const settings = await prepareSettingsForSave(normalizeTelegramSettings(req.body));
         SchedulerService.handleScheduleTasks(settings,taskService);
         ConfigService.setConfig(settings)
         await botManager.handleBotStatus(
@@ -2316,21 +2539,41 @@ AppDataSource.initialize().then(async () => {
 
     app.post('/api/pt/subscriptions', async (req, res) => {
         try {
+            const name = String(req.body.name || '').trim();
+            const sourcePreset = req.body.sourcePreset || 'generic';
+            const rssUrl = String(req.body.rssUrl || '').trim();
+            const accountId = Number(req.body.accountId);
+            const targetFolderId = String(req.body.targetFolderId || '');
+            const targetFolder = req.body.targetFolder || '';
+
+            if (!name) throw new Error('订阅名称不能为空');
+            if (!rssUrl && sourcePreset === 'generic') throw new Error('通用 RSS 必须填写 RSS URL');
+            if (!accountId) throw new Error('未选择账号');
+            if (!targetFolderId) throw new Error('未选择目标目录');
+
+            // 防重复:同一天翼账号下,RSS URL 不可重复(空 URL 跳过此检查)
+            if (rssUrl) {
+                const dup = await ptSubscriptionRepo.findOne({ where: { accountId, rssUrl } });
+                if (dup) {
+                    return res.json({
+                        success: false,
+                        error: `该 RSS 已在该账号下创建过订阅(#${dup.id} ${dup.name}),请勿重复添加`,
+                        existingId: dup.id
+                    });
+                }
+            }
+
             const sub = ptSubscriptionRepo.create({
-                name: String(req.body.name || '').trim(),
-                sourcePreset: req.body.sourcePreset || 'generic',
-                rssUrl: String(req.body.rssUrl || '').trim(),
+                name,
+                sourcePreset,
+                rssUrl,
                 includePattern: req.body.includePattern || '',
                 excludePattern: req.body.excludePattern || '',
-                accountId: Number(req.body.accountId),
-                targetFolderId: String(req.body.targetFolderId || ''),
-                targetFolder: req.body.targetFolder || '',
+                accountId,
+                targetFolderId,
+                targetFolder,
                 enabled: req.body.enabled !== false
             });
-            if (!sub.name) throw new Error('订阅名称不能为空');
-            if (!sub.rssUrl && sub.sourcePreset === 'generic') throw new Error('通用 RSS 必须填写 RSS URL');
-            if (!sub.accountId) throw new Error('未选择账号');
-            if (!sub.targetFolderId) throw new Error('未选择目标目录');
             await ptSubscriptionRepo.save(sub);
             // 新增订阅后自动触发一次 RSS 轮询
             let refreshResult = null;
@@ -2426,6 +2669,50 @@ AppDataSource.initialize().then(async () => {
         try {
             const result = await ptService.runProcessing();
             res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 一键去重:合并 (accountId + rssUrl) 完全相同的订阅,保留最早一条,迁移其 release
+    app.post('/api/pt/subscriptions/dedupe', async (req, res) => {
+        try {
+            const all = await ptSubscriptionRepo.find({ order: { id: 'ASC' } });
+            const groups = new Map();
+            for (const sub of all) {
+                if (!sub.rssUrl) continue; // 空 RSS URL 无法用于判定,跳过
+                const key = `${sub.accountId}::${sub.rssUrl}`;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(sub);
+            }
+
+            let removed = 0;
+            let mergedReleases = 0;
+            for (const list of groups.values()) {
+                if (list.length <= 1) continue;
+                const keep = list[0]; // id 最小者保留
+                const victimIds = list.slice(1).map(s => s.id);
+
+                // 把 victims 的 release 迁移到 keep,(subscriptionId, guid) 已存在则丢弃
+                const victimReleases = await ptReleaseRepo.find({ where: { subscriptionId: In(victimIds) } });
+                for (const rel of victimReleases) {
+                    const exists = await ptReleaseRepo.findOne({
+                        where: { subscriptionId: keep.id, guid: rel.guid }
+                    });
+                    if (exists) {
+                        await ptReleaseRepo.delete({ id: rel.id });
+                    } else {
+                        rel.subscriptionId = keep.id;
+                        await ptReleaseRepo.save(rel);
+                        mergedReleases++;
+                    }
+                }
+
+                await ptSubscriptionRepo.delete({ id: In(victimIds) });
+                removed += victimIds.length;
+            }
+
+            res.json({ success: true, data: { removed, mergedReleases } });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }

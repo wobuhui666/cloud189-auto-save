@@ -5,8 +5,8 @@ export function setupCloudSaverRoutes(app: Application) {
     // 搜索接口
     app.get('/api/cloudsaver/search', async (req, res) => {
         try {
-            const { keyword } = req.query;
-            
+            const { keyword, fast } = req.query;
+
             if (!keyword || typeof keyword !== 'string') {
                 return res.status(400).json({
                     success: false,
@@ -14,7 +14,7 @@ export function setupCloudSaverRoutes(app: Application) {
                 });
             }
 
-            const results = await cloudSaverSDK.search(keyword);
+            const results = await cloudSaverSDK.search(keyword, fast === 'true' || fast === '1');
             res.json({
                 success: true,
                 data: results

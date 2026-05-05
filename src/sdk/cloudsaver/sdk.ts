@@ -15,6 +15,7 @@ interface LoginResponse {
 interface CloudLink {
     cloudType: number;
     link: string;
+    accessCode?: string;
 }
 interface CloudResource {
     messageId: string;
@@ -174,7 +175,7 @@ class CloudSaverSDK {
         return Array.from(uniqueLinks.values());
     }
 
-    async search(keyword: string): Promise<CloudResource[]> {
+    async search(keyword: string, fast: boolean = false): Promise<CloudResource[]> {
         if (!this.token) {
             const loginSuccess = await this.autoLogin();
             if (!loginSuccess) {
@@ -184,7 +185,7 @@ class CloudSaverSDK {
         try {
             logTaskEvent(`CloudSaverSDK 开始搜索${keyword}`)
             const { body, statusCode } = await got.get(`${this.baseUrl}/api/search`, {
-                searchParams: { keyword },
+                searchParams: { keyword, ...(fast ? { fast: 'true' } : {}) },
                 headers: {
                     'Authorization': `Bearer ${this.token}`
                 },

@@ -57,6 +57,7 @@ const TASK_STATUS_OPTIONS: Array<{ value: 'all' | TaskStatus; label: string }> =
   { value: 'completed', label: '已完结' },
   { value: 'failed', label: '失败' }
 ];
+const TASK_PAGE_SIZE = 50;
 
 const TASK_FEATURE_FILTERS: Array<{
   key: string;
@@ -90,6 +91,10 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalTasks, setTotalTasks] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [selectedTaskIds, setSelectedTaskIds] = useState<number[]>([]);
   const [activeTagFilters, setActiveTagFilters] = useState<string[]>([]);
   const [batchStatus, setBatchStatus] = useState<TaskStatus>('pending');
@@ -100,24 +105,57 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number } | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
-  const fetchTasks = useCallback(async () => {
+  const fetchTasks = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/tasks?status=${statusFilter}&search=${encodeURIComponent(searchTerm)}`);
+      const params = new URLSearchParams({
+        status: statusFilter,
+        page: String(page),
+        pageSize: String(TASK_PAGE_SIZE)
+      });
+      if (debouncedSearchTerm) {
+        params.set('search', debouncedSearchTerm);
+      }
+      const response = await fetch(`/api/tasks?${params.toString()}`, { signal });
       const data = await response.json();
       if (data.success) {
         setTasks(data.data || []);
+        const nextTotal = Number(data.pagination?.total || 0);
+        const nextTotalPages = Math.max(1, Number(data.pagination?.totalPages || 1));
+        setTotalTasks(nextTotal);
+        setTotalPages(nextTotalPages);
         setSelectedTaskIds([]);
+        if (page > nextTotalPages) {
+          setPage(nextTotalPages);
+        }
       }
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
       console.error('Failed to fetch tasks:', error);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
-  }, [statusFilter, searchTerm]);
+  }, [statusFilter, debouncedSearchTerm, page]);
 
   useEffect(() => {
-    fetchTasks();
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, debouncedSearchTerm]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchTasks(controller.signal);
+    return () => controller.abort();
   }, [fetchTasks]);
 
   useEffect(() => {
@@ -191,6 +229,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   });
 
   const allVisibleSelected = filteredTasks.length > 0 && selectedTaskIds.length === filteredTasks.length;
+  const pageStart = totalTasks === 0 ? 0 : (page - 1) * TASK_PAGE_SIZE + 1;
+  const pageEnd = Math.min(page * TASK_PAGE_SIZE, totalTasks);
 
   useEffect(() => {
     const availableTagKeys = new Set(availableTagFilters.map((filterTag) => filterTag.key));
@@ -478,7 +518,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
             />
           </div>
           <button 
-            onClick={fetchTasks}
+            onClick={() => fetchTasks()}
             className="p-2.5 bg-white border border-slate-300 rounded-full hover:bg-slate-50 transition-all text-slate-600 shadow-sm"
           >
             <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
@@ -506,6 +546,10 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
         <span className="text-sm text-slate-500">
           已选 {selectedTaskIds.length} 项
+        </span>
+
+        <span className="text-sm text-slate-500">
+          显示 {pageStart}-{pageEnd} / {totalTasks} 项
         </span>
 
         <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
@@ -705,6 +749,32 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           </div>
         )}
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row">
+          <span className="text-sm text-slate-500">
+            第 {page} / {totalPages} 页，每页 {TASK_PAGE_SIZE} 项
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+              disabled={page <= 1 || loading}
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              上一页
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
+              disabled={page >= totalPages || loading}
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
