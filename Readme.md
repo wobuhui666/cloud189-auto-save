@@ -1,5 +1,5 @@
 <div align="center">
-    <img src="img/cloud189.png" alt="Logo" width="160">
+    <img src="img/cloud189.png" alt="Logo" width="225">
     <h1>Cloud189 Auto Save</h1>
     <p><strong>天翼云盘全自动转存与媒体管理系统</strong></p>
     <p>自动化监控更新、智能重命名、STRM 生成、Emby/Jellyfin 完美联动</p>
