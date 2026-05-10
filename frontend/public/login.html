@@ -969,6 +969,20 @@
             }
         });
 
+        async function hydrateAuthMode() {
+            try {
+                const response = await fetch('/api/auth/me');
+                const data = await response.json().catch(() => ({}));
+                if (data.success) {
+                    return;
+                }
+                if (data.requireSetCredentials) {
+                    setSetupMode(true);
+                }
+            } catch (error) {
+            }
+        }
+
         loginForm.addEventListener('submit', async (event) => {
             event.preventDefault();
             clearErrors();
@@ -1016,6 +1030,7 @@
         scheduleBlinkPurple();
         scheduleBlinkBlack();
         updateCharacters();
+        hydrateAuthMode();
     </script>
 </body>
 </html>

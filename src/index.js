@@ -688,8 +688,13 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', (req, res) => {
+    const configPassword = ConfigService.getConfigValue('system.password');
     if (!req.session.authenticated) {
-        res.json({ success: false, error: '未登录' });
+        res.json({
+            success: false,
+            error: '未登录',
+            requireSetCredentials: !configPassword
+        });
         return;
     }
     res.json({ success: true, username: req.session.username || '' });
