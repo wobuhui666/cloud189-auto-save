@@ -5,172 +5,1017 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - 天翼云盘自动转存系统</title>
     <style>
-        :root {
-            --bg: #f8fafc;
-            --card: #ffffff;
-            --border: #dbe3f0;
-            --text: #0f172a;
-            --muted: #475569;
-            --primary: #0b57d0;
-            --primary-hover: #0948ad;
-            --danger: #dc2626;
-        }
-
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg: #0f172a;
-                --card: #1e293b;
-                --border: #334155;
-                --text: #f8fafc;
-                --muted: #94a3b8;
-            }
-        }
-
-        * { box-sizing: border-box; }
-        body {
+        *,
+        *::before,
+        *::after {
             margin: 0;
-            min-height: 100vh;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            height: 100vh;
+            overflow: hidden;
+            background: #1a1a2e;
+            font-family: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        #login-page {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            height: 100vh;
+        }
+
+        .left-panel {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            overflow: hidden;
+            padding: 40px 48px;
+            background: #f8fafd;
+        }
+
+        .left-panel::before {
+            content: "";
+            position: absolute;
+            bottom: 15%;
+            left: 10%;
+            width: 350px;
+            height: 350px;
+            border-radius: 50%;
+            background: rgba(194, 231, 255, 0.45);
+            filter: blur(100px);
+        }
+
+        .left-panel::after {
+            content: "";
+            position: absolute;
+            top: 20%;
+            right: 15%;
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background: rgba(211, 227, 253, 0.68);
+            filter: blur(80px);
+        }
+
+        .logo {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #64748b;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .logo svg {
+            width: 28px;
+            height: 28px;
+            padding: 4px;
+            border-radius: 6px;
+            background: #d3e3fd;
+            backdrop-filter: blur(8px);
+        }
+
+        .characters-wrapper {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            height: 420px;
+        }
+
+        .characters-scene {
+            position: relative;
+            width: 480px;
+            height: 360px;
+        }
+
+        .character {
+            position: absolute;
+            bottom: 0;
+            transform-origin: bottom center;
+            transition: all 0.7s ease-in-out;
+        }
+
+        .char-purple {
+            left: 60px;
+            width: 170px;
+            height: 370px;
+            z-index: 1;
+            border-radius: 10px 10px 0 0;
+            background: #6c3ff5;
+        }
+
+        .char-black {
+            left: 220px;
+            width: 115px;
+            height: 290px;
+            z-index: 2;
+            border-radius: 8px 8px 0 0;
+            background: #2d2d2d;
+        }
+
+        .char-orange {
+            left: 0;
+            width: 230px;
+            height: 190px;
+            z-index: 3;
+            border-radius: 115px 115px 0 0;
+            background: #ff9b6b;
+        }
+
+        .char-yellow {
+            left: 290px;
+            width: 135px;
+            height: 215px;
+            z-index: 4;
+            border-radius: 68px 68px 0 0;
+            background: #e8d754;
+        }
+
+        .eyes {
+            position: absolute;
+            display: flex;
+            transition: all 0.7s ease-in-out;
+        }
+
+        .eyeball {
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 24px;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            transition: background-color 0.3s, color 0.3s;
+            overflow: hidden;
+            border-radius: 50%;
+            background: #ffffff;
+            transition: height 0.15s ease;
         }
-        .card {
-            width: 100%;
-            max-width: 420px;
+
+        .pupil {
+            border-radius: 50%;
+            background: #2d2d2d;
+            transition: transform 0.1s ease-out;
+        }
+
+        .bare-pupil {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #2d2d2d;
+            transition: transform 0.7s ease-in-out;
+        }
+
+        .yellow-mouth {
+            position: absolute;
+            width: 50px;
+            height: 4px;
+            border-radius: 2px;
+            background: #2d2d2d;
+            transition: all 0.7s ease-in-out;
+        }
+
+        .orange-mouth {
+            position: absolute;
+            width: 28px;
+            height: 14px;
+            border: 3px solid #2d2d2d;
+            border-top: none;
+            border-radius: 0 0 14px 14px;
+            opacity: 0;
+            transition: all 0.7s ease-in-out;
+        }
+
+        .orange-mouth.visible {
+            opacity: 1;
+        }
+
+        @keyframes shakeHead {
+            0%, 100% { translate: 0 0; }
+            10% { translate: -9px 0; }
+            20% { translate: 7px 0; }
+            30% { translate: -6px 0; }
+            40% { translate: 5px 0; }
+            50% { translate: -4px 0; }
+            60% { translate: 3px 0; }
+            70% { translate: -2px 0; }
+            80% { translate: 1px 0; }
+            90% { translate: -0.5px 0; }
+        }
+
+        .eyes.shake-head,
+        .yellow-mouth.shake-head,
+        .orange-mouth.shake-head {
+            animation: shakeHead 0.8s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+        }
+
+        .right-panel {
+            display: flex;
+            align-items: center;
+            justify-content: center;
             padding: 40px;
-            border-radius: 28px;
-            background: var(--card);
-            border: 1px solid var(--border);
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            background: #ffffff;
         }
-        .eyebrow {
-            margin: 0 0 12px;
-            font-size: 12px;
+
+        .form-container {
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .sparkle-icon {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .sparkle-icon svg {
+            width: 32px;
+            height: 32px;
+        }
+
+        .form-header {
+            margin-bottom: 36px;
+            text-align: center;
+        }
+
+        .form-header h1 {
+            color: #1a1a2e;
+            font-size: 28px;
             font-weight: 700;
-            letter-spacing: 0.1em;
-            color: var(--primary);
-            text-transform: uppercase;
+            letter-spacing: -0.5px;
         }
-        h1 {
-            margin: 0 0 8px;
-            font-size: 32px;
-            font-weight: 600;
-            color: var(--text);
+
+        .error-msg {
+            display: none;
+            margin-bottom: 16px;
+            padding: 10px 14px;
+            border: 1px solid rgba(220, 38, 38, 0.2);
+            border-radius: 10px;
+            color: #dc2626;
+            background: rgba(220, 38, 38, 0.08);
+            font-size: 13px;
         }
-        p {
-            margin: 0 0 32px;
-            color: var(--muted);
+
+        .error-msg.show {
+            display: block;
+        }
+
+        .setup-hint {
+            display: none;
+            margin-bottom: 18px;
+            padding: 12px 14px;
+            border: 1px solid #d3e3fd;
+            border-radius: 12px;
+            color: #0b57d0;
+            background: #f8fafd;
+            font-size: 13px;
             line-height: 1.6;
-            font-size: 15px;
         }
-        label {
+
+        .setup-hint.show {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
             display: block;
             margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--text);
-        }
-        input {
-            width: 100%;
-            height: 52px;
-            padding: 0 16px;
-            margin-bottom: 20px;
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            font-size: 16px;
-            background: var(--bg);
-            color: var(--text);
-            outline: none;
-            transition: all 0.2s;
-        }
-        input:focus {
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(11, 87, 208, 0.1);
-        }
-        button {
-            width: 100%;
-            height: 52px;
-            border: 0;
-            border-radius: 16px;
-            background: var(--primary);
-            color: #ffffff;
-            font-size: 16px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.2s;
-            margin-top: 8px;
-        }
-        button:hover { 
-            background: var(--primary-hover);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(11, 87, 208, 0.2);
-        }
-        button:active {
-            transform: translateY(0);
-        }
-        button:disabled { 
-            opacity: 0.6; 
-            cursor: not-allowed; 
-            transform: none;
-        }
-        .error {
-            min-height: 20px;
-            margin-top: 16px;
-            color: var(--danger);
-            font-size: 14px;
-            text-align: center;
+            color: #333333;
+            font-size: 13px;
             font-weight: 500;
+        }
+
+        .input-wrapper {
+            position: relative;
+            height: 48px;
+        }
+
+        .form-group input {
+            display: block;
+            width: 100%;
+            height: 48px;
+            padding: 0 42px 0 0;
+            border: none;
+            border-bottom: 1.5px solid #dbe3f0;
+            outline: none;
+            color: #1a1a2e;
+            background: transparent;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            border-bottom-color: #0b57d0;
+        }
+
+        .form-group input::placeholder {
+            color: #cccccc;
+        }
+
+        .form-group input[type="password"]:not(:placeholder-shown) {
+            letter-spacing: 2px;
+        }
+
+        .form-group input[type="password"]::-ms-reveal,
+        .form-group input[type="password"]::-ms-clear {
+            display: none;
+        }
+
+        .form-group input.error {
+            border-bottom-color: #dc2626;
+        }
+
+        .form-group label.error-label {
+            color: #dc2626;
+        }
+
+        .toggle-password {
+            position: absolute;
+            top: 50%;
+            right: 0;
+            width: 36px;
+            height: 36px;
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: none;
+            border-radius: 50%;
+            color: #666666;
+            background: none;
+            cursor: pointer;
+            transform: translateY(-50%);
+            transition: color 0.2s, background 0.2s;
+        }
+
+        .toggle-password:hover {
+            color: #333333;
+            background: rgba(91, 33, 182, 0.08);
+        }
+
+        .toggle-password svg {
+            display: block;
+        }
+
+        .btn-login {
+            position: relative;
+            width: 100%;
+            height: 50px;
+            margin-top: 18px;
+            overflow: hidden;
+            border: 1.5px solid #0b57d0;
+            border-radius: 25px;
+            color: #ffffff;
+            background: #0b57d0;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .btn-login:disabled {
+            cursor: not-allowed;
+            opacity: 0.72;
+        }
+
+        .btn-login .btn-text {
+            display: inline-block;
+            transition: all 0.3s;
+        }
+
+        .btn-login .btn-hover-content {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 25px;
+            color: #ffffff;
+            background: #0948ad;
+            opacity: 0;
+            transition: all 0.3s;
+        }
+
+        .btn-login:not(:disabled):hover .btn-text {
+            transform: translateX(40px);
+            opacity: 0;
+        }
+
+        .btn-login:not(:disabled):hover .btn-hover-content {
+            opacity: 1;
+        }
+
+        @media (max-width: 900px) {
+            body {
+                overflow: auto;
+                background: #ffffff;
+            }
+
+            #login-page {
+                grid-template-columns: 1fr;
+                min-height: 100vh;
+            }
+
+            .left-panel {
+                display: none;
+            }
+
+            .right-panel {
+                min-height: 100vh;
+                padding: 32px 24px;
+            }
         }
     </style>
 </head>
 <body>
-    <main class="card">
-        <div class="eyebrow">Cloud189 Auto Save</div>
-        <h1>登录</h1>
-        <p>输入系统账号后进入控制台。</p>
-        <form id="loginForm">
-            <label for="username">用户名</label>
-            <input id="username" name="username" type="text" autocomplete="username" required placeholder="请输入用户名" />
-            <label for="password">密码</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="请输入密码" />
-            <button id="submitButton" type="submit">登录</button>
-            <div id="errorMessage" class="error"></div>
-        </form>
+    <main id="login-page">
+        <section class="left-panel" aria-label="登录动画">
+            <div class="logo">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M6.5 18h10.75a3.75 3.75 0 0 0 .4-7.48 5.5 5.5 0 0 0-10.55-1.3A4.25 4.25 0 0 0 6.5 18Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Cloud189 Auto Save
+            </div>
+
+            <div class="characters-wrapper" aria-hidden="true">
+                <div class="characters-scene">
+                    <div class="character char-purple" id="char-purple">
+                        <div class="eyes" id="purple-eyes" style="left: 45px; top: 40px; gap: 12px;">
+                            <div class="eyeball" id="purple-eye-l" style="width: 18px; height: 18px;">
+                                <div class="pupil" id="purple-pupil-l" style="width: 7px; height: 7px;"></div>
+                            </div>
+                            <div class="eyeball" id="purple-eye-r" style="width: 18px; height: 18px;">
+                                <div class="pupil" id="purple-pupil-r" style="width: 7px; height: 7px;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="character char-black" id="char-black">
+                        <div class="eyes" id="black-eyes" style="left: 26px; top: 32px; gap: 10px;">
+                            <div class="eyeball" id="black-eye-l" style="width: 16px; height: 16px;">
+                                <div class="pupil" id="black-pupil-l" style="width: 6px; height: 6px;"></div>
+                            </div>
+                            <div class="eyeball" id="black-eye-r" style="width: 16px; height: 16px;">
+                                <div class="pupil" id="black-pupil-r" style="width: 6px; height: 6px;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="character char-orange" id="char-orange">
+                        <div class="eyes" id="orange-eyes" style="left: 82px; top: 90px; gap: 12px;">
+                            <div class="bare-pupil" id="orange-pupil-l"></div>
+                            <div class="bare-pupil" id="orange-pupil-r"></div>
+                        </div>
+                        <div class="orange-mouth" id="orange-mouth" style="left: 80px; top: 130px;"></div>
+                    </div>
+
+                    <div class="character char-yellow" id="char-yellow">
+                        <div class="eyes" id="yellow-eyes" style="left: 52px; top: 40px; gap: 12px;">
+                            <div class="bare-pupil" id="yellow-pupil-l"></div>
+                            <div class="bare-pupil" id="yellow-pupil-r"></div>
+                        </div>
+                        <div class="yellow-mouth" id="yellow-mouth" style="left: 40px; top: 88px;"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="right-panel">
+            <div class="form-container">
+                <div class="sparkle-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none">
+                        <path d="M12 2l1.75 6.25L20 10l-6.25 1.75L12 18l-1.75-6.25L4 10l6.25-1.75L12 2Z" fill="#0b57d0"/>
+                        <path d="M19 15l.75 2.25L22 18l-2.25.75L19 21l-.75-2.25L16 18l2.25-.75L19 15Z" fill="#ff9b6b"/>
+                    </svg>
+                </div>
+
+                <div class="form-header">
+                    <h1 id="form-title">欢迎回来</h1>
+                </div>
+
+                <div class="setup-hint" id="setup-hint">首次使用时，这里提交的用户名和密码会被保存为系统登录账号。</div>
+                <div class="error-msg" id="error-msg" role="alert" aria-live="polite"></div>
+
+                <form id="login-form" novalidate>
+                    <div class="form-group">
+                        <label for="username" id="username-label">用户名</label>
+                        <div class="input-wrapper">
+                            <input id="username" name="username" type="text" autocomplete="username" required placeholder="请输入用户名">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password" id="password-label">密码</label>
+                        <div class="input-wrapper">
+                            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="请输入密码">
+                            <button class="toggle-password" id="toggle-password" type="button" aria-label="显示密码">
+                                <svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="currentColor" stroke-width="2"/>
+                                </svg>
+                                <svg id="eye-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" style="display: none;">
+                                    <path d="m3 3 18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    <path d="M10.58 10.58a2 2 0 0 0 2.83 2.83" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                                    <path d="M9.88 5.18A9.4 9.4 0 0 1 12 5c6 0 9.5 7 9.5 7a17.8 17.8 0 0 1-2.16 3.18M6.61 6.61C3.86 8.47 2.5 12 2.5 12s3.5 7 9.5 7a9.6 9.6 0 0 0 4.05-.9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button class="btn-login" id="btn-login" type="submit">
+                        <span class="btn-text">登录</span>
+                        <span class="btn-hover-content">登录</span>
+                    </button>
+                </form>
+            </div>
+        </section>
     </main>
+
     <script>
-        const form = document.getElementById('loginForm');
-        const submitButton = document.getElementById('submitButton');
-        const errorMessage = document.getElementById('errorMessage');
-        form.addEventListener('submit', async (event) => {
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const toggleButton = document.getElementById('toggle-password');
+        const eyeIcon = document.getElementById('eye-icon');
+        const eyeOffIcon = document.getElementById('eye-off-icon');
+        const loginForm = document.getElementById('login-form');
+        const loginButton = document.getElementById('btn-login');
+        const formTitle = document.getElementById('form-title');
+        const setupHint = document.getElementById('setup-hint');
+        const errorMsg = document.getElementById('error-msg');
+        const usernameLabel = document.getElementById('username-label');
+        const passwordLabel = document.getElementById('password-label');
+
+        let showPassword = false;
+        let isSetupMode = false;
+        let isLoginError = false;
+        let mouseX = window.innerWidth / 2;
+        let mouseY = window.innerHeight / 2;
+        let isTyping = false;
+        let isLookingAtEachOther = false;
+        let isPurpleBlinking = false;
+        let isBlackBlinking = false;
+        let isPurplePeeking = false;
+        let isPasswordFocused = false;
+        let typingTimer = null;
+        let errorRecoverTimer = null;
+        let peekTimer = null;
+
+        function clearErrors() {
+            errorMsg.classList.remove('show');
+            errorMsg.textContent = '';
+            usernameInput.classList.remove('error');
+            passwordInput.classList.remove('error');
+            usernameLabel.classList.remove('error-label');
+            passwordLabel.classList.remove('error-label');
+        }
+
+        function setSetupMode(enabled) {
+            isSetupMode = enabled;
+            setupHint.classList.toggle('show', enabled);
+            formTitle.textContent = enabled ? '初始化账号' : '欢迎回来';
+            usernameInput.placeholder = enabled ? '设置系统登录用户名' : '请输入用户名';
+            passwordInput.placeholder = enabled ? '设置系统登录密码（至少 6 位）' : '请输入密码';
+            loginButton.querySelector('.btn-text').textContent = enabled ? '创建账号' : '登录';
+            loginButton.querySelector('.btn-hover-content').textContent = enabled ? '创建账号' : '登录';
+        }
+
+        function showError(message, inputElement) {
+            errorMsg.textContent = message;
+            errorMsg.classList.add('show');
+            if (inputElement === usernameInput) {
+                usernameInput.classList.add('error');
+                usernameLabel.classList.add('error-label');
+            }
+            if (inputElement === passwordInput) {
+                passwordInput.classList.add('error');
+                passwordLabel.classList.add('error-label');
+            }
+            triggerLoginError();
+        }
+
+        function setSubmitting(isSubmitting) {
+            const text = loginButton.querySelector('.btn-text');
+            const hoverText = loginButton.querySelector('.btn-hover-content');
+            loginButton.disabled = isSubmitting;
+            text.textContent = isSubmitting ? (isSetupMode ? '创建中...' : '登录中...') : (isSetupMode ? '创建账号' : '登录');
+            hoverText.textContent = isSubmitting ? '请稍候' : (isSetupMode ? '创建账号' : '登录');
+        }
+
+        function setTyping(typing) {
+            isTyping = typing;
+            if (typing) {
+                isLookingAtEachOther = true;
+                clearTimeout(typingTimer);
+                typingTimer = setTimeout(() => {
+                    isLookingAtEachOther = false;
+                    updateCharacters();
+                }, 800);
+            } else {
+                isLookingAtEachOther = false;
+            }
+            updateCharacters();
+        }
+
+        function scheduleBlinkPurple() {
+            setTimeout(() => {
+                isPurpleBlinking = true;
+                updateCharacters();
+                setTimeout(() => {
+                    isPurpleBlinking = false;
+                    updateCharacters();
+                    scheduleBlinkPurple();
+                }, 150);
+            }, Math.random() * 4000 + 3000);
+        }
+
+        function scheduleBlinkBlack() {
+            setTimeout(() => {
+                isBlackBlinking = true;
+                updateCharacters();
+                setTimeout(() => {
+                    isBlackBlinking = false;
+                    updateCharacters();
+                    scheduleBlinkBlack();
+                }, 150);
+            }, Math.random() * 4000 + 3000);
+        }
+
+        function schedulePeek() {
+            if (peekTimer) {
+                clearTimeout(peekTimer);
+            }
+            if (passwordInput.value.length > 0 && showPassword) {
+                peekTimer = setTimeout(() => {
+                    if (passwordInput.value.length > 0 && showPassword) {
+                        isPurplePeeking = true;
+                        updateCharacters();
+                        setTimeout(() => {
+                            isPurplePeeking = false;
+                            updateCharacters();
+                            schedulePeek();
+                        }, 800);
+                    }
+                }, Math.random() * 3000 + 2000);
+            }
+        }
+
+        function calcPosition(element) {
+            const rect = element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 3;
+            const deltaX = mouseX - centerX;
+            const deltaY = mouseY - centerY;
+            return {
+                faceX: Math.max(-15, Math.min(15, deltaX / 20)),
+                faceY: Math.max(-10, Math.min(10, deltaY / 30)),
+                bodySkew: Math.max(-6, Math.min(6, -deltaX / 120))
+            };
+        }
+
+        function calcPupilOffset(element, maxDistance) {
+            const rect = element.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            const deltaX = mouseX - centerX;
+            const deltaY = mouseY - centerY;
+            const distance = Math.min(Math.sqrt(deltaX * deltaX + deltaY * deltaY), maxDistance);
+            const angle = Math.atan2(deltaY, deltaX);
+            return {
+                x: Math.cos(angle) * distance,
+                y: Math.sin(angle) * distance
+            };
+        }
+
+        function updateCharacters() {
+            const purple = document.getElementById('char-purple');
+            const black = document.getElementById('char-black');
+            const orange = document.getElementById('char-orange');
+            const yellow = document.getElementById('char-yellow');
+
+            const purplePos = calcPosition(purple);
+            const blackPos = calcPosition(black);
+            const orangePos = calcPosition(orange);
+            const yellowPos = calcPosition(yellow);
+
+            const passwordLength = passwordInput.value.length;
+            const isShowingPassword = passwordLength > 0 && showPassword;
+            const isLookingAway = isPasswordFocused && !showPassword;
+
+            if (isShowingPassword) {
+                purple.style.transform = 'skewX(0deg)';
+                purple.style.height = '370px';
+            } else if (isLookingAway) {
+                purple.style.transform = 'skewX(-14deg) translateX(-20px)';
+                purple.style.height = '410px';
+            } else if (isTyping) {
+                purple.style.transform = `skewX(${(purplePos.bodySkew || 0) - 12}deg) translateX(40px)`;
+                purple.style.height = '410px';
+            } else {
+                purple.style.transform = `skewX(${purplePos.bodySkew}deg)`;
+                purple.style.height = '370px';
+            }
+
+            const purpleEyes = document.getElementById('purple-eyes');
+            const purpleEyeL = document.getElementById('purple-eye-l');
+            const purpleEyeR = document.getElementById('purple-eye-r');
+            const purplePupilL = document.getElementById('purple-pupil-l');
+            const purplePupilR = document.getElementById('purple-pupil-r');
+
+            purpleEyeL.style.height = isPurpleBlinking ? '2px' : '18px';
+            purpleEyeR.style.height = isPurpleBlinking ? '2px' : '18px';
+
+            if (isLoginError) {
+                purpleEyes.style.left = '30px';
+                purpleEyes.style.top = '55px';
+                purplePupilL.style.transform = 'translate(-3px, 4px)';
+                purplePupilR.style.transform = 'translate(-3px, 4px)';
+            } else if (isLookingAway) {
+                purpleEyes.style.left = '20px';
+                purpleEyes.style.top = '25px';
+                purplePupilL.style.transform = 'translate(-5px, -5px)';
+                purplePupilR.style.transform = 'translate(-5px, -5px)';
+            } else if (isShowingPassword) {
+                purpleEyes.style.left = '20px';
+                purpleEyes.style.top = '35px';
+                const x = isPurplePeeking ? 4 : -4;
+                const y = isPurplePeeking ? 5 : -4;
+                purplePupilL.style.transform = `translate(${x}px, ${y}px)`;
+                purplePupilR.style.transform = `translate(${x}px, ${y}px)`;
+            } else if (isLookingAtEachOther) {
+                purpleEyes.style.left = '55px';
+                purpleEyes.style.top = '65px';
+                purplePupilL.style.transform = 'translate(3px, 4px)';
+                purplePupilR.style.transform = 'translate(3px, 4px)';
+            } else {
+                purpleEyes.style.left = 45 + purplePos.faceX + 'px';
+                purpleEyes.style.top = 40 + purplePos.faceY + 'px';
+                const offset = calcPupilOffset(purpleEyeL, 5);
+                purplePupilL.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+                purplePupilR.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+            }
+
+            if (isShowingPassword) {
+                black.style.transform = 'skewX(0deg)';
+            } else if (isLookingAway) {
+                black.style.transform = 'skewX(12deg) translateX(-10px)';
+            } else if (isLookingAtEachOther) {
+                black.style.transform = `skewX(${(blackPos.bodySkew || 0) * 1.5 + 10}deg) translateX(20px)`;
+            } else if (isTyping) {
+                black.style.transform = `skewX(${(blackPos.bodySkew || 0) * 1.5}deg)`;
+            } else {
+                black.style.transform = `skewX(${blackPos.bodySkew}deg)`;
+            }
+
+            const blackEyes = document.getElementById('black-eyes');
+            const blackEyeL = document.getElementById('black-eye-l');
+            const blackEyeR = document.getElementById('black-eye-r');
+            const blackPupilL = document.getElementById('black-pupil-l');
+            const blackPupilR = document.getElementById('black-pupil-r');
+
+            blackEyeL.style.height = isBlackBlinking ? '2px' : '16px';
+            blackEyeR.style.height = isBlackBlinking ? '2px' : '16px';
+
+            if (isLoginError) {
+                blackEyes.style.left = '15px';
+                blackEyes.style.top = '40px';
+                blackPupilL.style.transform = 'translate(-3px, 4px)';
+                blackPupilR.style.transform = 'translate(-3px, 4px)';
+            } else if (isLookingAway) {
+                blackEyes.style.left = '10px';
+                blackEyes.style.top = '20px';
+                blackPupilL.style.transform = 'translate(-4px, -5px)';
+                blackPupilR.style.transform = 'translate(-4px, -5px)';
+            } else if (isShowingPassword) {
+                blackEyes.style.left = '10px';
+                blackEyes.style.top = '28px';
+                blackPupilL.style.transform = 'translate(-4px, -4px)';
+                blackPupilR.style.transform = 'translate(-4px, -4px)';
+            } else if (isLookingAtEachOther) {
+                blackEyes.style.left = '32px';
+                blackEyes.style.top = '12px';
+                blackPupilL.style.transform = 'translate(0px, -4px)';
+                blackPupilR.style.transform = 'translate(0px, -4px)';
+            } else {
+                blackEyes.style.left = 26 + blackPos.faceX + 'px';
+                blackEyes.style.top = 32 + blackPos.faceY + 'px';
+                const offset = calcPupilOffset(blackEyeL, 4);
+                blackPupilL.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+                blackPupilR.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+            }
+
+            if (isShowingPassword) {
+                orange.style.transform = 'skewX(0deg)';
+            } else {
+                orange.style.transform = `skewX(${orangePos.bodySkew}deg)`;
+            }
+
+            const orangeEyes = document.getElementById('orange-eyes');
+            const orangePupilL = document.getElementById('orange-pupil-l');
+            const orangePupilR = document.getElementById('orange-pupil-r');
+            const orangeMouth = document.getElementById('orange-mouth');
+
+            if (isLoginError) {
+                orangeEyes.style.left = '60px';
+                orangeEyes.style.top = '95px';
+                orangePupilL.style.transform = 'translate(-3px, 4px)';
+                orangePupilR.style.transform = 'translate(-3px, 4px)';
+                orangeMouth.style.left = 80 + orangePos.faceX + 'px';
+                orangeMouth.style.top = '130px';
+            } else if (isLookingAway) {
+                orangeEyes.style.left = '50px';
+                orangeEyes.style.top = '75px';
+                orangePupilL.style.transform = 'translate(-5px, -5px)';
+                orangePupilR.style.transform = 'translate(-5px, -5px)';
+            } else if (isShowingPassword) {
+                orangeEyes.style.left = '50px';
+                orangeEyes.style.top = '85px';
+                orangePupilL.style.transform = 'translate(-5px, -4px)';
+                orangePupilR.style.transform = 'translate(-5px, -4px)';
+            } else {
+                orangeEyes.style.left = 82 + orangePos.faceX + 'px';
+                orangeEyes.style.top = 90 + orangePos.faceY + 'px';
+                const offset = calcPupilOffset(orangePupilL, 5);
+                orangePupilL.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+                orangePupilR.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+            }
+
+            if (isShowingPassword) {
+                yellow.style.transform = 'skewX(0deg)';
+            } else {
+                yellow.style.transform = `skewX(${yellowPos.bodySkew}deg)`;
+            }
+
+            const yellowEyes = document.getElementById('yellow-eyes');
+            const yellowPupilL = document.getElementById('yellow-pupil-l');
+            const yellowPupilR = document.getElementById('yellow-pupil-r');
+            const yellowMouth = document.getElementById('yellow-mouth');
+
+            if (isLoginError) {
+                yellowEyes.style.left = '35px';
+                yellowEyes.style.top = '45px';
+                yellowPupilL.style.transform = 'translate(-3px, 4px)';
+                yellowPupilR.style.transform = 'translate(-3px, 4px)';
+                yellowMouth.style.left = '30px';
+                yellowMouth.style.top = '92px';
+                yellowMouth.style.transform = 'rotate(-8deg)';
+            } else if (isLookingAway) {
+                yellowEyes.style.left = '20px';
+                yellowEyes.style.top = '30px';
+                yellowPupilL.style.transform = 'translate(-5px, -5px)';
+                yellowPupilR.style.transform = 'translate(-5px, -5px)';
+                yellowMouth.style.left = '15px';
+                yellowMouth.style.top = '78px';
+                yellowMouth.style.transform = 'rotate(0deg)';
+            } else if (isShowingPassword) {
+                yellowEyes.style.left = '20px';
+                yellowEyes.style.top = '35px';
+                yellowPupilL.style.transform = 'translate(-5px, -4px)';
+                yellowPupilR.style.transform = 'translate(-5px, -4px)';
+                yellowMouth.style.left = '10px';
+                yellowMouth.style.top = '88px';
+                yellowMouth.style.transform = 'rotate(0deg)';
+            } else {
+                yellowEyes.style.left = 52 + yellowPos.faceX + 'px';
+                yellowEyes.style.top = 40 + yellowPos.faceY + 'px';
+                const offset = calcPupilOffset(yellowPupilL, 5);
+                yellowPupilL.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+                yellowPupilR.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+                yellowMouth.style.left = 40 + yellowPos.faceX + 'px';
+                yellowMouth.style.top = 88 + yellowPos.faceY + 'px';
+                yellowMouth.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        function triggerLoginError() {
+            if (errorRecoverTimer) {
+                clearTimeout(errorRecoverTimer);
+            }
+
+            const ids = ['purple-eyes', 'black-eyes', 'orange-eyes', 'yellow-eyes', 'yellow-mouth', 'orange-mouth'];
+            const elements = ids.map((id) => document.getElementById(id));
+            elements.forEach((element) => element.classList.remove('shake-head'));
+            void document.body.offsetHeight;
+
+            isLoginError = true;
+            isPasswordFocused = false;
+            updateCharacters();
+            document.getElementById('orange-mouth').classList.add('visible');
+
+            setTimeout(() => {
+                elements.forEach((element) => element.classList.add('shake-head'));
+            }, 350);
+
+            errorRecoverTimer = setTimeout(() => {
+                isLoginError = false;
+                document.getElementById('orange-mouth').classList.remove('visible');
+                elements.forEach((element) => element.classList.remove('shake-head'));
+                updateCharacters();
+            }, 2500);
+        }
+
+        toggleButton.addEventListener('click', () => {
+            showPassword = !showPassword;
+            passwordInput.type = showPassword ? 'text' : 'password';
+            eyeIcon.style.display = showPassword ? 'none' : 'block';
+            eyeOffIcon.style.display = showPassword ? 'block' : 'none';
+            updateCharacters();
+            if (showPassword) {
+                schedulePeek();
+            } else if (peekTimer) {
+                clearTimeout(peekTimer);
+            }
+            passwordInput.focus();
+        });
+
+        document.addEventListener('mousemove', (event) => {
+            mouseX = event.clientX;
+            mouseY = event.clientY;
+            if (!isTyping && !isLoginError) {
+                updateCharacters();
+            }
+        });
+
+        usernameInput.addEventListener('focus', () => setTyping(true));
+        usernameInput.addEventListener('blur', () => setTyping(false));
+        usernameInput.addEventListener('input', () => {
+            clearErrors();
+            updateCharacters();
+        });
+
+        passwordInput.addEventListener('focus', () => {
+            isPasswordFocused = true;
+            updateCharacters();
+        });
+
+        passwordInput.addEventListener('blur', () => {
+            isPasswordFocused = false;
+            updateCharacters();
+        });
+
+        passwordInput.addEventListener('input', () => {
+            clearErrors();
+            updateCharacters();
+            if (showPassword) {
+                schedulePeek();
+            }
+        });
+
+        loginForm.addEventListener('submit', async (event) => {
             event.preventDefault();
-            errorMessage.textContent = '';
-            submitButton.disabled = true;
+            clearErrors();
+
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value;
+
+            if (!username) {
+                showError('请输入用户名', usernameInput);
+                usernameInput.focus();
+                return;
+            }
+
+            if (!password) {
+                showError('请输入密码', passwordInput);
+                passwordInput.focus();
+                return;
+            }
+
+            setSubmitting(true);
+
             try {
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        username: document.getElementById('username').value,
-                        password: document.getElementById('password').value
-                    })
+                    body: JSON.stringify({ username, password })
                 });
-                const data = await response.json();
+                const data = await response.json().catch(() => ({}));
                 if (data.success) {
                     window.location.href = '/';
                     return;
                 }
-                errorMessage.textContent = data.error || '登录失败';
+                if (data.requireSetCredentials) {
+                    setSetupMode(true);
+                }
+                const targetInput = (data.error || '').includes('用户名') ? usernameInput : passwordInput;
+                showError(data.error || '登录失败，请检查用户名或密码', targetInput);
             } catch (error) {
-                errorMessage.textContent = '登录请求失败';
+                showError('登录请求失败，请检查服务是否正在运行', passwordInput);
             } finally {
-                submitButton.disabled = false;
+                setSubmitting(false);
             }
         });
+
+        scheduleBlinkPurple();
+        scheduleBlinkBlack();
+        updateCharacters();
     </script>
 </body>
 </html>
