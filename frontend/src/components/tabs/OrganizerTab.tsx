@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Play, Search, RefreshCw, Clock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useToast } from '../ui/Toast';
 
 interface Account {
   id: number;
@@ -18,6 +19,7 @@ interface OrganizerTask {
 }
 
 const OrganizerTab: React.FC = () => {
+  const toast = useToast();
   const [tasks, setTasks] = useState<OrganizerTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -46,13 +48,13 @@ const OrganizerTab: React.FC = () => {
       const response = await fetch(`/api/organizer/tasks/${taskId}/run`, { method: 'POST' });
       const data = await response.json();
       if (data.success) {
-        alert(data.data?.message || '整理完成');
+        toast.success(data.data?.message || '整理完成');
         fetchTasks();
       } else {
-        alert('执行整理失败: ' + data.error);
+        toast.error('执行整理失败: ' + data.error);
       }
     } catch (error) {
-      alert('执行整理失败');
+      toast.error('执行整理失败');
     }
   };
 

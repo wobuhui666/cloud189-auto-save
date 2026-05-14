@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Check, ChevronDown, ChevronUp, Cpu, Files, RefreshCw, Search } from 'lucide-react';
 import Modal from './Modal';
 import FolderSelector from './FolderSelector';
+import Checkbox from './ui/Checkbox';
+import { useToast } from './ui/Toast';
 
 interface Account {
   id: number;
@@ -196,6 +198,7 @@ const shouldShowAdvancedOptions = (formData: TaskFormData) => {
 };
 
 const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSuccess, initialData }) => {
+  const toast = useToast();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [regexPresets, setRegexPresets] = useState<RegexPreset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -472,11 +475,11 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
         onSuccess();
         onClose();
       } else {
-        alert('提交失败: ' + data.error);
+        toast.error('提交失败: ' + data.error);
       }
     } catch (error) {
       console.error('Failed to submit task:', error);
-      alert('提交失败');
+      toast.error('提交失败');
     } finally {
       setLoading(false);
     }
@@ -731,53 +734,33 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
           </div>
 
           <div className="flex flex-wrap gap-4 pt-2">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <div
-                onClick={() => setFormData(prev => ({ ...prev, enableTaskScraper: !prev.enableTaskScraper }))}
-                className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                  formData.enableTaskScraper ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                }`}
-              >
-                {formData.enableTaskScraper && <Check size={14} className="text-white" />}
-              </div>
-              <span className="text-sm font-medium text-slate-600">启用刮削</span>
-            </label>
+            <Checkbox
+              checked={formData.enableTaskScraper}
+              onChange={(v) => setFormData(prev => ({ ...prev, enableTaskScraper: v }))}
+              label="启用刮削"
+              labelClassName="text-sm font-medium text-slate-600"
+            />
 
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <div
-                onClick={() => setFormData(prev => ({ ...prev, enableLazyStrm: !prev.enableLazyStrm }))}
-                className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                  formData.enableLazyStrm ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                }`}
-              >
-                {formData.enableLazyStrm && <Check size={14} className="text-white" />}
-              </div>
-              <span className="text-sm font-medium text-slate-600">懒 STRM</span>
-            </label>
+            <Checkbox
+              checked={formData.enableLazyStrm}
+              onChange={(v) => setFormData(prev => ({ ...prev, enableLazyStrm: v }))}
+              label="懒 STRM"
+              labelClassName="text-sm font-medium text-slate-600"
+            />
 
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <div
-                onClick={() => setFormData(prev => ({ ...prev, enableOrganizer: !prev.enableOrganizer }))}
-                className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                  formData.enableOrganizer ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                }`}
-              >
-                {formData.enableOrganizer && <Check size={14} className="text-white" />}
-              </div>
-              <span className="text-sm font-medium text-slate-600">自动整理</span>
-            </label>
+            <Checkbox
+              checked={formData.enableOrganizer}
+              onChange={(v) => setFormData(prev => ({ ...prev, enableOrganizer: v }))}
+              label="自动整理"
+              labelClassName="text-sm font-medium text-slate-600"
+            />
 
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <div
-                onClick={() => setFormData(prev => ({ ...prev, enableCron: !prev.enableCron }))}
-                className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                  formData.enableCron ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                }`}
-              >
-                {formData.enableCron && <Check size={14} className="text-white" />}
-              </div>
-              <span className="text-sm font-medium text-slate-600">定时任务</span>
-            </label>
+            <Checkbox
+              checked={formData.enableCron}
+              onChange={(v) => setFormData(prev => ({ ...prev, enableCron: v }))}
+              label="定时任务"
+              labelClassName="text-sm font-medium text-slate-600"
+            />
           </div>
 
           {formData.enableCron && (

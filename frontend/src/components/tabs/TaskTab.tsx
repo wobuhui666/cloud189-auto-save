@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { createPortal } from 'react-dom';
 import { Plus, ChevronRight, Filter, Search, RefreshCw, Files, PlayCircle, MoreVertical, CheckCircle2, AlertCircle, Clock, Trash2, ClipboardList, Edit3 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface Account {
   id: number;
@@ -87,6 +89,8 @@ const getTaskFilterKeys = (task: Task) => {
 };
 
 const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -280,7 +284,13 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   };
 
   const handleDeleteTask = async (id: number) => {
-    if (!window.confirm(deleteCloud ? '确定要删除这个任务并且从网盘中也删除吗？' : '确定要删除这个任务吗？')) return;
+    const ok = await dialog.confirm({
+      title: '删除任务',
+      message: deleteCloud ? '确定要删除这个任务并且从网盘中也删除吗？' : '确定要删除这个任务吗？',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const response = await fetch(`/api/tasks/${id}`, {
         method: 'DELETE',
@@ -297,12 +307,18 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   };
 
   const handleExecuteAll = async () => {
-    if (!window.confirm('确定要执行所有任务吗？')) return;
+    const ok = await dialog.confirm({
+      title: '执行所有任务',
+      message: '确定要执行所有任务吗？',
+      confirmText: '确认',
+      tone: 'warning',
+    });
+    if (!ok) return;
     try {
       const response = await fetch('/api/tasks/executeAll', { method: 'POST' });
       const data = await response.json();
       if (data.success) {
-        alert('任务已在后台执行, 请稍后查看结果');
+        toast.info('任务已在后台执行, 请稍后查看结果');
       }
     } catch (error) {
       console.error('Failed to execute all tasks:', error);
@@ -311,7 +327,13 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
   const handleBatchDelete = async () => {
     if (selectedTaskIds.length === 0) return;
-    if (!window.confirm(deleteCloud ? '确定要删除选中任务并且从网盘中也删除吗？' : '确定要删除选中的任务吗？')) return;
+    const ok = await dialog.confirm({
+      title: '批量删除任务',
+      message: deleteCloud ? '确定要删除选中任务并且从网盘中也删除吗？' : '确定要删除选中的任务吗？',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const response = await fetch('/api/tasks/batch', {
         method: 'DELETE',
@@ -342,7 +364,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       if (data.success) {
         fetchTasks();
       } else {
-        alert(data.error || '批量更新状态失败');
+        toast.error(data.error || '批量更新状态失败');
       }
     } catch (error) {
       console.error('Failed to batch update task status:', error);
@@ -422,7 +444,12 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
   const handleGenerateStrm = async () => {
     if (selectedTaskIds.length === 0) return;
-    const overwrite = window.confirm('是否覆盖已存在的STRM文件');
+    const overwrite = await dialog.confirm({
+      title: '生成 STRM',
+      message: '是否覆盖已存在的 STRM 文件？',
+      confirmText: '确认',
+      tone: 'warning',
+    });
     try {
       const response = await fetch('/api/tasks/strm', {
         method: 'POST',
@@ -431,7 +458,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('任务后台执行中, 请稍后查看结果');
+        toast.info('任务后台执行中, 请稍后查看结果');
       }
     } catch (error) {
       console.error('Failed to generate STRM:', error);

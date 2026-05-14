@@ -19,6 +19,9 @@ import {
 } from 'lucide-react';
 import { getDoubanHotMovies, getDoubanHotTV, searchDouban } from '../../lib/douban.client';
 import { getBangumiToday, getBangumiByWeekday, getBangumiRanking } from '../../lib/bangumi.client';
+import Checkbox from '../ui/Checkbox';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 import Modal from '../Modal';
 import PTSearchModal from '../PTSearchModal';
 
@@ -387,6 +390,7 @@ interface PosterWallTabProps {
 }
 
 const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription }) => {
+  const toast = useToast();
   const [activeSource, setActiveSource] = useState<MediaSource>('douban');
   const [loading, setLoading] = useState(false);
 
@@ -656,13 +660,13 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription })
       });
       const data = await r.json();
       if (data.success) {
-        alert('自动追剧任务已添加！');
+        toast.success('自动追剧任务已添加！');
         setIsDetailOpen(false);
       } else {
-        alert(`添加失败: ${data.error || '未知错误'}`);
+        toast.error(`添加失败: ${data.error || '未知错误'}`);
       }
     } catch (e: any) {
-      alert(`添加失败: ${e.message}`);
+      toast.error(`添加失败: ${e.message}`);
     } finally {
       setAddingSeries(false);
     }
@@ -913,6 +917,8 @@ const ListSubscribeModal: React.FC<ListSubscribeModalProps> = ({
   currentCategory,
   currentLabel,
 }) => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [subs, setSubs] = useState<ListSubscription[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -994,21 +1000,27 @@ const ListSubscribeModal: React.FC<ListSubscribeModalProps> = ({
       });
       const d = await r.json();
       if (d?.success) await fetchAll();
-      else alert(d?.error || '更新失败');
+      else toast.error(d?.error || '更新失败');
     } catch (e: any) {
-      alert(e?.message || '请求失败');
+      toast.error(e?.message || '请求失败');
     }
   };
 
   const handleDelete = async (sub: ListSubscription) => {
-    if (!confirm(`确定删除订阅「${sub.name}」吗？`)) return;
+    const ok = await dialog.confirm({
+      title: '删除订阅',
+      message: `确定删除订阅「${sub.name}」吗？`,
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const r = await fetch(`/api/list-subscriptions/${sub.id}`, { method: 'DELETE' });
       const d = await r.json();
       if (d?.success) await fetchAll();
-      else alert(d?.error || '删除失败');
+      else toast.error(d?.error || '删除失败');
     } catch (e: any) {
-      alert(e?.message || '请求失败');
+      toast.error(e?.message || '请求失败');
     }
   };
 
@@ -1018,13 +1030,13 @@ const ListSubscribeModal: React.FC<ListSubscribeModalProps> = ({
       const d = await r.json();
       if (d?.success) {
         const s = d.data || {};
-        alert(`执行完成：抓取 ${s.totalFetched ?? 0} 条 / 新增 ${s.newItems ?? 0} 条 / 自动追剧 ${s.autoSeries ?? 0} / PT ${s.pt ?? 0} / 失败 ${s.failed ?? 0}`);
+        toast.success(`执行完成：抓取 ${s.totalFetched ?? 0} 条 / 新增 ${s.newItems ?? 0} 条 / 自动追剧 ${s.autoSeries ?? 0} / PT ${s.pt ?? 0} / 失败 ${s.failed ?? 0}`);
         await fetchAll();
       } else {
-        alert(d?.error || '执行失败');
+        toast.error(d?.error || '执行失败');
       }
     } catch (e: any) {
-      alert(e?.message || '请求失败');
+      toast.error(e?.message || '请求失败');
     }
   };
 
@@ -1098,15 +1110,13 @@ const ListSubscribeModal: React.FC<ListSubscribeModalProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-3 pt-1">
-            <label className="inline-flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={fallbackToPt}
-                onChange={(e) => setFallbackToPt(e.target.checked)}
-                className="w-4 h-4 text-[#0b57d0] rounded focus:ring-[#0b57d0]"
-              />
-              自动追剧失败时回退到 PT
-            </label>
+            <Checkbox
+              size="sm"
+              checked={fallbackToPt}
+              onChange={setFallbackToPt}
+              label="自动追剧失败时回退到 PT"
+              labelClassName="text-xs text-slate-700 dark:text-slate-300"
+            />
             {fallbackToPt && (
               <select
                 value={ptPreset}

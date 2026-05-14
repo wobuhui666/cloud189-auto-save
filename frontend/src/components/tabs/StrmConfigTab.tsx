@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Link2, MoreVertical, RefreshCw, Edit2, Trash2, Folder, Play, CheckCircle2, AlertCircle, HelpCircle, ChevronLeft, Search, X, Check, FileText } from 'lucide-react';
 import Modal from '../Modal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
+import Checkbox from '../ui/Checkbox';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface Account {
   id: number;
@@ -63,6 +66,8 @@ const formatDateTime = (dateStr: string | null) => {
 };
 
 const StrmConfigTab: React.FC = () => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [configs, setConfigs] = useState<StrmConfig[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -198,7 +203,13 @@ const StrmConfigTab: React.FC = () => {
   };
 
   const handleDeleteConfig = async (id: number) => {
-    if (!confirm('确定要删除这个STRM配置吗？')) return;
+    const ok = await dialog.confirm({
+      title: '删除STRM配置',
+      message: '确定要删除这个STRM配置吗？',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const response = await fetch(`/api/strm/configs/${id}`, { method: 'DELETE' });
       const data = await response.json();
@@ -206,7 +217,7 @@ const StrmConfigTab: React.FC = () => {
         fetchConfigs();
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -222,7 +233,7 @@ const StrmConfigTab: React.FC = () => {
         fetchConfigs();
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -231,27 +242,33 @@ const StrmConfigTab: React.FC = () => {
       const response = await fetch(`/api/strm/configs/${id}/run`, { method: 'POST' });
       const data = await response.json();
       if (data.success) {
-        alert(data.data || '任务已开始执行');
+        toast.success(data.data || '任务已开始执行');
         fetchConfigs();
       } else {
-        alert('执行失败: ' + data.error);
+        toast.error('执行失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
   const handleResetTime = async (id: number) => {
-    if (!confirm('确定要重置该订阅配置的增量时间吗？')) return;
+    const ok = await dialog.confirm({
+      title: '重置增量时间',
+      message: '确定要重置该订阅配置的增量时间吗？',
+      confirmText: '重置',
+      tone: 'warning',
+    });
+    if (!ok) return;
     try {
       const response = await fetch(`/api/strm/configs/${id}/reset`, { method: 'POST' });
       const data = await response.json();
       if (data.success) {
-        alert('已重置增量时间');
+        toast.success('已重置增量时间');
         fetchConfigs();
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -269,17 +286,17 @@ const StrmConfigTab: React.FC = () => {
         setIsModalOpen(false);
         fetchConfigs();
       } else {
-        alert('保存失败: ' + data.error);
+        toast.error('保存失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
   const handleLazySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!lazyFormData.accountId || !lazyFormData.shareLink) {
-      alert('请选择账号并输入分享链接');
+      toast.warning('请选择账号并输入分享链接');
       return;
     }
     try {
@@ -297,7 +314,7 @@ const StrmConfigTab: React.FC = () => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('懒转存生成任务已提交后台执行');
+        toast.success('懒转存生成任务已提交后台执行');
         setIsLazyModalOpen(false);
         setLazyFormData({
           accountId: accounts[0]?.id.toString() || '',
@@ -309,10 +326,10 @@ const StrmConfigTab: React.FC = () => {
           overwriteExisting: false
         });
       } else {
-        alert('生成失败: ' + data.error);
+        toast.error('生成失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -692,44 +709,26 @@ const StrmConfigTab: React.FC = () => {
               />
             </div>
             <div className="flex items-end pb-3">
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <div 
-                  onClick={() => setFormData({...formData, overwriteExisting: !formData.overwriteExisting})}
-                  className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                    formData.overwriteExisting ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                  }`}
-                >
-                  {formData.overwriteExisting && <Check size={14} className="text-white" />}
-                </div>
-                <span className="text-sm font-medium text-slate-700">覆盖已存在的 .strm 文件</span>
-              </label>
+              <Checkbox
+                checked={formData.overwriteExisting}
+                onChange={(v) => setFormData({ ...formData, overwriteExisting: v })}
+                label="覆盖已存在的 .strm 文件"
+              />
             </div>
           </div>
 
           <div className="pt-4 border-t border-slate-100">
             <div className="flex items-center gap-6">
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <div 
-                  onClick={() => setFormData({...formData, enabled: !formData.enabled})}
-                  className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                    formData.enabled ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                  }`}
-                >
-                  {formData.enabled && <Check size={14} className="text-white" />}
-                </div>
-                <span className="text-sm font-medium text-slate-700">启用配置</span>
-              </label>
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <div 
-                  onClick={() => setFormData({...formData, enableCron: !formData.enableCron})}
-                  className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                    formData.enableCron ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                  }`}
-                >
-                  {formData.enableCron && <Check size={14} className="text-white" />}
-                </div>
-                <span className="text-sm font-medium text-slate-700">定时任务</span>
-              </label>
+              <Checkbox
+                checked={formData.enabled}
+                onChange={(v) => setFormData({ ...formData, enabled: v })}
+                label="启用配置"
+              />
+              <Checkbox
+                checked={formData.enableCron}
+                onChange={(v) => setFormData({ ...formData, enableCron: v })}
+                label="定时任务"
+              />
             </div>
           </div>
 
@@ -841,17 +840,11 @@ const StrmConfigTab: React.FC = () => {
           </div>
 
           <div className="flex items-end pb-3">
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <div 
-                  onClick={() => setLazyFormData({...lazyFormData, overwriteExisting: !lazyFormData.overwriteExisting})}
-                  className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                    lazyFormData.overwriteExisting ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 group-hover:border-[#0b57d0]'
-                  }`}
-                >
-                  {lazyFormData.overwriteExisting && <Check size={14} className="text-white" />}
-                </div>
-                <span className="text-sm font-medium text-slate-700">覆盖已存在的 .strm 文件</span>
-              </label>
+              <Checkbox
+                checked={lazyFormData.overwriteExisting}
+                onChange={(v) => setLazyFormData({ ...lazyFormData, overwriteExisting: v })}
+                label="覆盖已存在的 .strm 文件"
+              />
           </div>
 
           <div className="flex justify-end gap-3 pt-4">

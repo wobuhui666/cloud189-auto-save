@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Files, ChevronRight, Search, LayoutGrid, MoreVertical, RefreshCw, ArrowLeft, FolderPlus, Move, Trash2, ExternalLink, Copy, FileText, Folder } from 'lucide-react';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
+import Checkbox from '../ui/Checkbox';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface Account {
   id: number;
@@ -36,6 +39,8 @@ const formatBytes = (bytes: number) => {
 };
 
 const FileManagerTab: React.FC = () => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -75,7 +80,7 @@ const FileManagerTab: React.FC = () => {
         setDriveLabel(data.data?.driveLabel || '');
         setSelectedIds(new Set());
       } else {
-        alert('加载文件失败: ' + data.error);
+        toast.error('加载文件失败: ' + data.error);
       }
     } catch (error) {
       console.error('Failed to fetch files:', error);
@@ -146,9 +151,14 @@ const FileManagerTab: React.FC = () => {
   };
 
   const handleCreateFolder = async () => {
-    const folderName = prompt('请输入新目录名称');
+    const folderName = await dialog.prompt({
+      title: '新建目录',
+      message: '请输入新目录名称',
+      placeholder: '例如：新建文件夹',
+      validate: (v) => !v.trim() ? '名称不能为空' : null,
+    });
     if (!folderName || !folderName.trim()) return;
-    
+
     try {
       const response = await fetch('/api/file-manager/folder', {
         method: 'POST',
@@ -162,16 +172,22 @@ const FileManagerTab: React.FC = () => {
       const data = await response.json();
       if (data.success) {
         fetchFiles(path[path.length - 1].id);
+        toast.success('目录创建成功');
       } else {
-        alert('创建目录失败: ' + data.error);
+        toast.error('创建目录失败: ' + data.error);
       }
     } catch (error) {
-      alert('创建目录失败');
+      toast.error('创建目录失败');
     }
   };
 
   const handleRename = async (entry: FileEntry) => {
-    const newName = prompt('请输入新的名称', entry.name);
+    const newName = await dialog.prompt({
+      title: '重命名',
+      message: '请输入新的名称',
+      defaultValue: entry.name,
+      validate: (v) => !v.trim() ? '名称不能为空' : null,
+    });
     if (!newName || !newName.trim() || newName === entry.name) return;
 
     try {
@@ -187,16 +203,23 @@ const FileManagerTab: React.FC = () => {
       const data = await response.json();
       if (data.success) {
         fetchFiles(path[path.length - 1].id);
+        toast.success('重命名成功');
       } else {
-        alert('重命名失败: ' + data.error);
+        toast.error('重命名失败: ' + data.error);
       }
     } catch (error) {
-      alert('重命名失败');
+      toast.error('重命名失败');
     }
   };
 
   const handleDelete = async (entriesToDelete: FileEntry[]) => {
-    if (!window.confirm(`确定删除选中的 ${entriesToDelete.length} 个项目吗？`)) return;
+    const ok = await dialog.confirm({
+      title: '删除文件',
+      message: `确定删除选中的 ${entriesToDelete.length} 个项目吗？`,
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
 
     try {
       const response = await fetch('/api/file-manager/delete', {
@@ -210,11 +233,12 @@ const FileManagerTab: React.FC = () => {
       const data = await response.json();
       if (data.success) {
         fetchFiles(path[path.length - 1].id);
+        toast.success('删除成功');
       } else {
-        alert('删除失败: ' + data.error);
+        toast.error('删除失败: ' + data.error);
       }
     } catch (error) {
-      alert('删除失败');
+      toast.error('删除失败');
     }
   };
 
@@ -232,13 +256,13 @@ const FileManagerTab: React.FC = () => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('移动成功');
+        toast.success('移动成功');
         fetchFiles(path[path.length - 1].id);
       } else {
-        alert('移动失败: ' + data.error);
+        toast.error('移动失败: ' + data.error);
       }
     } catch (error) {
-      alert('移动失败');
+      toast.error('移动失败');
     }
   };
 
@@ -251,13 +275,13 @@ const FileManagerTab: React.FC = () => {
           window.open(data.data.url, '_blank');
         } else {
           await navigator.clipboard.writeText(data.data.url);
-          alert('直链已复制');
+          toast.success('直链已复制');
         }
       } else {
-        alert('获取直链失败: ' + data.error);
+        toast.error('获取直链失败: ' + data.error);
       }
     } catch (error) {
-      alert('获取直链失败');
+      toast.error('获取直链失败');
     }
   };
 
@@ -271,8 +295,8 @@ const FileManagerTab: React.FC = () => {
     setSelectedIds(newSelected);
   };
 
-  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
       setSelectedIds(new Set(visibleEntries.map(e => e.id)));
     } else {
       setSelectedIds(new Set());
@@ -383,11 +407,11 @@ const FileManagerTab: React.FC = () => {
             <thead className="bg-slate-50/50 border-b border-slate-100">
               <tr>
                 <th className="px-6 py-4 w-12">
-                  <input 
-                    type="checkbox" 
-                    className="rounded border-slate-400 text-[#0b57d0] focus:ring-[#0b57d0]" 
+                  <Checkbox
+                    size="sm"
                     onChange={handleSelectAll}
                     checked={visibleEntries.length > 0 && selectedIds.size === visibleEntries.length}
+                    indeterminate={selectedIds.size > 0 && selectedIds.size < visibleEntries.length}
                   />
                 </th>
                 <th className="px-6 py-4 font-medium text-slate-500">名称</th>
@@ -415,9 +439,8 @@ const FileManagerTab: React.FC = () => {
                 visibleEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="px-6 py-4">
-                      <input 
-                        type="checkbox" 
-                        className="rounded border-slate-400 text-[#0b57d0] focus:ring-[#0b57d0]" 
+                      <Checkbox
+                        size="sm"
                         checked={selectedIds.has(entry.id)}
                         onChange={() => toggleSelect(entry.id)}
                       />
@@ -474,7 +497,7 @@ const FileManagerTab: React.FC = () => {
                                 onClick={() => {
                                   setOpenFileMenuId(null);
                                   navigator.clipboard.writeText(entry.id);
-                                  alert('已复制 ID');
+                                  toast.success('已复制 ID');
                                 }}
                                 className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
                               >
@@ -519,7 +542,7 @@ const FileManagerTab: React.FC = () => {
         title="选择移动目标目录"
         onSelect={(folder: SelectedFolder) => {
           if (folder.accountId !== Number(selectedAccountId)) {
-            alert('不能跨账号移动文件，请选择当前账号下的目标目录');
+            toast.warning('不能跨账号移动文件，请选择当前账号下的目标目录');
             return;
           }
           handleMove(folder.id);

@@ -43,6 +43,7 @@ import SettingsTab from './components/tabs/SettingsTab';
 import CasTab from './components/tabs/CasTab';
 import PtTab, { type PtPrefillData } from './components/tabs/PtTab';
 import PosterWallTab from './components/tabs/PosterWallTab';
+import { useDialog } from './components/ui/Dialog';
 
 // --- Types ---
 export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'posterWall' | 'settings';
@@ -73,6 +74,7 @@ const getSystemPrefersDark = () => {
 };
 
 export default function App() {
+  const dialog = useDialog();
   const [activeTab, setActiveTab] = useState<TabType>('task');
   const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
   const [isLogsOpen, setIsLogsOpen] = useState(false);
@@ -201,7 +203,13 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (!confirm('确定要退出登录吗？')) return;
+    const ok = await dialog.confirm({
+      title: '退出登录',
+      message: '确定要退出登录吗？',
+      confirmText: '退出',
+      tone: 'warning',
+    });
+    if (!ok) return;
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
       window.location.href = '/login';

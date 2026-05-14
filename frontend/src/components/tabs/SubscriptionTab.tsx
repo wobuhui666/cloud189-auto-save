@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Rss, MoreVertical, RefreshCw, Edit2, Trash2, Folder, ExternalLink, Search, ChevronLeft, Play, Info, CheckCircle2, AlertCircle, HelpCircle, Power } from 'lucide-react';
 import Modal from '../Modal';
+import Checkbox from '../ui/Checkbox';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface Subscription {
   id: number;
@@ -158,6 +161,8 @@ const createInitialSubscriptionFormData = (autoTaskConfig: AutoTaskConfig = DEFA
 });
 
 const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [openSubscriptionMenuId, setOpenSubscriptionMenuId] = useState<number | null>(null);
@@ -397,15 +402,20 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
   const handleSaveSub = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingSub && previewInfo && !previewInfo.canCreate) {
-      if (!confirm('预检查建议不创建，确定要继续吗？')) return;
+      const ok = await dialog.confirm({
+        title: '继续创建订阅',
+        message: '预检查建议不创建，确定要继续吗？',
+        tone: 'warning'
+      });
+      if (!ok) return;
     }
     if (subFormData.autoCreateTasks) {
       if (autoTaskPreviewLoading) {
-        alert('正在预估将要创建的任务数量，请稍后再试');
+        toast.warning('正在预估将要创建的任务数量，请稍后再试');
         return;
       }
       if (!autoTaskPreview?.canAutoCreateTasks) {
-        alert(autoTaskPreview?.recommendation || '当前自动建任务配置不可用，请先修正后再保存');
+        toast.warning(autoTaskPreview?.recommendation || '当前自动建任务配置不可用，请先修正后再保存');
         return;
       }
       const confirmMessageParts = [
@@ -415,7 +425,11 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       if (autoTaskPreview.failedEstimateCount > 0) {
         confirmMessageParts.push(`其中有 ${autoTaskPreview.failedEstimateCount} 个资源暂时无法完成预估`);
       }
-      const confirmed = confirm(`${confirmMessageParts.join('，')}，是否继续？`);
+      const confirmed = await dialog.confirm({
+        title: '确认自动创建任务',
+        message: `${confirmMessageParts.join('，')}，是否继续？`,
+        tone: 'warning'
+      });
       if (!confirmed) {
         return;
       }
@@ -437,21 +451,21 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             autoTaskSummary.failedResources?.length ? `失败 ${autoTaskSummary.failedResources.length} 个资源` : ''
           ].filter(Boolean).join('，');
           if (summaryText) {
-            alert(summaryText);
+            toast.success(summaryText);
           }
         }
         fetchSubscriptions();
       } else {
-        alert('保存失败: ' + data.error);
+        toast.error('保存失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
   const fetchRemoteSubscriptionResources = async (pageNum: number = 1, keyword: string = remoteSelectorKeyword) => {
     if (!subFormData.uuid.trim()) {
-      alert('请先填写 UUID / 订阅主页链接');
+      toast.warning('请先填写 UUID / 订阅主页链接');
       return;
     }
 
@@ -472,10 +486,10 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         setRemoteSelectorTotalPages(data.data?.totalPages || 0);
         setRemoteSelectorUuid(data.data?.uuid || '');
       } else {
-        alert('加载订阅链接失败: ' + data.error);
+        toast.error('加载订阅链接失败: ' + data.error);
       }
     } catch (error) {
-      alert('加载订阅链接失败');
+      toast.error('加载订阅链接失败');
     } finally {
       setRemoteSelectorLoading(false);
     }
@@ -520,7 +534,13 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
   };
 
   const handleDeleteSub = async (id: number) => {
-    if (!confirm('确定要删除这个订阅吗？对应资源也会一起删除')) return;
+    const ok = await dialog.confirm({
+      title: '删除订阅',
+      message: '确定要删除这个订阅吗？对应资源也会一起删除',
+      confirmText: '删除',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try {
       const response = await fetch(`/api/subscriptions/${id}`, { method: 'DELETE' });
       const data = await response.json();
@@ -528,7 +548,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         fetchSubscriptions();
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -544,7 +564,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         fetchSubscriptions();
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -568,10 +588,10 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         if (autoTaskSummary?.failedResources?.length) {
           summaryParts.push(`自动建任务失败 ${autoTaskSummary.failedResources.length} 个资源`);
         }
-        alert(summaryParts.join('，'));
+        toast.success(summaryParts.join('，'));
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -642,15 +662,21 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         fetchResources(currentSub.id);
         fetchSubscriptions();
       } else {
-        alert('保存失败: ' + data.error);
+        toast.error('保存失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
   const handleDeleteResource = async (id: number) => {
-    if (!confirm('确定要删除这个资源吗？')) return;
+    const ok = await dialog.confirm({
+      title: '删除资源',
+      message: '确定要删除这个资源吗？',
+      confirmText: '删除',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try {
       const response = await fetch(`/api/subscriptions/resources/${id}`, { method: 'DELETE' });
       const data = await response.json();
@@ -659,7 +685,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         fetchSubscriptions();
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -728,7 +754,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       setIsBrowserOpen(false);
       setIsResModalOpen(false);
     } else {
-      alert('转存组件未就绪');
+      toast.warning('转存组件未就绪');
     }
   };
 
@@ -994,32 +1020,24 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             />
           </div>
           <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={subFormData.autoCreateTasks}
-                onChange={e => {
-                  const checked = e.target.checked;
-                  setSubFormData(prev => ({
-                    ...prev,
-                    autoCreateTasks: checked,
-                    autoTaskConfig: checked
-                      ? {
-                          ...defaultAutoTaskConfig,
-                          ...prev.autoTaskConfig
-                        }
-                      : prev.autoTaskConfig
-                  }));
-                }}
-                className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
-              />
-              <div>
-                <div className="text-sm font-medium text-slate-800">自动创建任务</div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  开启后会按订阅里的资源自动生成任务，后续刷新订阅时也会继续补建未创建的任务。
-                </div>
-              </div>
-            </label>
+            <Checkbox
+              align="start"
+              checked={subFormData.autoCreateTasks}
+              onChange={(checked) => {
+                setSubFormData(prev => ({
+                  ...prev,
+                  autoCreateTasks: checked,
+                  autoTaskConfig: checked
+                    ? {
+                        ...defaultAutoTaskConfig,
+                        ...prev.autoTaskConfig
+                      }
+                    : prev.autoTaskConfig
+                }));
+              }}
+              label={<span className="text-sm font-medium text-slate-800">自动创建任务</span>}
+              description="开启后会按订阅里的资源自动生成任务，后续刷新订阅时也会继续补建未创建的任务。"
+            />
 
             {subFormData.autoCreateTasks && (
               <div className="space-y-4">
@@ -1101,42 +1119,30 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                 </div>
 
                 <div className="flex flex-wrap gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={subFormData.autoTaskConfig.enableTaskScraper}
-                      onChange={e => updateAutoTaskConfig({ enableTaskScraper: e.target.checked })}
-                      className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
-                    />
-                    <span className="text-sm font-medium text-slate-700">启用刮削</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={subFormData.autoTaskConfig.enableLazyStrm}
-                      onChange={e => updateAutoTaskConfig({ enableLazyStrm: e.target.checked })}
-                      className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
-                    />
-                    <span className="text-sm font-medium text-slate-700">懒 STRM</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={subFormData.autoTaskConfig.enableOrganizer}
-                      onChange={e => updateAutoTaskConfig({ enableOrganizer: e.target.checked })}
-                      className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
-                    />
-                    <span className="text-sm font-medium text-slate-700">自动整理</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={subFormData.autoTaskConfig.enableCron}
-                      onChange={e => updateAutoTaskConfig({ enableCron: e.target.checked })}
-                      className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
-                    />
-                    <span className="text-sm font-medium text-slate-700">定时任务</span>
-                  </label>
+                  <Checkbox
+                    size="sm"
+                    checked={subFormData.autoTaskConfig.enableTaskScraper}
+                    onChange={(v) => updateAutoTaskConfig({ enableTaskScraper: v })}
+                    label="启用刮削"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={subFormData.autoTaskConfig.enableLazyStrm}
+                    onChange={(v) => updateAutoTaskConfig({ enableLazyStrm: v })}
+                    label="懒 STRM"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={subFormData.autoTaskConfig.enableOrganizer}
+                    onChange={(v) => updateAutoTaskConfig({ enableOrganizer: v })}
+                    label="自动整理"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={subFormData.autoTaskConfig.enableCron}
+                    onChange={(v) => updateAutoTaskConfig({ enableCron: v })}
+                    label="定时任务"
+                  />
                 </div>
 
                 {subFormData.autoTaskConfig.enableCron && (
@@ -1154,15 +1160,11 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
               </div>
             )}
           </div>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={subFormData.enabled}
-              onChange={e => setSubFormData({...subFormData, enabled: e.target.checked})}
-              className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
-            />
-            <span className="text-sm font-medium text-slate-700">启用此订阅</span>
-          </label>
+          <Checkbox
+            checked={subFormData.enabled}
+            onChange={(v) => setSubFormData({ ...subFormData, enabled: v })}
+            label="启用此订阅"
+          />
         </form>
       </Modal>
 
@@ -1260,11 +1262,10 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                 ) : remoteSelectorItems.map(item => (
                   <tr key={item.shareCode} className="hover:bg-slate-50/60 transition-colors">
                     <td className="px-4 py-3">
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                        size="sm"
                         checked={remoteSelectorSelectedShareCodes.includes(item.shareCode)}
                         onChange={() => handleToggleRemoteShareCode(item.shareCode)}
-                        className="w-4 h-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/20"
                       />
                     </td>
                     <td className="px-4 py-3">

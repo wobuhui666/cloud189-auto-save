@@ -16,6 +16,10 @@ import {
   Zap
 } from 'lucide-react';
 import Modal from '../Modal';
+import Checkbox from '../ui/Checkbox';
+import Switch from '../ui/Switch';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface MediaSettings {
   strm: {
@@ -126,6 +130,8 @@ const initialSettings: MediaSettings = {
 };
 
 const MediaTab: React.FC = () => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [settings, setSettings] = useState<MediaSettings>(initialSettings);
   const [regexPresets, setRegexPresets] = useState<RegexPreset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -239,12 +245,12 @@ const MediaTab: React.FC = () => {
       }
 
       if (data.success) {
-        alert('媒体设置已成功保存');
+        toast.success('媒体设置已成功保存');
       } else {
-        alert('保存失败: ' + data.error);
+        toast.error('保存失败: ' + data.error);
       }
     } catch (error) {
-      alert('保存失败: ' + (error as Error).message);
+      toast.error('保存失败: ' + (error as Error).message);
     } finally {
       setSaving(false);
     }
@@ -284,15 +290,21 @@ const MediaTab: React.FC = () => {
         setRegexPresets(newPresets);
         setIsEditRegexModalOpen(false);
       } else {
-        alert('保存预设失败: ' + data.error);
+        toast.error('保存预设失败: ' + data.error);
       }
     } catch (error) {
-      alert('保存预设失败: ' + (error as Error).message);
+      toast.error('保存预设失败: ' + (error as Error).message);
     }
   };
 
   const deleteRegexPreset = async (index: number) => {
-    if (!confirm('确定要删除这个正则预设吗？')) return;
+    const ok = await dialog.confirm({
+      title: '删除预设',
+      message: '确定要删除这个正则预设吗？',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     const newPresets = regexPresets.filter((_, i) => i !== index);
     try {
       const response = await fetch('/api/settings/regex-presets', {
@@ -305,7 +317,7 @@ const MediaTab: React.FC = () => {
         setRegexPresets(newPresets);
       }
     } catch (error) {
-      alert('删除预设失败');
+      toast.error('删除预设失败');
     }
   };
 
@@ -325,15 +337,7 @@ const MediaTab: React.FC = () => {
           <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
             <Cpu size={24} className="text-[#0b57d0]" /> AI 辅助重命名
           </h3>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input 
-              type="checkbox" 
-              className="sr-only peer" 
-              checked={settings.openai.enable}
-              onChange={(e) => updateSetting('openai.enable', e.target.checked)}
-            />
-            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-          </label>
+          <Switch checked={settings.openai.enable} onChange={(v) => updateSetting('openai.enable', v)} />
         </div>
         
         <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.openai.enable && 'opacity-60 pointer-events-none'}`}>
@@ -385,15 +389,11 @@ const MediaTab: React.FC = () => {
               <p className="text-sm font-medium text-slate-900">AI API 流控</p>
               <p className="text-xs text-slate-500">开启后会将 AI 请求串行排队，降低上游接口并发压力。</p>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                className="sr-only peer"
-                checked={settings.openai.flowControlEnabled}
-                onChange={e => updateSetting('openai.flowControlEnabled', e.target.checked)}
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-            </label>
+            <Switch
+              checked={settings.openai.flowControlEnabled}
+              onChange={(v) => updateSetting('openai.flowControlEnabled', v)}
+              className="shrink-0"
+            />
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">电影命名模板</label>
@@ -420,34 +420,26 @@ const MediaTab: React.FC = () => {
         </h3>
         <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
           <div className="flex flex-col gap-4">
-            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
-              <div 
-                onClick={() => updateSetting('strm.enable', !settings.strm.enable)}
-                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
-                  settings.strm.enable ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
-                }`}
-              >
-                {settings.strm.enable && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-              </div>
-              <div>
-                <span className="text-sm font-medium text-slate-900">启用 STRM 生成</span>
-                <p className="text-[10px] text-slate-400">允许系统为转存任务生成 .strm 播放文件</p>
-              </div>
-            </label>
-            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
-              <div 
-                onClick={() => updateSetting('strm.useStreamProxy', !settings.strm.useStreamProxy)}
-                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
-                  settings.strm.useStreamProxy ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
-                }`}
-              >
-                {settings.strm.useStreamProxy && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-              </div>
-              <div>
-                <span className="text-sm font-medium text-slate-900">普通任务使用系统中转</span>
-                <p className="text-[10px] text-slate-400">由服务端换取直链，避免临时直链过期</p>
-              </div>
-            </label>
+            <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <Checkbox
+                size="lg"
+                align="start"
+                checked={settings.strm.enable}
+                onChange={(v) => updateSetting('strm.enable', v)}
+                label={<span className="text-sm font-medium text-slate-900">启用 STRM 生成</span>}
+                description="允许系统为转存任务生成 .strm 播放文件"
+              />
+            </div>
+            <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <Checkbox
+                size="lg"
+                align="start"
+                checked={settings.strm.useStreamProxy}
+                onChange={(v) => updateSetting('strm.useStreamProxy', v)}
+                label={<span className="text-sm font-medium text-slate-900">普通任务使用系统中转</span>}
+                description="由服务端换取直链，避免临时直链过期"
+              />
+            </div>
           </div>
         </div>
       </section>
@@ -675,15 +667,7 @@ const MediaTab: React.FC = () => {
             <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
               <Globe size={24} className="text-[#0b57d0]" /> Alist 设置
             </h3>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="sr-only peer" 
-                checked={settings.alist.enable}
-                onChange={(e) => updateSetting('alist.enable', e.target.checked)}
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-            </label>
+            <Switch checked={settings.alist.enable} onChange={(v) => updateSetting('alist.enable', v)} />
           </div>
           <div className={`bg-white rounded-3xl border border-slate-200/60 p-6 space-y-4 shadow-sm transition-opacity ${!settings.alist.enable && 'opacity-60 pointer-events-none'}`}>
             <div className="space-y-1">
@@ -713,15 +697,7 @@ const MediaTab: React.FC = () => {
             <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
               <Search size={24} className="text-[#0b57d0]" /> TMDB 刮削
             </h3>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="sr-only peer" 
-                checked={settings.tmdb.enableScraper}
-                onChange={(e) => updateSetting('tmdb.enableScraper', e.target.checked)}
-              />
-              <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-            </label>
+            <Switch checked={settings.tmdb.enableScraper} onChange={(v) => updateSetting('tmdb.enableScraper', v)} />
           </div>
           <div className={`bg-white rounded-3xl border border-slate-200/60 p-6 space-y-4 shadow-sm transition-opacity ${!settings.tmdb.enableScraper && 'opacity-60 pointer-events-none'}`}>
             <div className="space-y-1">

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, MoreVertical } from 'lucide-react';
 import Modal from '../Modal';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface CapacityInfo {
   totalSize: number;
@@ -41,6 +43,8 @@ const formatBytes = (bytes: number) => {
 };
 
 const AccountTab: React.FC = () => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -119,18 +123,24 @@ const AccountTab: React.FC = () => {
   };
 
   const handleDeleteAccount = async (id: number) => {
-    if (!confirm('确定要删除这个账号吗？')) return;
+    const ok = await dialog.confirm({
+      title: '删除账号',
+      message: '确定要删除这个账号吗？',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const response = await fetch(`/api/accounts/${id}`, { method: 'DELETE' });
       const data = await response.json();
       if (data.success) {
-        alert('账号删除成功');
+        toast.success('账号删除成功');
         fetchAccounts();
       } else {
-        alert('账号删除失败: ' + data.error);
+        toast.error('账号删除失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
@@ -142,39 +152,45 @@ const AccountTab: React.FC = () => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('设置默认账号成功');
+        toast.success('设置默认账号成功');
         fetchAccounts();
       } else {
-        alert('设置默认账号失败: ' + data.error);
+        toast.error('设置默认账号失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
   const handleClearRecycleBin = async () => {
-    if (!confirm('确定要清空所有账号的回收站吗？')) return;
+    const ok = await dialog.confirm({
+      title: '清空回收站',
+      message: '确定要清空所有账号的回收站吗？',
+      confirmText: '清空',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const response = await fetch('/api/accounts/recycle', { method: 'DELETE' });
       const data = await response.json();
       if (data.success) {
-        alert('后台任务执行中, 请稍后查看结果');
+        toast.info('后台任务执行中, 请稍后查看结果');
       } else {
-        alert('清空回收站失败: ' + data.error);
+        toast.error('清空回收站失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.username) {
-      alert('用户名不能为空');
+      toast.warning('用户名不能为空');
       return;
     }
     if (!formData.password && !formData.cookies) {
-      alert('密码和Cookie不能同时为空');
+      toast.warning('密码和Cookie不能同时为空');
       return;
     }
 
@@ -193,28 +209,32 @@ const AccountTab: React.FC = () => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('成功');
+        toast.success('成功');
         setIsModalOpen(false);
         fetchAccounts();
       } else if (data.code === 'NEED_CAPTCHA') {
         setCaptchaInfo({ url: data.data.captchaUrl });
-        alert('请输入验证码后重新提交');
+        toast.warning('请输入验证码后重新提交');
       } else {
-        alert('操作失败: ' + data.error);
+        toast.error('操作失败: ' + data.error);
       }
     } catch (error) {
-      alert('操作失败');
+      toast.error('操作失败');
     }
   };
 
-  const updateField = (id: number, type: 'alias' | 'cloud' | 'local' | 'emby', currentVal: string) => {
+  const updateField = async (id: number, type: 'alias' | 'cloud' | 'local' | 'emby', currentVal: string) => {
     const labels = {
       alias: '新的别名',
       cloud: '新的媒体目录前缀',
       local: '新的本地目录前缀',
       emby: '新的Emby替换路径'
     };
-    const newVal = prompt(`请输入${labels[type]}`, currentVal);
+    const newVal = await dialog.prompt({
+      title: labels[type],
+      message: `请输入${labels[type]}`,
+      defaultValue: currentVal,
+    });
     if (newVal === null) return;
 
     const endpoint = type === 'alias' ? `/api/accounts/${id}/alias` : `/api/accounts/${id}/strm-prefix`;
@@ -228,13 +248,13 @@ const AccountTab: React.FC = () => {
     .then(res => res.json())
     .then(data => {
       if (data.success) {
-        alert('更新成功');
+        toast.success('更新成功');
         fetchAccounts();
       } else {
-        alert('更新失败: ' + data.error);
+        toast.error('更新失败: ' + data.error);
       }
     })
-    .catch(() => alert('操作失败'));
+    .catch(() => toast.error('操作失败'));
   };
 
   return (

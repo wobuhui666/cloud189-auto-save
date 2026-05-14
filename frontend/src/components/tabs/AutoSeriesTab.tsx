@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, PlayCircle, RefreshCw, AlertCircle, CheckCircle2, X, ArrowLeft, Check } from 'lucide-react';
 import Modal from '../Modal';
+import Checkbox from '../ui/Checkbox';
+import { useToast } from '../ui/Toast';
 
 interface Account {
   id: number;
@@ -26,6 +28,7 @@ interface CandidateResource {
 const DEFAULT_AUTO_SERIES_MODE: AutoSeriesMode = 'lazy';
 
 const AutoSeriesTab: React.FC = () => {
+  const toast = useToast();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -90,15 +93,15 @@ const AutoSeriesTab: React.FC = () => {
       const data = await response.json();
       if (data.success) {
         const resultMode: AutoSeriesMode = data.data?.mode === 'normal' ? 'normal' : form.mode;
-        alert(data.data?.taskCount > 0
+        toast.success(data.data?.taskCount > 0
           ? `已创建${resultMode === 'lazy' ? '懒转存' : '自动'}任务：${data.data.taskName}`
           : `已生成懒转存STRM：${data.data.taskName}`);
         resetModal();
       } else {
-        alert('自动追剧失败: ' + data.error);
+        toast.error('自动追剧失败: ' + data.error);
       }
     } catch (error) {
-      alert('自动追剧失败: ' + (error as Error).message);
+      toast.error('自动追剧失败: ' + (error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -106,7 +109,7 @@ const AutoSeriesTab: React.FC = () => {
 
   const handleSearch = async () => {
     if (!form.title.trim()) {
-      alert('剧名不能为空');
+      toast.warning('剧名不能为空');
       return;
     }
     setSearching(true);
@@ -118,17 +121,17 @@ const AutoSeriesTab: React.FC = () => {
       if (data.success) {
         const list: CandidateResource[] = data.data?.resources || [];
         if (!list.length) {
-          alert('未搜索到可用资源');
+          toast.info('未搜索到可用资源');
           return;
         }
         setCandidates(list);
         setSelectedLink(list[0]?.shareLink || '');
         setStep('select');
       } else {
-        alert('资源搜索失败: ' + data.error);
+        toast.error('资源搜索失败: ' + data.error);
       }
     } catch (error) {
-      alert('资源搜索失败: ' + (error as Error).message);
+      toast.error('资源搜索失败: ' + (error as Error).message);
     } finally {
       setSearching(false);
     }
@@ -137,7 +140,7 @@ const AutoSeriesTab: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title.trim()) {
-      alert('剧名不能为空');
+      toast.warning('剧名不能为空');
       return;
     }
     if (form.manualSelect) {
@@ -149,7 +152,7 @@ const AutoSeriesTab: React.FC = () => {
 
   const handleConfirmSelection = async () => {
     if (!selectedLink) {
-      alert('请选择一个资源');
+      toast.warning('请选择一个资源');
       return;
     }
     const picked = candidates.find(item => item.shareLink === selectedLink);
@@ -281,20 +284,15 @@ const AutoSeriesTab: React.FC = () => {
             </div>
 
             {/* 手动选择资源开关 —— 默认关闭 */}
-            <label className="flex items-start gap-3 px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl cursor-pointer hover:bg-slate-100/70 transition-colors">
-              <input
-                type="checkbox"
+            <div className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl hover:bg-slate-100/70 transition-colors">
+              <Checkbox
+                align="start"
                 checked={form.manualSelect}
-                onChange={e => setForm({ ...form, manualSelect: e.target.checked })}
-                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#0b57d0] focus:ring-[#0b57d0]/40"
+                onChange={(v) => setForm({ ...form, manualSelect: v })}
+                label={<span className="text-sm font-medium text-slate-800">手动选择资源</span>}
+                description="开启后将先展示候选资源列表，由你确认后再创建任务；关闭则自动挑选最匹配的资源。"
               />
-              <div className="flex-1">
-                <div className="text-sm font-medium text-slate-800">手动选择资源</div>
-                <div className="text-xs text-slate-500 mt-0.5">
-                  开启后将先展示候选资源列表，由你确认后再创建任务；关闭则自动挑选最匹配的资源。
-                </div>
-              </div>
-            </label>
+            </div>
 
             <div className="bg-[#f8fafd] p-4 rounded-2xl border border-slate-100">
               <p className="text-xs text-slate-500 leading-relaxed">

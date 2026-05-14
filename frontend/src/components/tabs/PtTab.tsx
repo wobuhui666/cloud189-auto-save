@@ -3,6 +3,9 @@ import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircl
 import Modal from '../Modal';
 import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
+import Checkbox from '../ui/Checkbox';
+import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface SearchResult { id: string; title: string; cover: string; url: string; source: string; directRss?: boolean; preview?: string[]; groups?: GroupResult[]; }
 interface GroupResult { name: string; rssUrl: string; itemCount?: number; source: string; }
@@ -134,6 +137,8 @@ interface PtTabProps {
 }
 
 const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
+  const toast = useToast();
+  const dialog = useDialog();
   const [subs, setSubs] = useState<PtSubscription[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [presets, setPresets] = useState<SourcePreset[]>([]);
@@ -309,7 +314,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return; // 防连点重入
-    if (!formData.accountId) { alert('请选择天翼云盘账号'); return; }
+    if (!formData.accountId) { toast.warning('请选择天翼云盘账号'); return; }
     setIsSaving(true);
     try {
       const url = editing ? `/api/pt/subscriptions/${editing.id}` : '/api/pt/subscriptions';
@@ -331,32 +336,44 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
         if (!editing && d.refreshResult) {
           const count = d.refreshResult.processed ?? 0;
           if (count > 0) {
-            alert(`订阅已添加,本次新增 ${count} 条 release`);
+            toast.success(`订阅已添加，本次新增 ${count} 条 release`);
           }
         }
       } else {
-        alert('保存失败: ' + d.error);
+        toast.error('保存失败: ' + d.error);
       }
     } catch {
-      alert('操作失败');
+      toast.error('操作失败');
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('删除订阅会一并清理其 release 记录(不会立即删除 qb 中已经在下的任务)。继续?')) return;
+    const ok = await dialog.confirm({
+      title: '删除订阅',
+      message: '删除订阅会一并清理其 release 记录\n（不会立即删除 qb 中已经在下的任务）',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const r = await fetch(`/api/pt/subscriptions/${id}`, { method: 'DELETE' });
       const d = await r.json();
       if (d.success) fetchSubs();
-      else alert('删除失败: ' + d.error);
-    } catch { alert('网络错误'); }
+      else toast.error('删除失败: ' + d.error);
+    } catch { toast.error('网络错误'); }
   };
 
   const handleDedupe = async () => {
     if (isDeduping) return;
-    if (!confirm('将合并 (账号 + RSS URL) 完全相同的订阅,保留最早一条,其余删除并把 release 转移过去。继续?')) return;
+    const ok = await dialog.confirm({
+      title: '合并重复订阅',
+      message: '将合并 (账号 + RSS URL) 完全相同的订阅，保留最早一条，其余删除并把 release 转移过去。',
+      confirmText: '继续',
+      tone: 'warning',
+    });
+    if (!ok) return;
     setIsDeduping(true);
     try {
       const r = await fetch('/api/pt/subscriptions/dedupe', { method: 'POST' });
@@ -365,16 +382,16 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
         const removed = d.data?.removed ?? 0;
         const merged = d.data?.mergedReleases ?? 0;
         if (removed === 0) {
-          alert('未发现重复订阅');
+          toast.info('未发现重复订阅');
         } else {
-          alert(`已合并 ${removed} 条重复订阅,迁移 ${merged} 条 release`);
+          toast.success(`已合并 ${removed} 条重复订阅，迁移 ${merged} 条 release`);
         }
         fetchSubs();
       } else {
-        alert('清理失败: ' + d.error);
+        toast.error('清理失败: ' + d.error);
       }
     } catch {
-      alert('网络错误');
+      toast.error('网络错误');
     } finally {
       setIsDeduping(false);
     }
@@ -388,7 +405,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       });
       const d = await r.json();
       if (d.success) fetchSubs();
-    } catch { alert('网络错误'); }
+    } catch { toast.error('网络错误'); }
   };
 
   const handleRefresh = async (id: number) => {
@@ -396,12 +413,12 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       const r = await fetch(`/api/pt/subscriptions/${id}/refresh`, { method: 'POST' });
       const d = await r.json();
       if (d.success) {
-        alert(`本次新增 ${d.data?.processed ?? 0} 条`);
+        toast.success(`本次新增 ${d.data?.processed ?? 0} 条`);
         fetchSubs();
       } else {
-        alert('刷新失败: ' + d.error);
+        toast.error('刷新失败: ' + d.error);
       }
-    } catch { alert('网络错误'); }
+    } catch { toast.error('网络错误'); }
   };
 
   const openReleases = async (sub: PtSubscription) => {
@@ -432,18 +449,24 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       const r = await fetch(`/api/pt/releases/${id}/retry`, { method: 'POST' });
       const d = await r.json();
       if (d.success) refreshReleases();
-      else alert('重试失败: ' + d.error);
-    } catch { alert('网络错误'); }
+      else toast.error('重试失败: ' + d.error);
+    } catch { toast.error('网络错误'); }
   };
 
   const handleDeleteRelease = async (id: number) => {
-    if (!confirm('删除 release 同时会从 qb 中删掉对应任务（含本地文件），是否继续？')) return;
+    const ok = await dialog.confirm({
+      title: '删除 Release',
+      message: '删除 release 同时会从 qb 中删掉对应任务（含本地文件）',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const r = await fetch(`/api/pt/releases/${id}`, { method: 'DELETE' });
       const d = await r.json();
       if (d.success) refreshReleases();
-      else alert('删除失败: ' + d.error);
-    } catch { alert('网络错误'); }
+      else toast.error('删除失败: ' + d.error);
+    } catch { toast.error('网络错误'); }
   };
 
   const openSettings = async () => {
@@ -456,7 +479,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
     if (!settings) return;
     try {
       const cur = await fetch('/api/settings').then(r => r.json());
-      if (!cur.success) { alert('读取设置失败'); return; }
+      if (!cur.success) { toast.error('读取设置失败'); return; }
       const merged = {
         ...cur.data,
         pt: settings,
@@ -468,13 +491,13 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       });
       const d = await r.json();
       if (d.success) {
-        alert('设置已保存');
+        toast.success('设置已保存');
         setIsSettingsOpen(false);
       } else {
-        alert('保存失败: ' + d.error);
+        toast.error('保存失败: ' + d.error);
       }
     } catch {
-      alert('保存失败');
+      toast.error('保存失败');
     }
   };
 
@@ -514,9 +537,9 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       let d: any;
       try { d = JSON.parse(text); } catch { throw new Error(`服务器返回非 JSON: ${text.slice(0, 200)}`); }
       if (d.success) setSearchResults(d.data || []);
-      else alert(d.error || '搜索失败');
+      else toast.error(d.error || '搜索失败');
     } catch (e: any) {
-      alert(e.message || '搜索失败');
+      toast.error(e.message || '搜索失败');
     } finally {
       setSearchLoading(false);
     }
@@ -556,9 +579,9 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       let d: any;
       try { d = JSON.parse(text); } catch { throw new Error(`服务器返回非 JSON: ${text.slice(0, 200)}`); }
       if (d.success) setSearchGroups(d.data || []);
-      else alert(d.error || '获取字幕组失败');
+      else toast.error(d.error || '获取字幕组失败');
     } catch (e: any) {
-      alert(e.message || '获取字幕组失败');
+      toast.error(e.message || '获取字幕组失败');
     } finally {
       setSearchLoading(false);
     }
@@ -761,16 +784,16 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
             <div className="flex gap-2">
               <input type="text" readOnly value={formData.targetFolder || formData.targetFolderId} placeholder="点击右侧按钮选择目录"
                 className="flex-1 px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
-              <button type="button" onClick={() => formData.accountId ? setFolderSelectorOpen(true) : alert('请先选择账号')}
+              <button type="button" onClick={() => formData.accountId ? setFolderSelectorOpen(true) : toast.warning('请先选择账号')}
                 className="px-5 py-3 border border-slate-300 rounded-2xl text-sm font-medium hover:bg-slate-50">选择</button>
             </div>
           </div>
 
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" checked={formData.enabled} onChange={e => setFormData({ ...formData, enabled: e.target.checked })}
-              className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-            <span className="text-sm font-medium text-slate-700">启用此订阅</span>
-          </label>
+          <Checkbox
+            checked={formData.enabled}
+            onChange={(v) => setFormData({ ...formData, enabled: v })}
+            label="启用此订阅"
+          />
 
           <div className="flex justify-end gap-3 pt-4">
             <button type="button" onClick={() => setIsModalOpen(false)} disabled={isSaving} className="px-6 py-2.5 rounded-full text-sm font-medium text-[#0b57d0] hover:bg-[#0b57d0]/10 disabled:opacity-50 disabled:cursor-not-allowed">取消</button>
@@ -889,12 +912,15 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   <input type="text" value={settings.downloader.tagPrefix} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, tagPrefix: e.target.value } })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
                 </div>
-                <label className="flex items-center gap-2 md:col-span-2 cursor-pointer">
-                  <input type="checkbox" checked={settings.downloader.insecureSkipTlsVerify}
-                    onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, insecureSkipTlsVerify: e.target.checked } })}
-                    className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-                  <span className="text-sm">允许自签 HTTPS（跳过证书校验）</span>
-                </label>
+                <div className="md:col-span-2">
+                  <Checkbox
+                    size="sm"
+                    checked={settings.downloader.insecureSkipTlsVerify}
+                    onChange={(v) => setSettings({ ...settings, downloader: { ...settings.downloader, insecureSkipTlsVerify: v } })}
+                    label="允许自签 HTTPS（跳过证书校验）"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <button type="button" onClick={handleTestDownloader} disabled={testing}
@@ -926,40 +952,46 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
                 </div>
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={settings.cleanupEnabled}
-                  onChange={e => setSettings({ ...settings, cleanupEnabled: e.target.checked })}
-                  className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-                <span className="text-sm">已完成 release 自动清理 qb 任务和本地文件</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer mt-2">
-                <input type="checkbox" checked={settings.autoDeleteSource}
-                  onChange={e => setSettings({ ...settings, autoDeleteSource: e.target.checked })}
-                  className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-                <span className="text-sm">生成 .cas 后自动删除本地源文件</span>
-              </label>
+              <Checkbox
+                size="sm"
+                checked={settings.cleanupEnabled}
+                onChange={(v) => setSettings({ ...settings, cleanupEnabled: v })}
+                label="已完成 release 自动清理 qb 任务和本地文件"
+                labelClassName="text-sm text-slate-700"
+              />
+              <Checkbox
+                size="sm"
+                className="mt-2"
+                checked={settings.autoDeleteSource}
+                onChange={(v) => setSettings({ ...settings, autoDeleteSource: v })}
+                label="生成 .cas 后自动删除本地源文件"
+                labelClassName="text-sm text-slate-700"
+              />
               <div className="flex items-center gap-2 mt-2 ml-6">
                 <span className={`text-xs ${settings.deleteCloudSource ? 'text-emerald-600' : 'text-slate-400'}`}>
                   {settings.deleteCloudSource ? '✓ 网盘源文件会在 CAS 生成后自动删除' : '网盘源文件删除请在「媒体」选项卡中配置「生成后删除源文件」'}
                 </span>
               </div>
-              <label className="flex items-center gap-2 cursor-pointer mt-2">
-                <input type="checkbox" checked={settings.enableStrm}
-                  onChange={e => setSettings({ ...settings, enableStrm: e.target.checked })}
-                  className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-                <span className="text-sm">上传完成后自动生成 STRM 文件</span>
-              </label>
+              <Checkbox
+                size="sm"
+                className="mt-2"
+                checked={settings.enableStrm}
+                onChange={(v) => setSettings({ ...settings, enableStrm: v })}
+                label="上传完成后自动生成 STRM 文件"
+                labelClassName="text-sm text-slate-700"
+              />
             </div>
 
             <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium text-slate-800">STRM 文件整理</div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={settings.strmOrganize.enabled}
-                    onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, enabled: e.target.checked } })}
-                    className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-                  <span className="text-sm">启用整理</span>
-                </label>
+                <Checkbox
+                  size="sm"
+                  checked={settings.strmOrganize.enabled}
+                  onChange={(v) => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, enabled: v } })}
+                  label="启用整理"
+                  labelClassName="text-sm text-slate-700"
+                />
               </div>
 
               {settings.strmOrganize.enabled && (
@@ -1035,12 +1067,15 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   { key: 'ptNyaa', label: 'Nyaa' },
                   { key: 'ptDmhy', label: '动漫花园' }
                 ].map(item => (
-                  <label key={item.key} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
-                    <input type="checkbox" checked={!!proxyServices[item.key]}
-                      onChange={e => setProxyServices({ ...proxyServices, [item.key]: e.target.checked })}
-                      className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]" />
-                    <span className="text-sm">{item.label}</span>
-                  </label>
+                  <div key={item.key} className="p-2 rounded-lg hover:bg-slate-50 transition-colors">
+                    <Checkbox
+                      size="sm"
+                      checked={!!proxyServices[item.key]}
+                      onChange={(v) => setProxyServices({ ...proxyServices, [item.key]: v })}
+                      label={item.label}
+                      labelClassName="text-sm text-slate-700"
+                    />
+                  </div>
                 ))}
               </div>
             </div>
@@ -1070,15 +1105,13 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                 </button>
               </div>
               <div className="flex items-center gap-2 px-1">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={aggregateSearch}
-                    onChange={(e) => setAggregateSearch(e.target.checked)}
-                    className="w-4 h-4 text-[#0b57d0] rounded focus:ring-[#0b57d0]"
-                  />
-                  <span className="text-sm text-slate-600">聚合搜索（同时搜索所有源）</span>
-                </label>
+                <Checkbox
+                  size="sm"
+                  checked={aggregateSearch}
+                  onChange={setAggregateSearch}
+                  label="聚合搜索（同时搜索所有源）"
+                  labelClassName="text-sm text-slate-600"
+                />
               </div>
               <div className="max-h-96 overflow-y-auto space-y-2">
                 {searchResults.length === 0 && !searchLoading && (

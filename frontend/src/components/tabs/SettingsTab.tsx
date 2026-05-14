@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Settings as SettingsIcon, Bell, MessageSquare, Shield, Globe, Cpu, Database, Save, RefreshCw, Key, Plus, Trash2, X, Settings, PlayCircle, Folder, Send } from 'lucide-react';
 import Modal from '../Modal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
+import Checkbox from '../ui/Checkbox';
+import Switch from '../ui/Switch';
+import { useToast } from '../ui/Toast';
 
 interface CustomPushConfig {
   name: string;
@@ -188,6 +191,7 @@ const initialSettings: SettingsData = {
 };
 
 const SettingsTab: React.FC = () => {
+  const toast = useToast();
   const [settings, setSettings] = useState<SettingsData>(initialSettings);
   const [accounts, setAccounts] = useState<{id: number, username: string, alias?: string}[]>([]);
   const [loading, setLoading] = useState(true);
@@ -318,13 +322,13 @@ const SettingsTab: React.FC = () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ regexPresets })
         });
-        alert('设置已成功保存');
+        toast.success('设置已成功保存');
       } else {
-        alert('保存失败: ' + data.error);
+        toast.error('保存失败: ' + data.error);
       }
     } catch (error) {
       console.error('Failed to save settings:', error);
-      alert('保存失败: ' + (error as Error).message);
+      toast.error('保存失败: ' + (error as Error).message);
     } finally {
       setSaving(false);
     }
@@ -378,12 +382,12 @@ const SettingsTab: React.FC = () => {
       });
       const data = await response.json();
       if (data.success) {
-        alert('测试消息已发送，请到 Telegram 查看');
+        toast.success('测试消息已发送，请到 Telegram 查看');
       } else {
-        alert('测试失败: ' + data.error);
+        toast.error('测试失败: ' + data.error);
       }
     } catch (error) {
-      alert('测试失败: ' + (error as Error).message);
+      toast.error('测试失败: ' + (error as Error).message);
     }
   };
 
@@ -414,10 +418,10 @@ const SettingsTab: React.FC = () => {
         body: JSON.stringify(config)
       });
       const data = await response.json();
-      if (data.success) alert('推送测试成功');
-      else alert('测试失败: ' + data.error);
+      if (data.success) toast.success('推送测试成功');
+      else toast.error('测试失败: ' + data.error);
     } catch (e) {
-      alert('测试失败');
+      toast.error('测试失败');
     }
   };
 
@@ -684,18 +688,13 @@ const SettingsTab: React.FC = () => {
           <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
             <Send size={24} className="text-[#0b57d0]" /> Telegram 机器人
           </h3>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              className="sr-only peer"
-              checked={settings.telegram.bot.enable}
-              onChange={(e) => {
-                updateSettings('telegram.bot.enable', e.target.checked);
-                updateSettings('telegram.enable', e.target.checked);
-              }}
-            />
-            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-          </label>
+          <Switch
+            checked={settings.telegram.bot.enable}
+            onChange={(v) => {
+              updateSettings('telegram.bot.enable', v);
+              updateSettings('telegram.enable', v);
+            }}
+          />
         </div>
         <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.telegram.bot.enable && 'opacity-60 pointer-events-none'}`}>
           <div className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed space-y-2">
@@ -833,15 +832,7 @@ const SettingsTab: React.FC = () => {
                   <p className="text-xs text-slate-500">通过 Webhook 推送任务状态</p>
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  className="sr-only peer" 
-                  checked={settings.wecom.enable}
-                  onChange={(e) => updateSettings('wecom.enable', e.target.checked)}
-                />
-                <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0b57d0]"></div>
-              </label>
+              <Switch checked={settings.wecom.enable} onChange={(v) => updateSettings('wecom.enable', v)} />
             </div>
             {settings.wecom.enable && (
               <div className="px-4 animate-in slide-in-from-top-2 duration-200">
@@ -1170,15 +1161,11 @@ const SettingsTab: React.FC = () => {
             </div>
           </div>
 
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input 
-              type="checkbox" 
-              checked={pushForm.enabled}
-              onChange={e => setPushForm({...pushForm, enabled: e.target.checked})}
-              className="w-4 h-4 rounded border-slate-300 text-[#0b57d0]"
-            />
-            <span className="text-sm font-medium text-slate-700">启用此推送</span>
-          </label>
+          <Checkbox
+            checked={pushForm.enabled}
+            onChange={(v) => setPushForm({ ...pushForm, enabled: v })}
+            label="启用此推送"
+          />
 
           <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
             <button type="button" onClick={() => setIsPushModalOpen(false)} className="px-6 py-2.5 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">取消</button>
