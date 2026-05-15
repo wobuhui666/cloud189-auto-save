@@ -31,6 +31,7 @@ class CreateTaskDto {
         this.enableTaskScraper = data?.enableTaskScraper; // 启用刮削
         this.enableLazyStrm = data?.enableLazyStrm; // 启用懒转存STRM
         this.enableOrganizer = data?.enableOrganizer; // 启用整理器
+        this.keepCasAfterRestore = Boolean(data?.keepCasAfterRestore); // CAS秒传恢复后保留原CAS文件
         this.enableSystemProxy = data?.enableSystemProxy; // 启用系统代理
         this.isFolder = data?.isFolder; // 是否是文件夹
     }

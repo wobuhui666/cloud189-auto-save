@@ -39,11 +39,13 @@ const AutoSeriesTab: React.FC = () => {
     year: string;
     mode: AutoSeriesMode;
     manualSelect: boolean;
+    keepCasAfterRestore: boolean;
   }>({
     title: '',
     year: '',
     mode: DEFAULT_AUTO_SERIES_MODE,
-    manualSelect: false
+    manualSelect: false,
+    keepCasAfterRestore: false
   });
   const [candidates, setCandidates] = useState<CandidateResource[]>([]);
   const [selectedLink, setSelectedLink] = useState<string>('');
@@ -71,7 +73,7 @@ const AutoSeriesTab: React.FC = () => {
 
   const resetModal = () => {
     setIsModalOpen(false);
-    setForm({ title: '', year: '', mode: DEFAULT_AUTO_SERIES_MODE, manualSelect: false });
+    setForm({ title: '', year: '', mode: DEFAULT_AUTO_SERIES_MODE, manualSelect: false, keepCasAfterRestore: false });
     setCandidates([]);
     setSelectedLink('');
     setStep('form');
@@ -87,6 +89,7 @@ const AutoSeriesTab: React.FC = () => {
           title: form.title,
           year: form.year,
           mode: form.mode,
+          keepCasAfterRestore: form.keepCasAfterRestore,
           ...(shareLink ? { shareLink, resourceTitle: resourceTitle || '' } : {})
         })
       });
@@ -291,6 +294,16 @@ const AutoSeriesTab: React.FC = () => {
                 onChange={(v) => setForm({ ...form, manualSelect: v })}
                 label={<span className="text-sm font-medium text-slate-800">手动选择资源</span>}
                 description="开启后将先展示候选资源列表，由你确认后再创建任务；关闭则自动挑选最匹配的资源。"
+              />
+            </div>
+
+            <div className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl hover:bg-slate-100/70 transition-colors">
+              <Checkbox
+                align="start"
+                checked={form.keepCasAfterRestore}
+                onChange={(v) => setForm({ ...form, keepCasAfterRestore: v })}
+                label={<span className="text-sm font-medium text-slate-800">保留原 CAS 文件</span>}
+                description="开启后，任务秒传恢复成功会保留网盘中的 .cas 文件；关闭则保持恢复后自动删除。"
               />
             </div>
 

@@ -170,6 +170,7 @@ class TaskService {
             enableTaskScraper: taskDto.enableTaskScraper,
             enableLazyStrm: taskDto.enableLazyStrm,
             enableOrganizer: taskDto.enableOrganizer,
+            keepCasAfterRestore: taskDto.keepCasAfterRestore,
             isFolder: taskDto.isFolder
         };
     }
@@ -1123,6 +1124,10 @@ class TaskService {
                 await this._saveProcessedFileRecord(task, casFile, 'done');
 
                 // 非核心：清理源文件 (降级)
+                if (task.keepCasAfterRestore) {
+                    logTaskEvent(`普通任务已保留CAS文件: ${transferredCasFile.name}`, 'info', 'transfer');
+                    continue;
+                }
                 try {
                     await cloud189.deleteFile(transferredCasFile.id, transferredCasFile.name);
                     logTaskEvent(`普通任务已删除CAS文件: ${transferredCasFile.name}`, 'info', 'transfer');
@@ -1615,7 +1620,8 @@ class TaskService {
             cronExpression: task.cronExpression,
             enableTaskScraper: task.enableTaskScraper,
             enableLazyStrm: task.enableLazyStrm,
-            enableOrganizer: task.enableOrganizer
+            enableOrganizer: task.enableOrganizer,
+            keepCasAfterRestore: task.keepCasAfterRestore
         };
 
         // 如果原realFolderName和现realFolderName不一致 则需要删除原strm
@@ -1626,7 +1632,7 @@ class TaskService {
             new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
         }
         // 只允许更新特定字段
-        const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer'];
+        const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer', 'keepCasAfterRestore'];
         for (const field of allowedFields) {
             if (updates[field] !== undefined) {
                 task[field] = updates[field];
@@ -1677,7 +1683,8 @@ class TaskService {
             ['cronExpression', 'Cron 表达式'],
             ['enableTaskScraper', '任务刮削'],
             ['enableLazyStrm', '懒转存 STRM'],
-            ['enableOrganizer', '自动整理']
+            ['enableOrganizer', '自动整理'],
+            ['keepCasAfterRestore', '保留原CAS文件']
         ];
         for (const [field, label] of trackedFields) {
             const beforeValue = previousTaskSnapshot[field];

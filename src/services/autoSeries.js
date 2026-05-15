@@ -10,12 +10,13 @@ class AutoSeriesService {
         this.tmdbService = new TMDBService();
     }
 
-    async createByTitle({ title, year = '', mode = 'lazy', shareLink = '', resourceTitle = '' }) {
+    async createByTitle({ title, year = '', mode = 'lazy', shareLink = '', resourceTitle = '', keepCasAfterRestore = false }) {
         const normalizedTitle = String(title || '').trim();
         const normalizedYear = String(year || '').trim();
         const normalizedMode = this._normalizeMode(mode);
         const manualShareLink = String(shareLink || '').trim();
         const manualResourceTitle = String(resourceTitle || '').trim();
+        const shouldKeepCasAfterRestore = Boolean(keepCasAfterRestore);
         if (!normalizedTitle) {
             throw new Error('剧名不能为空');
         }
@@ -63,7 +64,8 @@ class AutoSeriesService {
                 targetFolderId,
                 resource,
                 taskName,
-                tmdbInfo
+                tmdbInfo,
+                keepCasAfterRestore: shouldKeepCasAfterRestore
             });
         }
 
@@ -88,7 +90,8 @@ class AutoSeriesService {
             tmdbId: tmdbInfo?.id ? String(tmdbInfo.id) : null,
             enableTaskScraper: true,
             enableLazyStrm: false,
-            enableOrganizer: true
+            enableOrganizer: true,
+            keepCasAfterRestore: shouldKeepCasAfterRestore
         });
 
         for (const task of tasks || []) {
@@ -105,7 +108,7 @@ class AutoSeriesService {
         };
     }
 
-    async _createLazySeries({ account, targetFolderId, resource, taskName, tmdbInfo }) {
+    async _createLazySeries({ account, targetFolderId, resource, taskName, tmdbInfo, keepCasAfterRestore = false }) {
         if (!this.lazyShareStrmService) {
             throw new Error('懒转存服务未初始化');
         }
@@ -142,7 +145,8 @@ class AutoSeriesService {
             tmdbId: tmdbInfo?.id ? String(tmdbInfo.id) : null,
             enableTaskScraper: false,
             enableLazyStrm: true,
-            enableOrganizer: true
+            enableOrganizer: true,
+            keepCasAfterRestore: Boolean(keepCasAfterRestore)
         });
 
         for (const task of tasks || []) {

@@ -46,6 +46,7 @@ interface TaskInitialData {
   enableTaskScraper?: boolean;
   enableLazyStrm?: boolean;
   enableOrganizer?: boolean;
+  keepCasAfterRestore?: boolean;
   status?: 'pending' | 'processing' | 'completed' | 'failed';
 }
 
@@ -81,6 +82,7 @@ interface TaskFormData {
   enableTaskScraper: boolean;
   enableLazyStrm: boolean;
   enableOrganizer: boolean;
+  keepCasAfterRestore: boolean;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   batchShareLinks: string;
   overwriteFolder: number;
@@ -124,6 +126,7 @@ const EMPTY_FORM_DATA: TaskFormData = {
   enableTaskScraper: false,
   enableLazyStrm: false,
   enableOrganizer: false,
+  keepCasAfterRestore: false,
   status: 'pending',
   batchShareLinks: '',
   overwriteFolder: 0
@@ -183,6 +186,7 @@ const createInitialFormData = (initialData?: TaskInitialData | null): TaskFormDa
     enableTaskScraper: Boolean(initialData.enableTaskScraper),
     enableLazyStrm: Boolean(initialData.enableLazyStrm),
     enableOrganizer: Boolean(initialData.enableOrganizer),
+    keepCasAfterRestore: Boolean(initialData.keepCasAfterRestore),
     status: initialData.status || 'pending'
   };
 };
@@ -435,7 +439,8 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
           cronExpression: formData.cronExpression,
           enableTaskScraper: formData.enableTaskScraper,
           enableLazyStrm: formData.enableLazyStrm,
-          enableOrganizer: formData.enableOrganizer
+          enableOrganizer: formData.enableOrganizer,
+          keepCasAfterRestore: formData.keepCasAfterRestore
         };
       } else if (isBatchMode) {
         endpoint = '/api/tasks/batch-create';
@@ -752,6 +757,13 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
               checked={formData.enableOrganizer}
               onChange={(v) => setFormData(prev => ({ ...prev, enableOrganizer: v }))}
               label="自动整理"
+              labelClassName="text-sm font-medium text-slate-600"
+            />
+
+            <Checkbox
+              checked={formData.keepCasAfterRestore}
+              onChange={(v) => setFormData(prev => ({ ...prev, keepCasAfterRestore: v }))}
+              label="保留原 CAS 文件"
               labelClassName="text-sm font-medium text-slate-600"
             />
 

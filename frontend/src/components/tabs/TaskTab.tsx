@@ -37,6 +37,7 @@ interface Task {
   enableTaskScraper?: boolean;
   enableLazyStrm: boolean;
   enableOrganizer: boolean;
+  keepCasAfterRestore?: boolean;
   enableCron: boolean;
 }
 
@@ -68,7 +69,8 @@ const TASK_FEATURE_FILTERS: Array<{
 }> = [
   { key: 'feature:lazy-strm', label: '懒STRM', matches: (task) => task.enableLazyStrm },
   { key: 'feature:cron', label: '定时任务', matches: (task) => Boolean(task.enableCron) },
-  { key: 'feature:organizer', label: '整理器', matches: (task) => task.enableOrganizer }
+  { key: 'feature:organizer', label: '整理器', matches: (task) => task.enableOrganizer },
+  { key: 'feature:keep-cas', label: '保留CAS', matches: (task) => Boolean(task.keepCasAfterRestore) }
 ];
 
 const getTaskFilterKeys = (task: Task) => {
@@ -279,6 +281,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       enableTaskScraper: Boolean(task.enableTaskScraper),
       enableLazyStrm: task.enableLazyStrm,
       enableOrganizer: task.enableOrganizer,
+      keepCasAfterRestore: Boolean(task.keepCasAfterRestore),
       enableCron: Boolean(task.enableCron)
     });
   };
@@ -690,6 +693,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                       {task.enableLazyStrm && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">懒STRM</span>}
                       {task.enableCron && <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-[10px] font-bold">定时任务</span>}
                       {task.enableOrganizer && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold">整理器</span>}
+                      {task.keepCasAfterRestore && <span className="px-2 py-0.5 bg-sky-100 text-sky-700 rounded text-[10px] font-bold">保留CAS</span>}
                     </div>
                     <p className="text-sm text-slate-500 mt-1">
                       账号: {task.account?.username || '未知账号'} • 分组: {task.taskGroup || '-'}

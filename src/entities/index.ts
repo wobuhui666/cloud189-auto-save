@@ -266,6 +266,9 @@ export class Task {
     @Column('boolean', { nullable: true, default: false })
     enableOrganizer!: boolean; // 是否启用整理器
 
+    @Column('boolean', { nullable: true, default: false })
+    keepCasAfterRestore!: boolean; // CAS秒传恢复后是否保留原CAS文件
+
     @Column('datetime', { nullable: true, transformer: {
         from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
         to: (date: Date) => date
