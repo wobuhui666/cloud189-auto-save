@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, Loader2, Wand2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, ChevronDown, Loader2, Wand2, Filter, HardDrive, Users } from 'lucide-react';
 import Modal from '../Modal';
 import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
@@ -20,6 +20,13 @@ interface PtSubscription {
   rssUrl: string;
   includePattern: string;
   excludePattern: string;
+  qualityPattern: string;
+  resolutionPattern: string;
+  effectPattern: string;
+  sizeMinMB: number;
+  sizeMaxMB: number;
+  seedersMin: number;
+  freeOnly: boolean;
   accountId: number;
   targetFolderId: string;
   targetFolder: string;
@@ -40,6 +47,13 @@ interface PtRelease {
   downloadPath: string;
   cloudFolderName: string;
   lastError: string;
+  size?: number;
+  seeders?: number;
+  peers?: number;
+  grabs?: number;
+  downloadVolumeFactor?: number | null;
+  uploadVolumeFactor?: number | null;
+  publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -83,6 +97,13 @@ const DEFAULT_FORM = {
   rssUrl: '',
   includePattern: '',
   excludePattern: '',
+  qualityPattern: '',
+  resolutionPattern: '',
+  effectPattern: '',
+  sizeMinMB: 0,
+  sizeMaxMB: 0,
+  seedersMin: 0,
+  freeOnly: false,
   accountId: 0,
   targetFolderId: '',
   targetFolder: '',
@@ -97,6 +118,26 @@ const getLastUsedDir = () => {
 const formatDateTime = (s: string | null) => {
   if (!s) return '从未';
   return new Date(s).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+const formatSize = (bytes?: number) => {
+  const n = Number(bytes || 0);
+  if (!n || !Number.isFinite(n)) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024 ** 4) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  return `${(n / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
+};
+
+const formatVolumeFactor = (rel: PtRelease): string => {
+  const dl = rel.downloadVolumeFactor;
+  const ul = rel.uploadVolumeFactor;
+  if (dl === 0 && ul != null && ul > 1) return `${ul}X免费`;
+  if (dl === 0) return '免费';
+  if (dl != null && dl > 0 && dl < 1) return `${Math.round(dl * 100)}%`;
+  if (ul != null && ul > 1) return `${ul}X`;
+  return '';
 };
 
 const statusColor = (status: string) => {
@@ -149,6 +190,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   const [formData, setFormData] = useState({ ...DEFAULT_FORM });
   const [isSaving, setIsSaving] = useState(false);
   const [isDeduping, setIsDeduping] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [folderSelectorOpen, setFolderSelectorOpen] = useState(false);
 
@@ -268,6 +310,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       targetFolderId: lastDir?.targetFolderId || '',
       targetFolder: lastDir?.targetFolder || '',
     });
+    setShowAdvanced(false);
     setIsModalOpen(true);
     onPrefillConsumed?.();
     // 仅在 prefill 引用变化或账号到位时触发
@@ -292,6 +335,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       targetFolderId: lastDir?.targetFolderId || '',
       targetFolder: lastDir?.targetFolder || '',
     });
+    setShowAdvanced(false);
     setIsModalOpen(true);
   };
 
@@ -303,11 +347,22 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       rssUrl: sub.rssUrl || '',
       includePattern: sub.includePattern || '',
       excludePattern: sub.excludePattern || '',
+      qualityPattern: sub.qualityPattern || '',
+      resolutionPattern: sub.resolutionPattern || '',
+      effectPattern: sub.effectPattern || '',
+      sizeMinMB: Number(sub.sizeMinMB) || 0,
+      sizeMaxMB: Number(sub.sizeMaxMB) || 0,
+      seedersMin: Number(sub.seedersMin) || 0,
+      freeOnly: !!sub.freeOnly,
       accountId: sub.accountId,
       targetFolderId: sub.targetFolderId,
       targetFolder: sub.targetFolder,
       enabled: sub.enabled
     });
+    setShowAdvanced(
+      !!(sub.qualityPattern || sub.resolutionPattern || sub.effectPattern
+        || sub.sizeMinMB || sub.sizeMaxMB || sub.seedersMin || sub.freeOnly)
+    );
     setIsModalOpen(true);
   };
 
@@ -627,6 +682,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       targetFolderId: lastDir?.targetFolderId || '',
       targetFolder: lastDir?.targetFolder || '',
     });
+    setShowAdvanced(false);
     setIsModalOpen(true);
   };
 
@@ -770,6 +826,76 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
             </div>
           </div>
 
+          <div className="rounded-2xl border border-slate-200 overflow-hidden">
+            <button type="button" onClick={() => setShowAdvanced(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-sm font-medium text-slate-700">
+              <span className="flex items-center gap-2"><Filter size={14} /> 高级过滤（清晰度 / 大小 / 做种数 / Free）</span>
+              {showAdvanced ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
+            </button>
+            {showAdvanced && (
+              <div className="p-4 space-y-4 bg-white">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">分辨率正则</label>
+                    <input type="text" value={formData.resolutionPattern}
+                      onChange={e => setFormData({ ...formData, resolutionPattern: e.target.value })}
+                      placeholder="例如: 1080p|2160p"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">质量正则</label>
+                    <input type="text" value={formData.qualityPattern}
+                      onChange={e => setFormData({ ...formData, qualityPattern: e.target.value })}
+                      placeholder="例如: BluRay|WEB-DL"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">特效正则</label>
+                    <input type="text" value={formData.effectPattern}
+                      onChange={e => setFormData({ ...formData, effectPattern: e.target.value })}
+                      placeholder="例如: HDR|DV|Dolby"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">最小体积 (MB)</label>
+                    <input type="number" min={0} value={formData.sizeMinMB}
+                      onChange={e => setFormData({ ...formData, sizeMinMB: Number(e.target.value) || 0 })}
+                      placeholder="0 = 不限"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">最大体积 (MB)</label>
+                    <input type="number" min={0} value={formData.sizeMaxMB}
+                      onChange={e => setFormData({ ...formData, sizeMaxMB: Number(e.target.value) || 0 })}
+                      placeholder="0 = 不限"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">最少做种数</label>
+                    <input type="number" min={0} value={formData.seedersMin}
+                      onChange={e => setFormData({ ...formData, seedersMin: Number(e.target.value) || 0 })}
+                      placeholder="0 = 不限"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
+                  </div>
+                </div>
+
+                <Checkbox
+                  size="sm"
+                  checked={formData.freeOnly}
+                  onChange={(v) => setFormData({ ...formData, freeOnly: v })}
+                  label="仅免费 (Free) 资源"
+                  labelClassName="text-sm text-slate-700"
+                />
+                <p className="text-xs text-slate-400">
+                  匹配标题、描述、标签全文。RSS 不提供体积/做种数时（如部分公共 RSS），相关数值过滤自动跳过。
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">天翼云盘账号</label>
             <select value={formData.accountId} onChange={e => setFormData({ ...formData, accountId: Number(e.target.value), targetFolderId: '', targetFolder: '' })}
@@ -837,10 +963,36 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">加载中...</td></tr>
                 ) : releases.length === 0 ? (
                   <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">暂无 release</td></tr>
-                ) : releases.map(rel => (
+                ) : releases.map(rel => {
+                  const sizeText = formatSize(rel.size);
+                  const factorText = formatVolumeFactor(rel);
+                  const isFreeFactor = factorText.includes('免费') || /^\d+X$/i.test(factorText);
+                  return (
                   <tr key={rel.id} className="hover:bg-slate-50/50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-slate-900 truncate max-w-[300px]" title={rel.title}>{rel.title}</div>
+                      {(sizeText || rel.seeders != null && rel.seeders > 0 || factorText) && (
+                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
+                          {sizeText && (
+                            <span className="inline-flex items-center gap-0.5">
+                              <HardDrive size={11} />{sizeText}
+                            </span>
+                          )}
+                          {rel.seeders != null && rel.seeders > 0 && (
+                            <span className="inline-flex items-center gap-0.5">
+                              <Users size={11} />{rel.seeders}
+                            </span>
+                          )}
+                          {factorText && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${isFreeFactor ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {factorText}
+                            </span>
+                          )}
+                          {rel.publishedAt && (
+                            <span className="text-slate-400">· 发布 {formatDateTime(rel.publishedAt)}</span>
+                          )}
+                        </div>
+                      )}
                       {rel.lastError && <div className="text-[11px] text-red-500 mt-0.5 truncate max-w-[300px]" title={rel.lastError}>{rel.lastError}</div>}
                     </td>
                     <td className="px-4 py-3">
@@ -865,7 +1017,8 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

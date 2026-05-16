@@ -5,8 +5,10 @@ const {
     decodeHtmlEntities,
     extractInfoHashFromMagnet,
     extractUrlCandidates,
-    matchReleaseTitle,
+    matchReleaseFilters,
     normalizeWhitespace,
+    parseNumber,
+    parseSizeToBytes,
     resolveUrl,
     safeFileName,
     stripHtml
@@ -75,7 +77,7 @@ class PtSourceService {
             throw new Error('RSS 地址不能为空');
         }
 
-        const proxyService = this._getProxyService(subscription.sourcePreset || 'generic');
+        const proxyService = this.getProxyService(subscription.sourcePreset || 'generic');
         const proxyAgent = proxyService ? ProxyUtil.getProxyAgent(proxyService) : {};
 
         const response = await got(rssUrl, {
@@ -89,7 +91,7 @@ class PtSourceService {
 
         const items = this.parseFeedItems(response.body, rssUrl)
             .filter((item) => item.title)
-            .filter((item) => matchReleaseTitle(item.title, subscription.includePattern, subscription.excludePattern));
+            .filter((item) => matchReleaseFilters(item, subscription));
 
         return items;
     }
@@ -140,6 +142,10 @@ class PtSourceService {
         );
         const infoHashTag = normalizeWhitespace(this._getFirstTagText(block, ['infoHash', 'nyaa:infoHash', 'torrent:infohash']));
         const publishedRaw = this._getFirstTagText(block, ['pubDate', 'published', 'updated']);
+        const size = this._extractSize(block);
+        const labels = this._extractLabels(block, description);
+        const downloadVolumeFactor = this._extractNumberTag(block, ['downloadvolumefactor', 'downloadVolumeFactor', 'download_factor', 'torrent:downloadvolumefactor']);
+        const uploadVolumeFactor = this._extractNumberTag(block, ['uploadvolumefactor', 'uploadVolumeFactor', 'upload_factor', 'torrent:uploadvolumefactor']);
         const linkCandidates = this._collectLinkCandidates(block, description, baseUrl);
         // torrent:magneturi 自定义标签（AniBT 等站点使用）
         const torrentMagnet = normalizeWhitespace(this._getFirstTagText(block, ['torrent:magneturi']));
@@ -166,6 +172,14 @@ class PtSourceService {
             torrentUrl,
             detailsUrl,
             infoHash,
+            size,
+            seeders: this._extractNumberTag(block, ['seeders', 'seeds', 'nyaa:seeders', 'torrent:seeders']),
+            peers: this._extractNumberTag(block, ['peers', 'leechers', 'nyaa:leechers', 'torrent:leechers']),
+            grabs: this._extractNumberTag(block, ['grabs', 'downloads', 'nyaa:downloads', 'torrent:downloads']),
+            downloadVolumeFactor,
+            uploadVolumeFactor,
+            labels,
+            volumeFactor: this._formatVolumeFactor(uploadVolumeFactor, downloadVolumeFactor, labels),
             publishedAt: this._parseDate(publishedRaw),
             rawPublishedAt: normalizeWhitespace(publishedRaw),
             sourceLinks: linkCandidates
@@ -235,6 +249,64 @@ class PtSourceService {
         return '';
     }
 
+    _getAllTagText(block = '', tagName = '') {
+        const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(`<${escaped}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'gi');
+        const result = [];
+        let match = null;
+        while ((match = pattern.exec(String(block || ''))) !== null) {
+            result.push(stripHtml(match[1]));
+        }
+        return result;
+    }
+
+    _extractNumberTag(block = '', tagNames = []) {
+        for (const tagName of tagNames) {
+            const text = this._getFirstTagText(block, [tagName]);
+            const value = parseNumber(String(text || '').replace(/,/g, ''), null);
+            if (value != null) {
+                return value;
+            }
+        }
+        return 0;
+    }
+
+    _extractSize(block = '') {
+        const enclosurePattern = /<enclosure\b([^>]*?)\/?>/gi;
+        let encMatch = null;
+        while ((encMatch = enclosurePattern.exec(block)) !== null) {
+            const length = this._readAttribute(encMatch[1] || '', 'length');
+            const size = parseSizeToBytes(length);
+            if (size > 0) return size;
+        }
+        for (const tagName of ['size', 'length', 'nyaa:size', 'torrent:size', 'torrent:contentLength']) {
+            const size = parseSizeToBytes(this._getFirstTagText(block, [tagName]));
+            if (size > 0) return size;
+        }
+        return 0;
+    }
+
+    _extractLabels(block = '', description = '') {
+        const labels = [
+            ...this._getAllTagText(block, 'category'),
+            ...this._getAllTagText(block, 'tag'),
+            ...this._getAllTagText(block, 'label')
+        ].map(normalizeWhitespace).filter(Boolean);
+        const content = `${stripHtml(description)} ${labels.join(' ')}`;
+        if (/free|免费|2x免费|0x/i.test(content)) {
+            labels.push('FREE');
+        }
+        return [...new Set(labels)];
+    }
+
+    _formatVolumeFactor(uploadFactor, downloadFactor, labels = []) {
+        if (downloadFactor === 0 && uploadFactor > 1) return `${uploadFactor}X免费`;
+        if (downloadFactor === 0) return '免费';
+        if (downloadFactor > 0 && downloadFactor < 1) return `${Math.round(downloadFactor * 100)}%`;
+        if (uploadFactor > 1) return `${uploadFactor}X`;
+        return labels.find(label => /free|免费/i.test(label)) || '';
+    }
+
     _readAttribute(attrs = '', attrName = '') {
         const pattern = new RegExp(`${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
         const match = String(attrs || '').match(pattern);
@@ -280,7 +352,7 @@ class PtSourceService {
     }
 
     async getGroupItems(rssUrl, preset) {
-        const proxyService = this._getProxyService(preset || 'generic');
+        const proxyService = this.getProxyService(preset || 'generic');
         const feedXml = await this._fetch(rssUrl, proxyService);
         const items = this.parseFeedItems(feedXml, rssUrl);
         return items.slice(0, 50).map(item => ({
@@ -289,7 +361,7 @@ class PtSourceService {
         }));
     }
 
-    _getProxyService(preset) {
+    getProxyService(preset) {
         const map = { mikan: 'ptMikan', anibt: 'ptAnibt', animegarden: 'ptAnimegarden', nyaa: 'ptNyaa', dmhy: 'ptDmhy' };
         return map[preset] || '';
     }

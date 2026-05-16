@@ -12,9 +12,10 @@ const { logTaskEvent } = require('../utils/logUtils');
 const { getDownloader, resetDownloader } = require('./downloader');
 const { PtSourceService } = require('./ptSource');
 const { ptRenameService } = require('./ptRename');
+const { ptTorrentService } = require('./ptTorrent');
 const aiService = require('./ai');
 const { TMDBService } = require('./tmdb');
-const { computeFileHashes, collectLocalFiles, normalizeWhitespace, matchReleaseTitle, extractInfoHashFromMagnet, safeFileName } = require('./ptUtils');
+const { computeFileHashes, collectLocalFiles, normalizeWhitespace, matchReleaseFilters, extractInfoHashFromMagnet, safeFileName } = require('./ptUtils');
 const {
     getPtSubscriptionRepository,
     getPtReleaseRepository,
@@ -96,17 +97,14 @@ class PtService {
         const releaseRepo = getPtReleaseRepository();
         logTaskEvent(`[PT] 开始拉取订阅: ${subscription.name}`);
 
-        const items = await this.sourceService.fetchFeedItems({
-            sourcePreset: subscription.sourcePreset,
-            rssUrl: subscription.rssUrl
-        });
+        const items = await this.sourceService.fetchFeedItems(subscription);
 
         const newReleases = [];
         for (const item of items) {
             if (!item.guid) continue;
             const exists = await releaseRepo.findOneBy({ subscriptionId: subscription.id, guid: item.guid });
             if (exists) continue;
-            if (!matchReleaseTitle(item.title || '', subscription.includePattern, subscription.excludePattern)) {
+            if (!matchReleaseFilters(item, subscription)) {
                 continue;
             }
             newReleases.push(item);
@@ -123,6 +121,12 @@ class PtService {
                     magnetUrl: item.magnetUrl || '',
                     torrentUrl: item.torrentUrl || '',
                     detailsUrl: item.detailsUrl || '',
+                    size: Number(item.size || 0) || 0,
+                    seeders: Number(item.seeders || 0) || 0,
+                    peers: Number(item.peers || 0) || 0,
+                    grabs: Number(item.grabs || 0) || 0,
+                    downloadVolumeFactor: item.downloadVolumeFactor != null ? Number(item.downloadVolumeFactor) : null,
+                    uploadVolumeFactor: item.uploadVolumeFactor != null ? Number(item.uploadVolumeFactor) : null,
                     publishedAt: item.publishedAt || null,
                     status: STATUS.PENDING
                 });
@@ -157,14 +161,17 @@ class PtService {
         const category = `${categoryPrefix}${subscription.id}`;
         const tag = `${tagPrefix}${release.id}`;
         const savePath = path.join(downloadRoot, `sub-${subscription.id}`);
+        const torrentSource = await this._prepareTorrentSource(subscription, release);
 
         const torrent = await downloader.addTorrent({
             magnetUrl: release.magnetUrl || undefined,
-            url: release.torrentUrl || undefined,
+            url: torrentSource.url || release.torrentUrl || undefined,
+            torrentBuffer: torrentSource.buffer || undefined,
+            torrentFileName: torrentSource.fileName || undefined,
             savePath,
             category,
             tag,
-            infoHash: release.infoHash || undefined
+            infoHash: torrentSource.infoHash || release.infoHash || undefined
         });
 
         if (!torrent || !torrent.hash) {
@@ -173,9 +180,71 @@ class PtService {
 
         release.qbTorrentHash = torrent.hash;
         release.downloadPath = torrent.savePath || savePath;
+        if (torrentSource.infoHash) {
+            release.infoHash = torrentSource.infoHash;
+        }
+        if (torrentSource.rootName) {
+            release.localRootName = torrentSource.rootName;
+        }
+        if (torrentSource.files && torrentSource.files.length) {
+            release.torrentFilesJson = JSON.stringify(torrentSource.files.slice(0, 500));
+            if (!release.size && torrentSource.totalSize) {
+                release.size = torrentSource.totalSize;
+            }
+        }
         release.status = STATUS.DOWNLOADING;
         await releaseRepo.save(release);
         logTaskEvent(`[PT] 已投递到下载器: ${release.title} (tag=${tag})`);
+    }
+
+    async _prepareTorrentSource(subscription, release) {
+        if (!release.torrentUrl) {
+            return {
+                url: release.magnetUrl || '',
+                infoHash: release.infoHash || '',
+                buffer: null,
+                fileName: '',
+                rootName: '',
+                files: [],
+                totalSize: 0
+            };
+        }
+
+        try {
+            const proxyService = this.sourceService.getProxyService(subscription.sourcePreset || 'generic');
+            const result = await ptTorrentService.downloadTorrent(release.torrentUrl, { proxyService });
+            if (result.type === 'magnet') {
+                return {
+                    url: result.magnetUrl,
+                    infoHash: result.infoHash || release.infoHash || '',
+                    buffer: null,
+                    fileName: '',
+                    rootName: '',
+                    files: [],
+                    totalSize: 0
+                };
+            }
+            return {
+                url: '',
+                infoHash: result.infoHash || release.infoHash || '',
+                buffer: result.buffer,
+                fileName: `${safeFileName(release.title || `release-${release.id}`)}.torrent`,
+                rootName: result.rootName || '',
+                files: result.files || [],
+                totalSize: result.totalSize || 0
+            };
+        } catch (err) {
+            logTaskEvent(`[PT] 种子预下载失败，回退给下载器处理: ${release.title} ${err.message || err}`);
+            return {
+                url: release.torrentUrl,
+                infoHash: release.infoHash || '',
+                buffer: null,
+                fileName: '',
+                rootName: '',
+                files: [],
+                totalSize: 0
+            };
+        }
     }
 
     // ==================== 处理（轮询 release 状态机） ====================

@@ -692,6 +692,27 @@ export class PtSubscription {
     @Column('text', { nullable: true, default: '' })
     excludePattern!: string;
 
+    @Column('text', { nullable: true, default: '' })
+    qualityPattern!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    resolutionPattern!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    effectPattern!: string;
+
+    @Column('float', { nullable: true, default: 0 })
+    sizeMinMB!: number;
+
+    @Column('float', { nullable: true, default: 0 })
+    sizeMaxMB!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    seedersMin!: number;
+
+    @Column('boolean', { default: false })
+    freeOnly!: boolean;
+
     @Column('integer')
     accountId!: number;
 
@@ -772,6 +793,24 @@ export class PtRelease {
     @Column('text', { nullable: true, default: '' })
     detailsUrl!: string;
 
+    @Column('float', { nullable: true, default: 0 })
+    size!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    seeders!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    peers!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    grabs!: number;
+
+    @Column('float', { nullable: true })
+    downloadVolumeFactor!: number | null;
+
+    @Column('float', { nullable: true })
+    uploadVolumeFactor!: number | null;
+
     @Column('datetime', { nullable: true, transformer: {
         from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
         to: (date: Date) => date
@@ -801,6 +840,9 @@ export class PtRelease {
 
     @Column('text', { nullable: true, default: '' })
     localRootName!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    torrentFilesJson!: string;
 
     @Column('text', { nullable: true, default: '' })
     cloudFolderId!: string;

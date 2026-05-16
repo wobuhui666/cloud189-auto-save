@@ -93,6 +93,116 @@ function matchReleaseTitle(title = '', includePattern = '', excludePattern = '')
     return true;
 }
 
+function parseNumber(value, fallback = null) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function parseSizeToBytes(value = '') {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : 0;
+    }
+    const raw = normalizeWhitespace(value);
+    if (!raw) {
+        return 0;
+    }
+    const compact = raw.replace(/,/g, '');
+    if (/^\d+$/.test(compact)) {
+        return Number(compact);
+    }
+    const match = compact.match(/([\d.]+)\s*(b|kb|kib|mb|mib|gb|gib|tb|tib)/i);
+    if (!match) {
+        return 0;
+    }
+    const size = Number(match[1]);
+    if (!Number.isFinite(size)) {
+        return 0;
+    }
+    const unit = match[2].toLowerCase();
+    const map = {
+        b: 1,
+        kb: 1024,
+        kib: 1024,
+        mb: 1024 ** 2,
+        mib: 1024 ** 2,
+        gb: 1024 ** 3,
+        gib: 1024 ** 3,
+        tb: 1024 ** 4,
+        tib: 1024 ** 4
+    };
+    return Math.round(size * (map[unit] || 1));
+}
+
+function getReleaseContent(item = {}) {
+    return normalizeWhitespace([
+        item.title,
+        item.description,
+        Array.isArray(item.labels) ? item.labels.join(' ') : '',
+        item.volumeFactor
+    ].filter(Boolean).join(' '));
+}
+
+function isFreeRelease(item = {}) {
+    const downloadFactor = parseNumber(item.downloadVolumeFactor, null);
+    if (downloadFactor === 0) {
+        return true;
+    }
+    const labels = Array.isArray(item.labels) ? item.labels : [];
+    if (labels.some(label => /free|免费|0x|2x免费|50%/i.test(String(label)))) {
+        return true;
+    }
+    return /(^|[\s\[\(【])(?:free|免费|0x|2x免费)(?=$|[\s\]\)】])/i.test(getReleaseContent(item));
+}
+
+function matchPatternValue(pattern = '', value = '') {
+    const matcher = buildPatternMatcher(pattern);
+    return !matcher || matcher(value);
+}
+
+function matchReleaseFilters(item = {}, subscription = {}) {
+    const title = item.title || '';
+    if (!matchReleaseTitle(title, subscription.includePattern, subscription.excludePattern)) {
+        return false;
+    }
+
+    const content = getReleaseContent(item);
+    if (!matchPatternValue(subscription.qualityPattern, content)) {
+        return false;
+    }
+    if (!matchPatternValue(subscription.resolutionPattern, content)) {
+        return false;
+    }
+    if (!matchPatternValue(subscription.effectPattern, content)) {
+        return false;
+    }
+
+    const sizeBytes = parseNumber(item.size, 0) || 0;
+    const sizeMB = sizeBytes > 0 ? sizeBytes / 1024 / 1024 : 0;
+    const minMB = parseNumber(subscription.sizeMinMB, 0) || 0;
+    const maxMB = parseNumber(subscription.sizeMaxMB, 0) || 0;
+    if (minMB > 0 && sizeMB > 0 && sizeMB < minMB) {
+        return false;
+    }
+    if (maxMB > 0 && sizeMB > 0 && sizeMB > maxMB) {
+        return false;
+    }
+    if ((minMB > 0 || maxMB > 0) && sizeMB <= 0) {
+        return false;
+    }
+
+    const seedersMin = parseNumber(subscription.seedersMin, 0) || 0;
+    const seeders = parseNumber(item.seeders, 0) || 0;
+    if (seedersMin > 0 && seeders < seedersMin) {
+        return false;
+    }
+
+    if (subscription.freeOnly && !isFreeRelease(item)) {
+        return false;
+    }
+
+    return true;
+}
+
 function resolveUrl(baseUrl = '', targetUrl = '') {
     const normalized = String(targetUrl || '').trim();
     if (!normalized) {
@@ -345,9 +455,14 @@ module.exports = {
     decodeHtmlEntities,
     extractInfoHashFromMagnet,
     extractUrlCandidates,
+    getReleaseContent,
+    isFreeRelease,
+    matchReleaseFilters,
     matchReleaseTitle,
     normalizeRelativePath,
     normalizeWhitespace,
+    parseNumber,
+    parseSizeToBytes,
     resolveUrl,
     safeFileName,
     safeJsonParse,

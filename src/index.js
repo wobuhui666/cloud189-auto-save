@@ -2574,6 +2574,13 @@ AppDataSource.initialize().then(async () => {
                 rssUrl,
                 includePattern: req.body.includePattern || '',
                 excludePattern: req.body.excludePattern || '',
+                qualityPattern: req.body.qualityPattern || '',
+                resolutionPattern: req.body.resolutionPattern || '',
+                effectPattern: req.body.effectPattern || '',
+                sizeMinMB: Number(req.body.sizeMinMB) || 0,
+                sizeMaxMB: Number(req.body.sizeMaxMB) || 0,
+                seedersMin: Number(req.body.seedersMin) || 0,
+                freeOnly: !!req.body.freeOnly,
                 accountId,
                 targetFolderId,
                 targetFolder,
@@ -2597,9 +2604,24 @@ AppDataSource.initialize().then(async () => {
         try {
             const sub = await ptSubscriptionRepo.findOneBy({ id: Number(req.params.id) });
             if (!sub) throw new Error('订阅不存在');
-            const fields = ['name', 'sourcePreset', 'rssUrl', 'includePattern', 'excludePattern', 'accountId', 'targetFolderId', 'targetFolder', 'enabled'];
+            const fields = [
+                'name', 'sourcePreset', 'rssUrl',
+                'includePattern', 'excludePattern',
+                'qualityPattern', 'resolutionPattern', 'effectPattern',
+                'sizeMinMB', 'sizeMaxMB', 'seedersMin', 'freeOnly',
+                'accountId', 'targetFolderId', 'targetFolder', 'enabled'
+            ];
+            const numericFields = new Set(['sizeMinMB', 'sizeMaxMB', 'seedersMin']);
+            const booleanFields = new Set(['freeOnly', 'enabled']);
             fields.forEach((f) => {
-                if (req.body[f] !== undefined) sub[f] = req.body[f];
+                if (req.body[f] === undefined) return;
+                if (numericFields.has(f)) {
+                    sub[f] = Number(req.body[f]) || 0;
+                } else if (booleanFields.has(f)) {
+                    sub[f] = !!req.body[f];
+                } else {
+                    sub[f] = req.body[f];
+                }
             });
             await ptSubscriptionRepo.save(sub);
             res.json({ success: true, data: sub });
