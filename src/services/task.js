@@ -328,6 +328,61 @@ class TaskService {
         return selectedByEpisode.size + fallbackCount;
     }
 
+    _getFileBaseName(fileName = '') {
+        const name = String(fileName || '').trim();
+        if (!name) {
+            return '';
+        }
+        const lowerName = name.toLowerCase();
+        const suffixes = String(ConfigService.getConfigValue('task.mediaSuffix', '') || '')
+            .split(';')
+            .map(suffix => suffix.trim().toLowerCase())
+            .filter(Boolean);
+        for (const suffix of [...suffixes, '.strm']) {
+            if (lowerName.endsWith(suffix)) {
+                return name.slice(0, -suffix.length);
+            }
+        }
+        return name;
+    }
+
+    _buildExistingMediaIndex(files = [], task = null) {
+        const names = new Set();
+        const baseNames = new Set();
+        const episodeKeys = new Set();
+
+        for (const file of files || []) {
+            const fileName = String(file?.name || file?.restoredFileName || '').trim();
+            if (!fileName || CasService.isCasFile(fileName)) {
+                continue;
+            }
+            names.add(fileName);
+            baseNames.add(this._getFileBaseName(fileName));
+            const identity = this._buildEpisodeIdentity(file, task);
+            if (identity?.key) {
+                episodeKeys.add(identity.key);
+            }
+        }
+
+        return { names, baseNames, episodeKeys };
+    }
+
+    _hasRestoredCasMedia(file, mediaIndex, task = null) {
+        if (!CasService.isCasFile(file?.name)) {
+            return false;
+        }
+        const restoredName = String(file?.restoredFileName || CasService.getOriginalFileName(file.name) || '').trim();
+        if (restoredName && mediaIndex.names.has(restoredName)) {
+            return true;
+        }
+        const restoredBaseName = this._getFileBaseName(restoredName);
+        if (restoredBaseName && mediaIndex.baseNames.has(restoredBaseName)) {
+            return true;
+        }
+        const identity = this._buildEpisodeIdentity(file, task);
+        return Boolean(identity?.key && mediaIndex.episodeKeys.has(identity.key));
+    }
+
     async resolveTmdbSeasonInfo(task, { updateTask = false } = {}) {
         if (!task?.id) {
             throw new Error('任务不存在');
@@ -1114,11 +1169,9 @@ class TaskService {
                 // 核心：秒传恢复
                 await casService.restoreFromCas(cloud189, task.realFolderId, casInfo, restoreName);
                 
-                // 非核心：物理确认 (降级)
-                try {
-                    await this._waitForFileByName(cloud189, task.realFolderId, restoreName, 10, 1000);
-                } catch (e) {
-                    logTaskEvent(`[警告] 等待恢复文件落盘确认超时: ${restoreName}`, 'warn', 'transfer');
+                const restoredFile = await this._waitForFileByName(cloud189, task.realFolderId, restoreName, 30, 1000);
+                if (!restoredFile) {
+                    throw new Error(`CAS恢复后未找到目标文件: ${restoreName}`);
                 }
 
                 await this._saveProcessedFileRecord(task, casFile, 'done');
@@ -1363,18 +1416,19 @@ class TaskService {
             }
 
             const folderFiles = await this.getAllFolderFiles(cloud189, task);
+            const existingMediaIndex = this._buildExistingMediaIndex(folderFiles, task);
             const { existingFiles, existingFileNames, existingMediaFiles } = folderFiles.reduce((acc, file) => {
                 if (!file.isFolder) {
-                    acc.existingFiles.add(file.md5);
                     acc.existingFileNames.add(file.name);
-                    // CAS 任务转存后会恢复为原始文件名，补充一份 .cas 对应名，避免后续把同一集重复识别成新增。
-                    if (!CasService.isCasFile(file.name)) {
-                        acc.existingFileNames.add(`${file.name}.cas`);
-                    } else {
-                        acc.existingFileNames.add(CasService.getOriginalFileName(file.name));
+                    if (file.md5) {
+                        acc.existingFiles.add(file.md5);
                     }
-                    if ((task.totalEpisodes == null || task.totalEpisodes <= 0) || this._checkFileSuffix(file, true, mediaSuffixs)) {
-                        acc.existingMediaFiles.push(file);
+                    if (!CasService.isCasFile(file.name)) {
+                        // 真实媒体已存在时，补充 .cas 对应名，避免保留 CAS 的任务后续重复恢复同一集。
+                        acc.existingFileNames.add(`${file.name}.cas`);
+                        if ((task.totalEpisodes == null || task.totalEpisodes <= 0) || this._checkFileSuffix(file, true, mediaSuffixs)) {
+                            acc.existingMediaFiles.push(file);
+                        }
                     }
                 }
                 return acc;
@@ -1397,14 +1451,22 @@ class TaskService {
             const doneProcessedIds = await this._getDoneProcessedSourceFileIds(task.id);
             
             const newFiles = shareFiles
-                .filter(file => 
-                    !file.isFolder && !existingFiles.has(file.md5) 
-                   && !existingFileNames.has(file.name)
-                   && !doneProcessedIds.has(String(file.id))
-                   && this._checkFileSuffix(file, enableOnlySaveMedia, mediaSuffixs)
-                   && (aiFiltered || this._handleMatchMode(task, file))
-                   && !this.isHarmonized(file)
-                );
+                .filter(file => {
+                    if (file.isFolder) {
+                        return false;
+                    }
+                    if (!this._checkFileSuffix(file, enableOnlySaveMedia, mediaSuffixs)
+                        || !(aiFiltered || this._handleMatchMode(task, file))
+                        || this.isHarmonized(file)) {
+                        return false;
+                    }
+                    if (CasService.isCasFile(file.name)) {
+                        return !this._hasRestoredCasMedia(file, existingMediaIndex, task);
+                    }
+                    return !existingFiles.has(file.md5)
+                        && !existingFileNames.has(file.name)
+                        && !doneProcessedIds.has(String(file.id));
+                });
             attemptedNewFiles = newFiles;
 
             // 处理新文件并保存到数据库和云盘
@@ -2851,8 +2913,13 @@ class TaskService {
 
         // 1. 获取目标目录物理文件状况
         const folderFiles = await this.getAllFolderFiles(cloud189, task);
-        const existingMD5s = new Set(folderFiles.map(f => String(f.md5 || '').toUpperCase()));
+        const existingMD5s = new Set(
+            folderFiles
+                .filter(f => !CasService.isCasFile(f.name))
+                .map(f => String(f.md5 || '').toUpperCase())
+        );
         const existingNames = new Set(folderFiles.map(f => f.name));
+        const existingMediaIndex = this._buildExistingMediaIndex(folderFiles, task);
 
         // 2. 获取分享源文件，用于比对
         const shareDir = await cloud189.listShareDir(task.shareId, task.shareFolderId, task.shareMode, task.accessCode, task.isFolder);
@@ -2880,10 +2947,11 @@ class TaskService {
         for (const sFile of requiredShareFiles) {
             const fileMd5 = String(sFile.md5 || '').toUpperCase();
             const originalName = CasService.isCasFile(sFile.name) ? CasService.getOriginalFileName(sFile.name) : sFile.name;
-            
-            const isFound = (fileMd5.length > 20 && existingMD5s.has(fileMd5)) || 
-                            existingNames.has(originalName) || 
-                            existingNames.has(sFile.name);
+            const isFound = CasService.isCasFile(sFile.name)
+                ? this._hasRestoredCasMedia(sFile, existingMediaIndex, task)
+                : ((fileMd5.length > 20 && existingMD5s.has(fileMd5))
+                    || existingNames.has(originalName)
+                    || existingNames.has(sFile.name));
 
             if (!isFound) {
                 missingFiles.push(originalName);
@@ -2927,10 +2995,12 @@ class TaskService {
             const folderFiles = await this.getAllFolderFiles(cloud189, task);
             const targetMd5Set = new Set(
                 folderFiles
+                    .filter(f => !CasService.isCasFile(f.name))
                     .map(f => String(f.md5 || '').toUpperCase())
                     .filter(m => m && m.length > 20)
             );
             const targetNameSet = new Set(folderFiles.map(f => f.name));
+            const targetMediaIndex = this._buildExistingMediaIndex(folderFiles, task);
 
             // 2. 读取所有非完成状态的子记录 (包括 failed 和 processing)
             const taskProcessedFileRepo = this._getTaskProcessedFileRepo();
@@ -2947,13 +3017,20 @@ class TaskService {
                 const restoreName = record.restoredFileName || originalName;
 
                 let found = false;
-                // A. 物理 MD5 匹配 (第一优先级)
-                if (recordMd5 && recordMd5.length > 20 && targetMd5Set.has(recordMd5)) {
-                    found = true;
-                } 
-                // B. 物理文件名匹配 (第二优先级)
-                else if (targetNameSet.has(restoreName) || targetNameSet.has(originalName) || targetNameSet.has(sourceName.replace('.cas', ''))) {
-                    found = true;
+                if (CasService.isCasFile(sourceName)) {
+                    found = this._hasRestoredCasMedia({
+                        name: sourceName,
+                        restoredFileName: restoreName
+                    }, targetMediaIndex, task);
+                } else {
+                    // A. 物理 MD5 匹配 (第一优先级)
+                    if (recordMd5 && recordMd5.length > 20 && targetMd5Set.has(recordMd5)) {
+                        found = true;
+                    }
+                    // B. 物理文件名匹配 (第二优先级)
+                    else if (targetNameSet.has(restoreName) || targetNameSet.has(originalName) || targetNameSet.has(sourceName)) {
+                        found = true;
+                    }
                 }
 
                 if (found) {
