@@ -197,13 +197,14 @@ class PtRenameService {
      * @param {object} aiBase - AI 解析的基础信息 { name, year, type, season }
      * @param {object|null} aiEpisode - AI 解析的剧集信息 { id, season, episode, extension, name }
      * @param {string|null} optionalCategoryName - 外部传入的分类名（如 TMDB 决定的）
+     * @param {object|null} optionalLibraryInfo - 外部传入的媒体库目录信息（复用整理器规则）
      * @returns {{ dirName: string, fileName: string }} 整理后的目录名和文件名
      */
-    organizePathByAi(subscription, release, file, _config, aiBase, aiEpisode, optionalCategoryName = null) {
+    organizePathByAi(subscription, release, file, _config, aiBase, aiEpisode, optionalCategoryName = null, optionalLibraryInfo = null) {
         const isMovie = (aiBase && aiBase.type) === 'movie';
 
         // 分类目录：优先用外部（TMDB）算好的；否则按 type 走默认
-        const categoryName = optionalCategoryName || (isMovie
+        const categoryName = optionalLibraryInfo?.categoryName || optionalCategoryName || (isMovie
             ? ConfigService.getConfigValue('organizer.categories.movie', '电影')
             : ConfigService.getConfigValue('organizer.categories.tv', '电视剧'));
 
@@ -215,7 +216,7 @@ class PtRenameService {
         // 标题与年份
         const title = (aiBase && aiBase.name) || subscription.name || '未知';
         const year = (aiBase && Number(aiBase.year) > 0) ? Number(aiBase.year) : '';
-        const resourceFolderName = year ? `${title} (${year})` : title;
+        const resourceFolderName = optionalLibraryInfo?.resourceFolderName || (year ? `${title} (${year})` : title);
 
         // 季数
         let seasonRaw = (aiBase && aiBase.season) || (aiEpisode && aiEpisode.season) || '01';
@@ -290,9 +291,10 @@ class PtRenameService {
      * @param {object} release - release 对象
      * @param {object} file - 文件信息 { name, relativeDir, originalFileName }
      * @param {object} config - 整理配置
+     * @param {object|null} optionalLibraryInfo - 外部传入的媒体库目录信息（复用整理器规则）
      * @returns {{ dirName: string, fileName: string }} 整理后的目录名和文件名
      */
-    organizePath(subscription, release, file, config) {
+    organizePath(subscription, release, file, config, optionalLibraryInfo = null) {
         const {
             categoryFolder = '动漫',
             fileTemplate = '{title} S{season}E{episode}',
@@ -301,7 +303,7 @@ class PtRenameService {
             defaultSeason = 1
         } = config || {};
 
-        const title = subscription.name || '未知';
+        const title = optionalLibraryInfo?.canonicalTitle || subscription.name || '未知';
         const releaseTitle = release.title || file.originalFileName || file.name || '';
 
         // 提取季度和集数
@@ -338,7 +340,9 @@ class PtRenameService {
         fileName = `${fileName}.strm`;
 
         // 构建目录名
-        const dirName = `${safeFileName(categoryFolder, '')}/${safeFileName(title, '')}/Season ${String(season).padStart(2, '0')}`;
+        const categoryName = optionalLibraryInfo?.categoryName || categoryFolder;
+        const resourceFolderName = optionalLibraryInfo?.resourceFolderName || title;
+        const dirName = `${safeFileName(categoryName, '')}/${safeFileName(resourceFolderName, '')}/Season ${String(season).padStart(2, '0')}`;
 
         return { dirName, fileName };
     }

@@ -183,7 +183,7 @@ class QbittorrentClient {
         }
 
         if (options.category) {
-            await this.ensureCategory(options.category, options.savePath || '');
+            await this.ensureCategory(options.category, options.categorySavePath || '');
         }
         if (options.tag) {
             await this.ensureTag(options.tag);

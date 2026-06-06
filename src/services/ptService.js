@@ -8,6 +8,7 @@ const { Cloud189Service } = require('./cloud189');
 const { CasService } = require('./casService');
 const { StrmService } = require('./strm');
 const { StreamProxyService } = require('./streamProxy');
+const { OrganizerService } = require('./organizer');
 const { logTaskEvent } = require('../utils/logUtils');
 const { getDownloader, resetDownloader } = require('./downloader');
 const { PtSourceService } = require('./ptSource');
@@ -160,7 +161,8 @@ class PtService {
         const tagPrefix = ConfigService.getConfigValue('pt.downloader.tagPrefix', 'pt-rel-');
         const category = `${categoryPrefix}${subscription.id}`;
         const tag = `${tagPrefix}${release.id}`;
-        const savePath = path.join(downloadRoot, `sub-${subscription.id}`);
+        const subscriptionSavePath = path.join(downloadRoot, `sub-${subscription.id}`);
+        const savePath = path.join(subscriptionSavePath, `rel-${release.id}`);
         const torrentSource = await this._prepareTorrentSource(subscription, release);
 
         const torrent = await downloader.addTorrent({
@@ -169,6 +171,7 @@ class PtService {
             torrentBuffer: torrentSource.buffer || undefined,
             torrentFileName: torrentSource.fileName || undefined,
             savePath,
+            categorySavePath: subscriptionSavePath,
             category,
             tag,
             infoHash: torrentSource.infoHash || release.infoHash || undefined
@@ -324,7 +327,7 @@ class PtService {
             throw new Error(`找不到账号 ${subscription.accountId}`);
         }
 
-        const localPath = release.downloadPath || release.savePath;
+        const localPath = await this._resolveReleaseLocalPath(release);
         if (!localPath || !fs.existsSync(localPath)) {
             throw new Error(`本地文件不存在: ${localPath || '(空)'}`);
         }
@@ -442,6 +445,26 @@ class PtService {
                 logTaskEvent(`[PT] 删除本地源文件失败（不影响整体）: ${delErr.message || delErr}`);
             }
         }
+    }
+
+    async _resolveReleaseLocalPath(release) {
+        const localPath = release.downloadPath || release.savePath || '';
+        if (!localPath || !fs.existsSync(localPath)) {
+            return localPath;
+        }
+
+        const stat = fs.statSync(localPath);
+        if (!stat.isDirectory()) {
+            return localPath;
+        }
+
+        const rootName = String(release.localRootName || '').trim();
+        if (!rootName || path.basename(localPath) === rootName) {
+            return localPath;
+        }
+
+        const rootedPath = path.join(localPath, rootName);
+        return fs.existsSync(rootedPath) ? rootedPath : localPath;
     }
 
     async _rapidUploadWithFallback(cloud189, parentFolderId, casInfo, fileName, localFilePath, enableFamilyTransit, familyTransitFirst) {
@@ -562,7 +585,8 @@ class PtService {
         // AI 模式：先把 manifest 整体丢给 AI 拿结构化结果
         let aiBaseInfo = null;
         let aiEpisodeMap = null;
-        let aiCategoryName = null;
+        let aiLibraryInfo = null;
+        let regexLibraryInfo = null;
         if (organizeEnabled && strmOrganize.mode === 'ai') {
             try {
                 if (!aiService.isEnabled()) {
@@ -595,16 +619,34 @@ class PtService {
                 );
                 logTaskEvent(`[PT] AI 整理：解析成功 -> ${aiBaseInfo.name}${aiBaseInfo.year ? ' (' + aiBaseInfo.year + ')' : ''} type=${aiBaseInfo.type} season=${aiBaseInfo.season || '?'} 集数=${aiEpisodeMap.size}`);
 
-                // 接 TMDB 查 genre，按 organizer._resolveCategoryName 规则定分类
-                aiCategoryName = await this._resolveCategoryNameByTmdb(aiBaseInfo);
-                if (aiCategoryName) {
-                    logTaskEvent(`[PT] AI 整理：TMDB 分类 -> ${aiCategoryName}`);
+                // 接 TMDB 查标准媒体库目录，复用非 PT 整理器规则
+                aiLibraryInfo = await this._resolveLibraryInfoByTmdb(aiBaseInfo);
+                if (aiLibraryInfo) {
+                    logTaskEvent(`[PT] AI 整理：媒体库目录 -> ${aiLibraryInfo.categoryName}/${aiLibraryInfo.resourceFolderName}`);
                 }
             } catch (err) {
                 logTaskEvent(`[PT] AI 整理失败，降级到正则模式: ${err.message || err}`);
                 aiBaseInfo = null;
                 aiEpisodeMap = null;
-                aiCategoryName = null;
+                aiLibraryInfo = null;
+            }
+        }
+        if (organizeEnabled && strmOrganize.mode === 'regex') {
+            try {
+                const seriesTitle = this._extractRegexSeriesTitle(subscription, release);
+                if (seriesTitle) {
+                    regexLibraryInfo = await this._resolveLibraryInfoByTmdb({
+                        name: seriesTitle,
+                        year: 0,
+                        type: 'tv'
+                    });
+                    if (regexLibraryInfo) {
+                        logTaskEvent(`[PT] 正则整理：媒体库目录 -> ${regexLibraryInfo.categoryName}/${regexLibraryInfo.resourceFolderName}`);
+                    }
+                }
+            } catch (err) {
+                logTaskEvent(`[PT] 正则整理媒体库目录解析失败，回退订阅名目录: ${err.message || err}`);
+                regexLibraryInfo = null;
             }
         }
 
@@ -631,14 +673,16 @@ class PtService {
                             strmOrganize,
                             aiBaseInfo,
                             aiEp,
-                            aiCategoryName
+                            aiLibraryInfo?.categoryName || null,
+                            aiLibraryInfo
                         );
                     } else {
                         organized = ptRenameService.organizePath(
                             subscription,
                             release,
                             file,
-                            strmOrganize
+                            strmOrganize,
+                            regexLibraryInfo
                         );
                     }
                     file.organizedDir = organized.dirName;
@@ -691,59 +735,84 @@ class PtService {
         logTaskEvent(`[PT] STRM 生成完成: ${targetRoot} (共 ${files.length} 个文件)`);
     }
 
-    // ==================== AI/TMDB 分类 ====================
+    // ==================== AI/TMDB 媒体库目录 ====================
 
     /**
-     * 按 organizer._resolveCategoryName 的规则，调 TMDB 拿 genres 决定分类目录
+     * 按 OrganizerService 的规则，调 TMDB 决定媒体库目录
      * @param {{name:string, year:number, type:'tv'|'movie'}} aiBase
-     * @returns {Promise<string|null>} 分类名，失败返回 null（调用方会按 type 取默认）
+     * @returns {Promise<object>} 媒体库目录信息，失败回退 AI 结果
      */
-    async _resolveCategoryNameByTmdb(aiBase) {
+    async _resolveLibraryInfoByTmdb(aiBase) {
+        const organizerService = new OrganizerService(null);
+        const resourceInfo = {
+            name: aiBase?.name || '',
+            year: Number(aiBase?.year) || 0,
+            type: aiBase?.type || 'tv'
+        };
         try {
-            if (!aiBase || !aiBase.name) return null;
+            if (!aiBase || !aiBase.name) {
+                return organizerService._resolveLibraryInfo({ resourceName: '' }, resourceInfo, null);
+            }
 
             const apiKey = ConfigService.getConfigValue('tmdb.tmdbApiKey') || ConfigService.getConfigValue('tmdb.apiKey');
             if (!apiKey) {
-                logTaskEvent(`[PT] TMDB API Key 未配置，按 type 默认取分类`);
-                return aiBase.type === 'movie'
-                    ? ConfigService.getConfigValue('organizer.categories.movie', '电影')
-                    : ConfigService.getConfigValue('organizer.categories.tv', '电视剧');
+                logTaskEvent(`[PT] TMDB API Key 未配置，按 AI 结果生成媒体库目录`);
+                return organizerService._resolveLibraryInfo({ resourceName: aiBase.name }, resourceInfo, null);
             }
 
             const tmdb = new TMDBService();
             const year = aiBase.year && aiBase.year > 0 ? aiBase.year : '';
-            let detail;
+            let tmdbInfo;
             if (aiBase.type === 'movie') {
-                detail = await tmdb.searchMovie(aiBase.name, year);
+                tmdbInfo = await tmdb.searchMovie(aiBase.name, year);
             } else {
-                detail = await tmdb.searchTV(aiBase.name, year, 0);
+                tmdbInfo = await tmdb.searchTV(aiBase.name, year, 0);
             }
 
-            const genreIds = Array.isArray(detail?.genres)
-                ? detail.genres.map(g => Number(g.id)).filter(Number.isFinite)
-                : [];
-
-            const cats = {
-                tv: ConfigService.getConfigValue('organizer.categories.tv', '电视剧'),
-                anime: ConfigService.getConfigValue('organizer.categories.anime', '动漫'),
-                movie: ConfigService.getConfigValue('organizer.categories.movie', '电影'),
-                variety: ConfigService.getConfigValue('organizer.categories.variety', '综艺'),
-                documentary: ConfigService.getConfigValue('organizer.categories.documentary', '纪录片')
-            };
-
-            if (aiBase.type === 'movie') {
-                return genreIds.includes(99) ? cats.documentary : cats.movie;
-            }
-            if (genreIds.includes(16)) return cats.anime;
-            if (genreIds.includes(99)) return cats.documentary;
-            if (genreIds.includes(10764) || genreIds.includes(10767)) return cats.variety;
-            return cats.tv;
+            return organizerService._resolveLibraryInfo({ resourceName: aiBase.name }, resourceInfo, tmdbInfo || null);
         } catch (err) {
-            logTaskEvent(`[PT] TMDB 分类查询失败，按 type 默认取分类: ${err.message || err}`);
-            return aiBase?.type === 'movie'
-                ? ConfigService.getConfigValue('organizer.categories.movie', '电影')
-                : ConfigService.getConfigValue('organizer.categories.tv', '电视剧');
+            logTaskEvent(`[PT] TMDB 媒体库目录查询失败，按 AI 结果生成目录: ${err.message || err}`);
+            return organizerService._resolveLibraryInfo({ resourceName: aiBase?.name || '' }, resourceInfo, null);
         }
+    }
+
+    _extractRegexSeriesTitle(subscription, release) {
+        const candidates = [
+            subscription?.name,
+            release?.title
+        ];
+        for (const candidate of candidates) {
+            const title = this._cleanRegexSeriesTitle(candidate);
+            if (title) {
+                return title;
+            }
+        }
+        return '';
+    }
+
+    _cleanRegexSeriesTitle(value = '') {
+        let title = String(value || '').trim();
+        if (!title) {
+            return '';
+        }
+        title = title
+            .replace(/\[[^\]]+\]/g, ' ')
+            .replace(/【[^】]+】/g, ' ')
+            .replace(/（[^）]*(字幕组|字幕|发布|發佈|组|組)[^）]*）/gi, ' ')
+            .replace(/\([^)]*(字幕组|字幕|发布|發佈|组|組)[^)]*\)/gi, ' ')
+            .replace(/[._]+/g, ' ')
+            .replace(/從/g, '从')
+            .replace(/異/g, '异')
+            .replace(/開始/g, '开始')
+            .replace(/第[一二三四五六七八九十百0-9]+[季期部].*$/i, '')
+            .replace(/\b\d+(?:st|nd|rd|th)\s+Season.*$/i, '')
+            .replace(/\bSeason\s*\d+.*$/i, '')
+            .replace(/\bS\d{1,2}\b.*$/i, '')
+            .replace(/\s+-\s+\d{1,3}(?:\.\d+)?\b.*$/i, '')
+            .replace(/\s+-\s*(ANi|Skymoon.*|天月.*|.*字幕.*|.*发布.*|.*發佈.*)$/i, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return title;
     }
 
     // ==================== 清理 ====================

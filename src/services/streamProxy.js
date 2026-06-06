@@ -58,7 +58,8 @@ class StreamProxyService {
     }
 
     parseToken(token) {
-        const [encodedPayload, signature] = String(token || '').split('.');
+        const normalizedToken = String(token || '').replace(/\s+/g, '');
+        const [encodedPayload, signature] = normalizedToken.split('.');
         if (!encodedPayload || !signature) {
             throw new Error('播放令牌格式无效');
         }
