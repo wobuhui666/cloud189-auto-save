@@ -17,6 +17,9 @@ class ConfigService {
         enableAutoClearFamilyRecycle: false,
         enableAutoCleanLazyFiles: false,
         lazyFileRetentionHours: 24,
+        enableStorageAggregation: true,
+        enableSessionKeepAlive: true,
+        sessionKeepAliveCron: '0 */4 * * *',
         mediaSuffix: '.mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov;.cas', // 媒体文件后缀
         enableOnlySaveMedia: false, // 只保存媒体文件
         enableAutoDeleteCompletedTask: false, // 任务完结后自动删除任务记录
@@ -97,6 +100,7 @@ class ConfigService {
           telegram: true,
           tmdb: true,
           cloud189: false,
+          hdhive: false,
           ptMikan: false,
           ptAnibt: false,
           ptAnimegarden: false,
@@ -149,6 +153,24 @@ class ConfigService {
         baseUrl: '',
         username: '',
         password: ''
+      },
+      hdhive: {
+        enabled: false,
+        baseUrl: process.env.HDHIVE_BASE_URL || 'https://hdhive.com',
+        cookie: process.env.HDHIVE_COOKIE || '',
+        username: process.env.HDHIVE_USERNAME || '',
+        password: process.env.HDHIVE_PASSWORD || '',
+        clientId: process.env.HDHIVE_CLIENT_ID || '',
+        apiKey: process.env.HDHIVE_API_KEY || '',
+        resourceUnlockActionId: process.env.HDHIVE_RESOURCE_UNLOCK_ACTION_ID || '601a2054beb3034dd490287f5aa0d7c801f9e650c7',
+        browserBridge: {
+          enabled: process.env.HDHIVE_BROWSER_BRIDGE_ENABLED === 'true',
+          baseUrl: process.env.HDHIVE_BROWSER_BRIDGE_URL || '',
+          token: process.env.HDHIVE_BROWSER_BRIDGE_TOKEN || ''
+        },
+        accessToken: '',
+        refreshToken: '',
+        tokenExpiresAt: null
       },
       tmdb: {
         enableScraper: false,

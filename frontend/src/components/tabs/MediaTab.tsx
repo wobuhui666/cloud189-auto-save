@@ -45,6 +45,12 @@ interface MediaSettings {
     username: string;
     password: string;
   };
+  hdhive: {
+    enabled: boolean;
+    baseUrl: string;
+    cookie: string;
+    hasCookie?: boolean;
+  };
   tmdb: {
     enableScraper: boolean;
     tmdbApiKey: string;
@@ -102,6 +108,7 @@ const initialSettings: MediaSettings = {
     prewarm: { enable: false, sessionPollIntervalMs: 30000, dedupeTtlMs: 300000 }
   },
   cloudSaver: { baseUrl: '', username: '', password: '' },
+  hdhive: { enabled: false, baseUrl: 'https://hdhive.com', cookie: '', hasCookie: false },
   tmdb: { enableScraper: false, tmdbApiKey: '' },
   openai: { 
     enable: false, 
@@ -171,6 +178,7 @@ const MediaTab: React.FC = () => {
             prewarm: { ...initialSettings.emby.prewarm, ...fetched.emby?.prewarm }
           },
           cloudSaver: { ...initialSettings.cloudSaver, ...fetched.cloudSaver },
+          hdhive: { ...initialSettings.hdhive, ...fetched.hdhive, cookie: '' },
           tmdb: { ...initialSettings.tmdb, ...fetched.tmdb },
           openai: {
             ...initialSettings.openai,
@@ -656,6 +664,47 @@ const MediaTab: React.FC = () => {
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Hdhive Settings */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+            <Search size={24} className="text-[#0b57d0]" /> 影巢设置
+          </h3>
+          <Switch checked={settings.hdhive.enabled} onChange={(v) => updateSetting('hdhive.enabled', v)} />
+        </div>
+        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60 pointer-events-none'}`}>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">站点地址</label>
+            <input
+              type="text"
+              value={settings.hdhive.baseUrl}
+              onChange={e => updateSetting('hdhive.baseUrl', e.target.value)}
+              placeholder="https://hdhive.com"
+              className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">网页登录 Cookie</label>
+            <textarea
+              value={settings.hdhive.cookie}
+              onChange={e => updateSetting('hdhive.cookie', e.target.value)}
+              placeholder="留空保持当前 Cookie"
+              rows={4}
+              className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 resize-y min-h-[104px]"
+            />
+            {settings.hdhive.hasCookie && (
+              <p className="text-xs text-slate-500">已保存 Cookie，留空保存不会覆盖当前值。</p>
+            )}
+          </div>
+          <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3">
+            <AlertCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-800 leading-relaxed">
+              影巢搜索通过网页内容解析可见数据；只有网页直接暴露天翼分享链接时才支持一键转存。
+            </p>
           </div>
         </div>
       </section>

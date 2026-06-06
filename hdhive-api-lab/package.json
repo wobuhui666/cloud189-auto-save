@@ -1,0 +1,17 @@
+{
+  "name": "hdhive-api-lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone HDHive API call notes and client experiments.",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "probe:time": "node dist/cli.js time",
+    "probe:path": "node dist/cli.js probe"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "typescript": "^5.8.2"
+  }
+}

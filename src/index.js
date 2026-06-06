@@ -17,6 +17,7 @@ const TelegramBotManager = require('./utils/TelegramBotManager');
 const fs = require('fs').promises;
 const path = require('path');
 const { setupCloudSaverRoutes, clearCloudSaverToken } = require('./sdk/cloudsaver');
+const { setupHdhiveRoutes } = require('./sdk/hdhive');
 const { Like, Not, IsNull, In, Or } = require('typeorm');
 const cors = require('cors'); 
 const { EmbyService } = require('./services/emby');
@@ -244,8 +245,62 @@ const redactSettingsForClient = (settings = {}) => {
     if (redacted.system?.password) {
         redacted.system.password = '';
     }
+    if (redacted.hdhive?.cookie) {
+        redacted.hdhive.cookie = '';
+        redacted.hdhive.hasCookie = true;
+    } else if (redacted.hdhive) {
+        redacted.hdhive.hasCookie = false;
+    }
+    if (redacted.hdhive?.password) {
+        redacted.hdhive.password = '';
+        redacted.hdhive.hasPassword = true;
+    } else if (redacted.hdhive) {
+        redacted.hdhive.hasPassword = false;
+    }
+    if (redacted.hdhive?.apiKey) {
+        redacted.hdhive.apiKey = '';
+        redacted.hdhive.hasApiKey = true;
+    } else if (redacted.hdhive) {
+        redacted.hdhive.hasApiKey = false;
+    }
+    if (redacted.hdhive?.browserBridge?.token) {
+        redacted.hdhive.browserBridge.token = '';
+        redacted.hdhive.browserBridge.hasToken = true;
+    } else if (redacted.hdhive?.browserBridge) {
+        redacted.hdhive.browserBridge.hasToken = false;
+    }
     return redacted;
 };
+
+const preserveHdhiveSensitiveOnEmptyInput = (settings = {}) => {
+    if (settings.hdhive) {
+        const currentHdhive = ConfigService.getConfigValue('hdhive', {}) || {};
+        const nextCookie = String(settings.hdhive.cookie || '').trim();
+        const nextApiKey = String(settings.hdhive.apiKey || '').trim();
+        const nextPassword = String(settings.hdhive.password || '').trim();
+        const nextBridgeToken = String(settings.hdhive.browserBridge?.token || '').trim();
+        settings.hdhive = {
+            ...currentHdhive,
+            ...settings.hdhive,
+            cookie: nextCookie || ConfigService.getConfigValue('hdhive.cookie', ''),
+            apiKey: nextApiKey || ConfigService.getConfigValue('hdhive.apiKey', ''),
+            password: nextPassword || ConfigService.getConfigValue('hdhive.password', ''),
+            browserBridge: {
+                ...(currentHdhive.browserBridge || {}),
+                ...(settings.hdhive.browserBridge || {}),
+                token: nextBridgeToken || ConfigService.getConfigValue('hdhive.browserBridge.token', '')
+            }
+        };
+    }
+    return settings;
+};
+
+const maskUsername = (username = '') => String(username || '').replace(/(.{3}).*(.{4})/, '$1****$2');
+
+const normalizeCapacity = (capacity = {}) => ({
+    cloudCapacityInfo: capacity.cloudCapacityInfo || { usedSize: 0, totalSize: 0 },
+    familyCapacityInfo: capacity.familyCapacityInfo || { usedSize: 0, totalSize: 0 }
+});
 
 const parsePaginationInt = (value, fallback, maxValue = 200) => {
     const parsed = Number(value);
@@ -802,9 +857,154 @@ AppDataSource.initialize().then(async () => {
             account.familyId = account.familyId || '';
             account.driveLabel = account.accountType === 'family' ? '家庭云' : '个人云';
             // username脱敏
-            account.username = account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
+            account.username = maskUsername(account.username);
         }
         res.json({ success: true, data: accounts });
+    });
+
+    app.get('/api/accounts/storage-summary', async (req, res) => {
+        try {
+            if (!ConfigService.getConfigValue('task.enableStorageAggregation', true)) {
+                return res.json({ success: true, data: { enabled: false, cloud: { used: 0, total: 0 }, family: { used: 0, total: 0 }, accounts: [] } });
+            }
+            const accounts = await accountRepo.find();
+            const summary = {
+                enabled: true,
+                cloud: { used: 0, total: 0 },
+                family: { used: 0, total: 0 },
+                accounts: []
+            };
+            for (const account of accounts) {
+                if (!account.username || account.username.startsWith('n_')) {
+                    continue;
+                }
+                let capacity = Cloud189Service.getCachedCapacity(account);
+                if (!capacity) {
+                    const cloud189 = Cloud189Service.getInstance(account);
+                    capacity = await cloud189.getUserSizeInfo();
+                }
+                if (!capacity || capacity.res_code != 0) {
+                    continue;
+                }
+                const normalized = normalizeCapacity(capacity);
+                summary.cloud.used += Number(normalized.cloudCapacityInfo.usedSize || 0);
+                summary.cloud.total += Number(normalized.cloudCapacityInfo.totalSize || 0);
+                summary.family.used += Number(normalized.familyCapacityInfo.usedSize || 0);
+                summary.family.total += Number(normalized.familyCapacityInfo.totalSize || 0);
+                summary.accounts.push({
+                    id: account.id,
+                    username: maskUsername(account.username),
+                    alias: account.alias || '',
+                    accountType: account.accountType || 'personal',
+                    cloud: normalized.cloudCapacityInfo,
+                    family: normalized.familyCapacityInfo
+                });
+            }
+            res.json({ success: true, data: summary });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/accounts/refresh-capacity', async (req, res) => {
+        try {
+            const accountId = req.body?.accountId ? Number(req.body.accountId) : null;
+            const accounts = accountId
+                ? await accountRepo.find({ where: { id: accountId } })
+                : await accountRepo.find();
+            let refreshed = 0;
+            const errors = [];
+            for (const account of accounts) {
+                if (!account.username || account.username.startsWith('n_')) {
+                    continue;
+                }
+                try {
+                    const cloud189 = Cloud189Service.getInstance(account);
+                    const capacity = await cloud189.getUserSizeInfo({ forceRefresh: true });
+                    if (capacity && capacity.res_code == 0) {
+                        refreshed++;
+                    }
+                } catch (error) {
+                    errors.push({ accountId: account.id, username: maskUsername(account.username), error: error.message });
+                }
+            }
+            res.json({ success: true, data: { refreshed, errors } });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/accounts/qr-code', async (req, res) => {
+        try {
+            const qrAuth = Cloud189Service.createQRAuthService();
+            const qrData = await qrAuth.getQRCode();
+            res.json({ success: true, data: qrData });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/accounts/qr-status', async (req, res) => {
+        try {
+            const qrAuth = Cloud189Service.createQRAuthService();
+            const qrStatus = await qrAuth.checkQRCodeStatus(req.body || {});
+            if (qrStatus?.status === 0 && qrStatus.redirectUrl) {
+                const loginToken = await qrAuth.exchangeQRCodeSession(qrStatus.redirectUrl);
+                if (!loginToken?.loginName || !loginToken?.accessToken) {
+                    throw new Error('扫码登录成功但未返回有效会话');
+                }
+                const dataDir = path.join(process.cwd(), 'data');
+                await fs.mkdir(dataDir, { recursive: true });
+                await fs.writeFile(path.join(dataDir, `${loginToken.loginName}.json`), JSON.stringify({
+                    accessToken: loginToken.accessToken,
+                    refreshToken: loginToken.refreshToken,
+                    expiresIn: Date.now() + 6 * 24 * 60 * 60 * 1000
+                }), 'utf-8');
+
+                let account = await accountRepo.findOne({ where: { username: loginToken.loginName } });
+                if (!account) {
+                    account = accountRepo.create({
+                        username: loginToken.loginName,
+                        password: '',
+                        cookies: '',
+                        accountType: 'personal',
+                        familyId: ''
+                    });
+                }
+                Cloud189Service.invalidateByUsername(account.username);
+                try {
+                    const cloud189 = Cloud189Service.getInstance(account);
+                    const familyInfo = await cloud189.getFamilyInfo();
+                    if (familyInfo?.familyId) {
+                        account.familyId = String(familyInfo.familyId);
+                    }
+                } catch (error) {
+                    logTaskEvent(`[扫码登录] 获取家庭信息失败: ${error.message}`);
+                }
+                account.accountType = account.accountType || 'personal';
+                await accountRepo.save(account);
+                return res.json({
+                    success: true,
+                    status: 0,
+                    data: {
+                        accountId: account.id,
+                        username: maskUsername(loginToken.loginName),
+                        familyId: account.familyId || ''
+                    }
+                });
+            }
+            res.json({
+                success: true,
+                status: qrStatus?.status,
+                data: qrStatus,
+                message: qrStatus?.status === -106 ? '等待扫码'
+                    : qrStatus?.status === -11002 ? '已扫码，请在手机端确认'
+                    : qrStatus?.status === -11001 ? '二维码已过期'
+                    : qrStatus?.msg || qrStatus?.message || '等待确认'
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
     });
 
     app.post('/api/accounts', async (req, res) => {
@@ -812,6 +1012,7 @@ AppDataSource.initialize().then(async () => {
             const account = accountRepo.create(req.body);
             account.accountType = account.accountType || 'personal';
             account.familyId = account.accountType === 'family' ? (account.familyId || '') : null;
+            account.familyFolderId = account.accountType === 'family' ? (req.body.familyFolderId || account.familyFolderId || '') : '';
             Cloud189Service.invalidateByUsername(account.username);
             // 尝试登录, 登录成功写入store, 如果需要验证码, 则返回用户验证码图片
             if (!account.username.startsWith('n_') && account.password) {
@@ -913,6 +1114,46 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: false, error: error.message });
         }
     })
+
+    app.get('/api/accounts/:id/family/folders', async (req, res) => {
+        try {
+            const accountId = parseInt(req.params.id);
+            const folderId = req.query.folderId || '';
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            const cloud189 = Cloud189Service.getInstance(account);
+            const familyInfo = await cloud189.getFamilyInfo();
+            if (!familyInfo?.familyId) throw new Error('该账号没有可用家庭空间');
+            const folders = await cloud189.listFamilyFolderNodes(familyInfo.familyId, folderId);
+            res.json({ success: true, data: { familyId: String(familyInfo.familyId), folders } });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/accounts/:id/family-folder', async (req, res) => {
+        try {
+            const accountId = parseInt(req.params.id);
+            const familyFolderId = String(req.body?.familyFolderId || '').trim();
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            account.familyFolderId = familyFolderId;
+            await accountRepo.save(account);
+            Cloud189Service.invalidateByUsername(account.username);
+            res.json({ success: true, data: { familyFolderId } });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/accounts/keep-alive', async (req, res) => {
+        try {
+            const result = await taskService.runAccountsKeepAlive();
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
     // 任务相关API
     app.get('/api/tasks', async (req, res) => {
         const { status } = req.query;
@@ -1108,6 +1349,24 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    app.post('/api/tasks/:id/clear-cache', async (req, res) => {
+        try {
+            const result = await taskService.clearTaskCache(parseInt(req.params.id));
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/tasks/:id/manual-tmdb', async (req, res) => {
+        try {
+            const result = await taskService.bindManualTmdb(parseInt(req.params.id), req.body || {});
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.post('/api/tasks/:id/execute', async (req, res) => {
         try {
             const task = await taskRepo.findOne({
@@ -1120,7 +1379,9 @@ AppDataSource.initialize().then(async () => {
                         username: true,
                         localStrmPrefix: true,
                         cloudStrmPrefix: true,
-                        embyPathReplace: true
+                        embyPathReplace: true,
+                        familyId: true,
+                        familyFolderId: true
                     }
                 }
             });
@@ -1661,7 +1922,9 @@ AppDataSource.initialize().then(async () => {
     })
 
     app.post('/api/settings', async (req, res) => {
-        const settings = await prepareSettingsForSave(normalizeTelegramSettings(req.body));
+        const settings = preserveHdhiveSensitiveOnEmptyInput(
+            await prepareSettingsForSave(normalizeTelegramSettings(req.body))
+        );
         SchedulerService.handleScheduleTasks(settings,taskService);
         ConfigService.setConfig(settings)
         await botManager.handleBotStatus(
@@ -1716,7 +1979,7 @@ AppDataSource.initialize().then(async () => {
     // 保存媒体配置
     app.post('/api/settings/media', async (req, res) => {
         try {
-            const settings = req.body;
+            const settings = preserveHdhiveSensitiveOnEmptyInput(req.body || {});
             // 如果cloudSaver的配置变更 就清空cstoken.json
             if (settings.cloudSaver?.baseUrl != ConfigService.getConfigValue('cloudSaver.baseUrl')
             || settings.cloudSaver?.username != ConfigService.getConfigValue('cloudSaver.username')
@@ -1863,6 +2126,120 @@ AppDataSource.initialize().then(async () => {
             res.status(500).json({ success: false, error: '处理消息失败' });
         }
     })
+
+    app.post('/api/chat/enhanced', async (req, res) => {
+        try {
+            const message = String(req.body?.message || '').trim();
+            if (!message) {
+                return res.json({ success: false, error: '消息不能为空' });
+            }
+            const tools = [
+                { name: 'list_accounts', description: '查看账号与容量概况', readonly: true, params: {} },
+                { name: 'storage_summary', description: '查看多账号容量聚合', readonly: true, params: {} },
+                { name: 'refresh_capacity', description: '刷新账号容量缓存', readonly: false, params: { accountId: '可选账号ID' } },
+                { name: 'run_keep_alive', description: '执行账号Session保活检测', readonly: false, params: {} },
+                { name: 'execute_task', description: '立即执行指定任务', readonly: false, params: { taskId: '任务ID' } },
+                { name: 'clear_task_cache', description: '清理指定任务转存记录缓存', readonly: false, params: { taskId: '任务ID' } },
+                { name: 'search_tmdb', description: '搜索 TMDB 媒体', readonly: true, params: { keyword: '关键词', year: '可选年份' } },
+                { name: 'create_task', description: '按分享链接创建任务', readonly: false, params: { accountId: '账号ID', shareLink: '分享链接', targetFolderId: '目标目录ID' } }
+            ];
+            const lowered = message.toLowerCase();
+            const suggestions = tools.filter(tool => {
+                if (/容量|空间|storage/.test(lowered)) return ['storage_summary', 'refresh_capacity', 'list_accounts'].includes(tool.name);
+                if (/保活|session|登录态|心跳/.test(lowered)) return tool.name === 'run_keep_alive';
+                if (/执行|运行/.test(lowered)) return tool.name === 'execute_task';
+                if (/缓存|清理/.test(lowered)) return tool.name === 'clear_task_cache';
+                if (/tmdb|刮削|影视|电影|剧/.test(lowered)) return tool.name === 'search_tmdb';
+                if (/创建|转存|分享/.test(lowered)) return tool.name === 'create_task';
+                return tool.readonly;
+            });
+            res.json({
+                success: true,
+                data: {
+                    message: '已根据当前系统能力生成可执行建议。写操作需要前端二次确认后调用 /api/chat/execute-function。',
+                    suggestions: suggestions.length ? suggestions : tools.filter(tool => tool.readonly),
+                    tools
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/chat/execute-function', async (req, res) => {
+        try {
+            const functionName = String(req.body?.name || req.body?.functionName || '').trim();
+            const args = req.body?.arguments || req.body?.args || {};
+            let result;
+            switch (functionName) {
+                case 'list_accounts':
+                    result = (await accountRepo.find()).map(account => ({
+                        id: account.id,
+                        username: maskUsername(account.username),
+                        alias: account.alias || '',
+                        accountType: account.accountType || 'personal',
+                        familyId: account.familyId || ''
+                    }));
+                    break;
+                case 'storage_summary': {
+                    const accounts = await accountRepo.find();
+                    const summary = { cloud: { used: 0, total: 0 }, family: { used: 0, total: 0 }, accounts: [] };
+                    for (const account of accounts) {
+                        if (!account.username || account.username.startsWith('n_')) continue;
+                        const cloud189 = Cloud189Service.getInstance(account);
+                        const capacity = await cloud189.getUserSizeInfo();
+                        if (!capacity || capacity.res_code != 0) continue;
+                        const normalized = normalizeCapacity(capacity);
+                        summary.cloud.used += Number(normalized.cloudCapacityInfo.usedSize || 0);
+                        summary.cloud.total += Number(normalized.cloudCapacityInfo.totalSize || 0);
+                        summary.family.used += Number(normalized.familyCapacityInfo.usedSize || 0);
+                        summary.family.total += Number(normalized.familyCapacityInfo.totalSize || 0);
+                        summary.accounts.push({ id: account.id, username: maskUsername(account.username), cloud: normalized.cloudCapacityInfo, family: normalized.familyCapacityInfo });
+                    }
+                    result = summary;
+                    break;
+                }
+                case 'refresh_capacity': {
+                    const accounts = args.accountId ? await accountRepo.find({ where: { id: Number(args.accountId) } }) : await accountRepo.find();
+                    let refreshed = 0;
+                    for (const account of accounts) {
+                        if (!account.username || account.username.startsWith('n_')) continue;
+                        const capacity = await Cloud189Service.getInstance(account).getUserSizeInfo({ forceRefresh: true });
+                        if (capacity && capacity.res_code == 0) refreshed++;
+                    }
+                    result = { refreshed };
+                    break;
+                }
+                case 'run_keep_alive':
+                    result = await taskService.runAccountsKeepAlive();
+                    break;
+                case 'execute_task': {
+                    const task = await taskService.getTaskById(Number(args.taskId));
+                    if (!task) throw new Error('任务不存在');
+                    result = await taskService.processTask(task);
+                    break;
+                }
+                case 'clear_task_cache':
+                    result = await taskService.clearTaskCache(Number(args.taskId));
+                    break;
+                case 'search_tmdb': {
+                    const keyword = String(args.keyword || '').trim();
+                    if (!keyword) throw new Error('关键词不能为空');
+                    const data = await tmdbService.search(keyword, String(args.year || ''));
+                    result = [...(data.movies || []), ...(data.tvShows || [])];
+                    break;
+                }
+                case 'create_task':
+                    result = await taskService.createTask(args);
+                    break;
+                default:
+                    throw new Error('不支持的工具函数');
+            }
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
 
 
     // STRM相关API
@@ -2813,6 +3190,7 @@ AppDataSource.initialize().then(async () => {
 
     // 初始化cloudsaver
     setupCloudSaverRoutes(app);
+    setupHdhiveRoutes(app);
     // 启动服务器
     const server = app.listen(appPort, '0.0.0.0', async () => {
         console.log(`服务器运行在 http://0.0.0.0:${appPort}`);

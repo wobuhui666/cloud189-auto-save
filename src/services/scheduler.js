@@ -49,7 +49,16 @@ class SchedulerService {
             });
         }
 
-        // 5. PT 订阅相关
+        // 5. 账号 Session 保活
+        const enableSessionKeepAlive = ConfigService.getConfigValue('task.enableSessionKeepAlive');
+        const sessionKeepAliveCron = ConfigService.getConfigValue('task.sessionKeepAliveCron');
+        if (enableSessionKeepAlive && sessionKeepAliveCron) {
+            this.saveDefaultTaskJob('账号Session保活', sessionKeepAliveCron, async () => {
+                await taskService.runAccountsKeepAlive();
+            });
+        }
+
+        // 6. PT 订阅相关
         try {
             const { ptService } = require('./ptService');
             const ptPollCron = ConfigService.getConfigValue('pt.pollCron');
@@ -210,6 +219,14 @@ class SchedulerService {
             settings.task.lazyFileCleanupCron,
             '自动清理懒转存文件',
             async () => taskService.cleanupLazyTransferredFiles()
+        );
+        handleScheduleTask(
+            ConfigService.getConfigValue('task.enableSessionKeepAlive'),
+            settings.task.enableSessionKeepAlive,
+            ConfigService.getConfigValue('task.sessionKeepAliveCron'),
+            settings.task.sessionKeepAliveCron,
+            '账号Session保活',
+            async () => taskService.runAccountsKeepAlive()
         );
 
         // PT 相关 cron 变更

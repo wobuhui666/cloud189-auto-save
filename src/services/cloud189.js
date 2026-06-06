@@ -1,15 +1,145 @@
-const { CloudClient, FileTokenStore } = require('../../vender/cloud189-sdk/dist');
+const { CloudClient, CloudAuthClient, FileTokenStore } = require('../../vender/cloud189-sdk/dist');
+const { AUTH_URL, API_URL, AppID, ClientType, ReturnURL } = require('../../vender/cloud189-sdk/dist/const');
 const { logTaskEvent } = require('../utils/logUtils');
 const crypto = require('crypto');
 const got = require('got');
 const ProxyUtil = require('../utils/ProxyUtil');
+
+class Cloud189QRAuthService {
+    constructor() {
+        this.authClient = new CloudAuthClient();
+        const proxyUrl = ProxyUtil.getProxy('cloud189');
+        if (proxyUrl) {
+            this.authClient.setProxy(proxyUrl);
+        }
+    }
+
+    _buildQRCodeImageUrl(qrData) {
+        return `${AUTH_URL}/api/logbox/oauth2/image.do?uuid=${encodeURIComponent(qrData.uuid)}&REQID=${encodeURIComponent(qrData.reqId)}`;
+    }
+
+    _buildQRCodeCheckDate() {
+        const now = new Date();
+        const pad = (value, length = 2) => String(value).padStart(length, '0');
+        return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+    }
+
+    async getQRCode() {
+        const loginForm = await this.authClient.getLoginForm();
+        if (!loginForm?.reqId || !loginForm?.lt || !loginForm?.paramId) {
+            throw new Error('获取扫码登录参数失败');
+        }
+        const uuidResult = await this.authClient.request
+            .post(`${AUTH_URL}/api/logbox/oauth2/getUUID.do`, {
+                headers: { Referer: AUTH_URL },
+                form: { appId: AppID }
+            })
+            .json();
+        if (!uuidResult?.uuid || !uuidResult?.encryuuid) {
+            throw new Error('获取扫码登录二维码失败');
+        }
+        const qrData = {
+            uuid: uuidResult.uuid,
+            encryuuid: uuidResult.encryuuid,
+            reqId: loginForm.reqId,
+            lt: loginForm.lt,
+            paramId: loginForm.paramId
+        };
+        return {
+            ...qrData,
+            qrUrl: this._buildQRCodeImageUrl(qrData)
+        };
+    }
+
+    async checkQRCodeStatus(qrData = {}) {
+        const { uuid, encryuuid, reqId, lt, paramId } = qrData;
+        if (!uuid || !encryuuid || !reqId || !lt || !paramId) {
+            throw new Error('扫码登录状态参数不完整');
+        }
+        return await this.authClient.request
+            .post(`${AUTH_URL}/api/logbox/oauth2/qrcodeLoginState.do`, {
+                headers: {
+                    Referer: AUTH_URL,
+                    Reqid: reqId,
+                    lt
+                },
+                form: {
+                    appId: AppID,
+                    clientType: ClientType,
+                    returnUrl: ReturnURL,
+                    paramId,
+                    uuid,
+                    encryuuid,
+                    date: this._buildQRCodeCheckDate(),
+                    timeStamp: Date.now()
+                }
+            })
+            .json();
+    }
+
+    async exchangeQRCodeSession(redirectURL) {
+        if (!redirectURL) {
+            throw new Error('扫码登录回调地址为空');
+        }
+        return await this.authClient.getSessionForPC({ redirectURL });
+    }
+}
+
 class Cloud189Service {
     static instances = new Map();
+    static capacityCache = new Map();
+    static CAPACITY_CACHE_TTL = 30 * 60 * 1000;
     static CLOUD_WEB_BASE_URL = 'https://cloud.189.cn';
     static CLOUD_API_BASE_URL = 'https://api.cloud.189.cn';
 
     static buildInstanceKey(account) {
-        return `${account.username}::${account.accountType || 'personal'}::${account.familyId || ''}`;
+        return `${account.username}::${account.accountType || 'personal'}::${account.familyId || ''}::${account.familyFolderId || ''}`;
+    }
+
+    static buildCapacityCacheKey(account) {
+        if (typeof account === 'string') {
+            return account;
+        }
+        return this.buildInstanceKey(account);
+    }
+
+    static getCachedCapacity(account, includeExpired = false) {
+        const key = this.buildCapacityCacheKey(account);
+        let cached = this.capacityCache.get(key);
+        if (!cached && typeof account !== 'string' && account?.username) {
+            cached = this.capacityCache.get(account.username);
+        }
+        if (!cached) {
+            return null;
+        }
+        if (!includeExpired && cached.expiresAt <= Date.now()) {
+            return null;
+        }
+        return cached.data;
+    }
+
+    static setCachedCapacity(account, data) {
+        const cacheData = {
+            data,
+            expiresAt: Date.now() + this.CAPACITY_CACHE_TTL,
+            updatedAt: Date.now()
+        };
+        this.capacityCache.set(this.buildCapacityCacheKey(account), cacheData);
+        if (typeof account !== 'string' && account?.username) {
+            this.capacityCache.set(account.username, cacheData);
+        }
+    }
+
+    static clearCapacityCache(account = null) {
+        if (!account) {
+            this.capacityCache.clear();
+            return;
+        }
+        const key = this.buildCapacityCacheKey(account);
+        this.capacityCache.delete(key);
+        if (typeof account !== 'string' && account?.username) {
+            this.capacityCache.delete(account.username);
+        }
     }
 
     static getInstance(account) {
@@ -26,13 +156,19 @@ class Cloud189Service {
                 this.instances.delete(key);
             }
         }
+        this.clearCapacityCache(username);
+    }
+
+    static createQRAuthService() {
+        return new Cloud189QRAuthService();
     }
 
     constructor(account) {
         this.account = {
             ...account,
             accountType: account.accountType || 'personal',
-            familyId: account.familyId ? String(account.familyId) : ''
+            familyId: account.familyId ? String(account.familyId) : '',
+            familyFolderId: account.familyFolderId ? String(account.familyFolderId) : ''
         };
         const _options = {
             username: account.username,
@@ -44,6 +180,7 @@ class Cloud189Service {
             _options.password = null   
         }
         _options.proxy = ProxyUtil.getProxy('cloud189')
+        _options.proxyUrl = _options.proxy
         this.client = new CloudClient(_options);
     }
 
@@ -191,9 +328,17 @@ class Cloud189Service {
         return this.account.familyId;
     }
     
-    async getUserSizeInfo() {
+    async getUserSizeInfo(options = {}) {
+        const cachedCapacity = Cloud189Service.getCachedCapacity(this.account);
+        if (!options.forceRefresh && cachedCapacity) {
+            return cachedCapacity;
+        }
         try {
-            return await this.client.getUserSizeInfo()    
+            const capacity = await this.client.getUserSizeInfo();
+            if (capacity && capacity.res_code == 0) {
+                Cloud189Service.setCachedCapacity(this.account, capacity);
+            }
+            return capacity;
         }catch(error) {
             if (error instanceof got.HTTPError) {
                 const responseBody = error.response.body;
@@ -207,10 +352,23 @@ class Cloud189Service {
                 logTaskEvent('获取用户空间信息失败:' +  error.message);
             }
             console.log(error)
-            return null
+            return Cloud189Service.getCachedCapacity(this.account, true) || null
         }
     
     }
+
+    async keepAlive() {
+        const capacity = await this.getUserSizeInfo({ forceRefresh: true });
+        if (capacity && capacity.res_code == 0) {
+            return { success: true, mode: 'capacity', data: capacity };
+        }
+        const session = await this.client.getSession();
+        if (!session?.accessToken && !session?.sessionKey) {
+            throw new Error('Session刷新返回为空');
+        }
+        return { success: true, mode: 'session', data: session };
+    }
+
     // 解析分享链接获取文件信息
     async getShareInfo(shareCode) {
         return await this.request('/api/open/share/getShareInfoByCodeV2.action' , {
@@ -561,8 +719,38 @@ class Cloud189Service {
         return null
     }
 
+    async listFamilyFolderNodes(familyId, folderId = '') {
+        const normalizedFolderId = folderId === '-11' ? '' : (folderId || '');
+        const result = await this.request('/api/open/family/file/listFiles.action', {
+            method: 'GET',
+            searchParams: {
+                familyId: String(familyId),
+                folderId: normalizedFolderId,
+                fileType: '0',
+                mediaAttr: '0',
+                iconOption: '5',
+                pageNum: '1',
+                pageSize: '1000',
+                orderBy: '1',
+                descending: 'false'
+            }
+        });
+        if (!result?.fileListAO) {
+            return [];
+        }
+        return (result.fileListAO.folderList || []).map(folder => ({
+            ...folder,
+            id: String(folder.id || folder.fileId || ''),
+            fileId: String(folder.fileId || folder.id || ''),
+            name: folder.name || folder.fileName || ''
+        }));
+    }
+
     // 获取家庭空间根目录ID（用作家庭秒传中转目录）
     async getFamilyRootFolderId(familyId) {
+        if (this.account.familyFolderId) {
+            return String(this.account.familyFolderId);
+        }
         try {
             const result = await this.request('/api/open/family/file/listFiles.action', {
                 method: 'GET',

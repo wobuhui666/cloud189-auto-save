@@ -95,6 +95,9 @@ export class Account {
     @Column('text', { nullable: true })
     familyId!: string;
 
+    @Column('text', { nullable: true, default: '' })
+    familyFolderId!: string;
+
     // 默认账号
     @Column('boolean', { nullable: true, default: false })
     isDefault!: boolean;
@@ -256,6 +259,15 @@ export class Task {
 
     @Column('integer', { nullable: true })
     tmdbSeasonEpisodes!: number;
+
+    @Column('boolean', { nullable: true, default: false })
+    manualTmdbBound!: boolean;
+
+    @Column('integer', { nullable: true })
+    manualSeason!: number;
+
+    @Column('text', { nullable: true })
+    tmdbTitle!: string;
     
     @Column({ nullable: true })
     enableTaskScraper!: boolean; // 是否启用刮削

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Bell, MessageSquare, Shield, Globe, Cpu, Database, Save, RefreshCw, Key, Plus, Trash2, X, Settings, PlayCircle, Folder, Send } from 'lucide-react';
+import { Settings as SettingsIcon, Bell, MessageSquare, Shield, Globe, Cpu, Database, Save, RefreshCw, Key, Plus, Trash2, X, Settings, PlayCircle, Folder, Send, Search } from 'lucide-react';
 import Modal from '../Modal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import Checkbox from '../ui/Checkbox';
@@ -46,6 +46,9 @@ interface SettingsData {
     enableAutoClearFamilyRecycle: boolean;
     enableAutoCleanLazyFiles: boolean;
     lazyFileRetentionHours: number;
+    enableStorageAggregation: boolean;
+    enableSessionKeepAlive: boolean;
+    sessionKeepAliveCron: string;
     mediaSuffix: string;
     enableOnlySaveMedia: boolean;
     enableAutoCreateFolder: boolean;
@@ -89,6 +92,7 @@ interface SettingsData {
       tmdb: boolean;
       openai: boolean;
       cloud189: boolean;
+      hdhive: boolean;
       customPush: boolean;
     }
   };
@@ -145,6 +149,25 @@ interface SettingsData {
     baseUrl: string;
     apiKey: string;
   };
+  hdhive: {
+    enabled: boolean;
+    baseUrl: string;
+    cookie: string;
+    hasCookie?: boolean;
+    username: string;
+    password: string;
+    hasPassword?: boolean;
+    clientId: string;
+    apiKey: string;
+    hasApiKey?: boolean;
+    resourceUnlockActionId: string;
+    browserBridge: {
+      enabled: boolean;
+      baseUrl: string;
+      token: string;
+      hasToken?: boolean;
+    };
+  };
 }
 
 const initialSettings: SettingsData = {
@@ -159,6 +182,9 @@ const initialSettings: SettingsData = {
     enableAutoClearFamilyRecycle: false,
     enableAutoCleanLazyFiles: false,
     lazyFileRetentionHours: 24,
+    enableStorageAggregation: true,
+    enableSessionKeepAlive: true,
+    sessionKeepAliveCron: '0 */4 * * *',
     mediaSuffix: '.mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov',
     enableOnlySaveMedia: false,
     enableAutoCreateFolder: false,
@@ -181,13 +207,28 @@ const initialSettings: SettingsData = {
     port: 0,
     username: '',
     password: '',
-    services: { telegram: false, tmdb: false, openai: false, cloud189: false, customPush: false }
+    services: { telegram: false, tmdb: false, openai: false, cloud189: false, hdhive: false, customPush: false }
   },
   bark: { enable: false, serverUrl: '', key: '' },
   system: { username: '', password: '', baseUrl: '', apiKey: '' },
   pushplus: { enable: false, token: '', topic: '', channel: '', webhook: '', to: '' },
   customPush: [],
-  regexPresets: []
+  regexPresets: [],
+  hdhive: {
+    enabled: false,
+    baseUrl: 'https://hdhive.com',
+    cookie: '',
+    username: '',
+    password: '',
+    clientId: '',
+    apiKey: '',
+    resourceUnlockActionId: '601a2054beb3034dd490287f5aa0d7c801f9e650c7',
+    browserBridge: {
+      enabled: false,
+      baseUrl: '',
+      token: ''
+    }
+  }
 };
 
 const SettingsTab: React.FC = () => {
@@ -196,6 +237,7 @@ const SettingsTab: React.FC = () => {
   const [accounts, setAccounts] = useState<{id: number, username: string, alias?: string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [keepAliveRunning, setKeepAliveRunning] = useState(false);
 
   // Folder Selector State
   const [isFolderSelectorOpen, setIsFolderSelectorOpen] = useState(false);
@@ -241,6 +283,34 @@ const SettingsTab: React.FC = () => {
         const loaded = data.data || {};
         const normalized = {
           ...loaded,
+          task: {
+            ...initialSettings.task,
+            ...(loaded.task || {}),
+            autoCreate: {
+              ...initialSettings.task.autoCreate,
+              ...(loaded.task?.autoCreate || {})
+            }
+          },
+          proxy: {
+            ...initialSettings.proxy,
+            ...(loaded.proxy || {}),
+            services: {
+              ...initialSettings.proxy.services,
+              ...(loaded.proxy?.services || {})
+            }
+          },
+          hdhive: {
+            ...initialSettings.hdhive,
+            ...(loaded.hdhive || {}),
+            cookie: '',
+            password: '',
+            apiKey: '',
+            browserBridge: {
+              ...initialSettings.hdhive.browserBridge,
+              ...(loaded.hdhive?.browserBridge || {}),
+              token: ''
+            }
+          },
           telegram: {
             enable: loaded.telegram?.enable ?? loaded.telegram?.bot?.enable ?? false,
             proxyDomain: loaded.telegram?.proxyDomain || '',
@@ -258,7 +328,7 @@ const SettingsTab: React.FC = () => {
             }
           }
         };
-        setSettings(prev => ({ ...normalized, regexPresets: prev.regexPresets }));
+        setSettings(prev => ({ ...initialSettings, ...normalized, regexPresets: prev.regexPresets }));
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -389,6 +459,34 @@ const SettingsTab: React.FC = () => {
     } catch (error) {
       toast.error('测试失败: ' + (error as Error).message);
     }
+  };
+
+  const runKeepAlive = async () => {
+    setKeepAliveRunning(true);
+    try {
+      const response = await fetch('/api/accounts/keep-alive', { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        const ok = data.data?.success || 0;
+        const failed = data.data?.failed || 0;
+        toast.success(`保活完成，成功 ${ok} 个${failed ? `，失败 ${failed} 个` : ''}`);
+      } else {
+        toast.error('保活失败: ' + data.error);
+      }
+    } catch (error) {
+      toast.error('保活失败: ' + (error as Error).message);
+    } finally {
+      setKeepAliveRunning(false);
+    }
+  };
+
+  const proxyServiceLabels: Record<string, string> = {
+    telegram: 'Telegram',
+    tmdb: 'TMDB',
+    openai: 'OpenAI',
+    cloud189: '天翼网盘',
+    hdhive: '影巢',
+    customPush: '自定义推送'
   };
 
   // Custom Push Handlers
@@ -549,6 +647,15 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Session 保活定时 (Cron)</label>
+              <input
+                type="text"
+                value={settings.task.sessionKeepAliveCron}
+                onChange={(e) => updateSettings('task.sessionKeepAliveCron', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+              />
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">懒转存保留时间 (小时)</label>
               <input 
                 type="number" 
@@ -636,6 +743,46 @@ const SettingsTab: React.FC = () => {
                 <span className="text-sm font-medium text-slate-900">目标文件夹自动创建</span>
               </div>
             </label>
+            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <div
+                onClick={() => updateSettings('task.enableStorageAggregation', !settings.task.enableStorageAggregation)}
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                  settings.task.enableStorageAggregation ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
+                }`}
+              >
+                {settings.task.enableStorageAggregation && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+              </div>
+              <div>
+                <span className="text-sm font-medium text-slate-900">账号容量聚合</span>
+                <p className="text-[10px] text-slate-400">账号页显示多账号容量汇总</p>
+              </div>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+              <div
+                onClick={() => updateSettings('task.enableSessionKeepAlive', !settings.task.enableSessionKeepAlive)}
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                  settings.task.enableSessionKeepAlive ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
+                }`}
+              >
+                {settings.task.enableSessionKeepAlive && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+              </div>
+              <div>
+                <span className="text-sm font-medium text-slate-900">账号 Session 保活</span>
+                <p className="text-[10px] text-slate-400">定时刷新账号会话</p>
+              </div>
+            </label>
+          </div>
+
+          <div className="flex justify-end border-t border-slate-100 pt-4">
+            <button
+              type="button"
+              onClick={runKeepAlive}
+              disabled={keepAliveRunning}
+              className="px-5 py-3 bg-white border border-slate-300 rounded-2xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
+            >
+              <RefreshCw size={18} className={keepAliveRunning ? 'animate-spin' : ''} />
+              立即执行账号保活
+            </button>
           </div>
 
           {/* Auto Series Defaults */}
@@ -901,7 +1048,7 @@ const SettingsTab: React.FC = () => {
           <div className="pt-2">
             <p className="text-xs font-medium text-slate-500 mb-3">代理服务选择</p>
             <div className="flex flex-wrap gap-3">
-              {['telegram', 'tmdb', 'openai', 'cloud189', 'customPush'].map(service => (
+              {Object.keys(proxyServiceLabels).map(service => (
                 <button
                   key={service}
                   type="button"
@@ -912,9 +1059,125 @@ const SettingsTab: React.FC = () => {
                       : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  {service === 'cloud189' ? '天翼网盘' : service.toUpperCase()}
+                  {proxyServiceLabels[service]}
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* HDHive */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+            <Search size={24} className="text-[#0b57d0]" /> 影巢资源
+          </h3>
+          <Switch checked={settings.hdhive.enabled} onChange={(v) => updateSettings('hdhive.enabled', v)} />
+        </div>
+        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60'}`}>
+          <div className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed">
+            支持 Cookie 网页解析、OpenAPI OAuth 和 Browser Bridge 签名网页模式。敏感凭证如已保存或通过环境变量配置，可保持输入框为空。
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">影巢站点地址</label>
+              <input
+                type="url"
+                value={settings.hdhive.baseUrl}
+                onChange={(e) => updateSettings('hdhive.baseUrl', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="https://hdhive.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Client ID</label>
+              <input
+                type="text"
+                value={settings.hdhive.clientId}
+                onChange={(e) => updateSettings('hdhive.clientId', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="OpenAPI Client ID"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">网页登录账号</label>
+              <input
+                type="text"
+                value={settings.hdhive.username}
+                onChange={(e) => updateSettings('hdhive.username', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="邮箱或用户名，用于 Browser Bridge 登录取 Cookie"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">网页登录密码</label>
+              <input
+                type="password"
+                value={settings.hdhive.password}
+                onChange={(e) => updateSettings('hdhive.password', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder={settings.hdhive.hasPassword ? '已保存密码；留空不覆盖' : '用于 Browser Bridge 登录取 Cookie'}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">Cookie</label>
+              <textarea
+                rows={3}
+                value={settings.hdhive.cookie}
+                onChange={(e) => updateSettings('hdhive.cookie', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder={settings.hdhive.hasCookie ? '已保存 Cookie；留空不覆盖' : '用于网页登录解析，留空则不启用 Cookie 模式'}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Browser Bridge 地址</label>
+              <input
+                type="url"
+                value={settings.hdhive.browserBridge.baseUrl}
+                onChange={(e) => updateSettings('hdhive.browserBridge.baseUrl', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="https://hdhive-browser-bridge.onrender.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700">Browser Bridge Token</label>
+              <input
+                type="password"
+                value={settings.hdhive.browserBridge.token}
+                onChange={(e) => updateSettings('hdhive.browserBridge.token', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder={settings.hdhive.browserBridge.hasToken ? '已保存 Token；留空不覆盖' : '必须与 Render BRIDGE_TOKEN 一致'}
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
+                <div>
+                  <div className="text-sm font-medium text-slate-700">启用 Browser Bridge 签名模式</div>
+                  <div className="mt-1 text-xs text-slate-500">用于 `/api/customer/*`、网页登录取 Cookie、签到和资源解锁。</div>
+                </div>
+                <Switch checked={settings.hdhive.browserBridge.enabled} onChange={(v) => updateSettings('hdhive.browserBridge.enabled', v)} />
+              </div>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">API Key</label>
+              <input
+                type="password"
+                value={settings.hdhive.apiKey}
+                onChange={(e) => updateSettings('hdhive.apiKey', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="OpenAPI API Key；留空不覆盖已保存值"
+              />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">资源解锁 Action ID</label>
+              <input
+                type="text"
+                value={settings.hdhive.resourceUnlockActionId}
+                onChange={(e) => updateSettings('hdhive.resourceUnlockActionId', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="Next-Action ID，影巢部署轮换后可在这里更新"
+              />
             </div>
           </div>
         </div>

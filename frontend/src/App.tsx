@@ -43,10 +43,11 @@ import SettingsTab from './components/tabs/SettingsTab';
 import CasTab from './components/tabs/CasTab';
 import PtTab, { type PtPrefillData } from './components/tabs/PtTab';
 import PosterWallTab from './components/tabs/PosterWallTab';
+import HdhiveTab from './components/tabs/HdhiveTab';
 import { useDialog } from './components/ui/Dialog';
 
 // --- Types ---
-export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'posterWall' | 'settings';
+export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'hdhive' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'posterWall' | 'settings';
 type ThemeMode = 'light' | 'dark' | 'system';
 
 const appVersionLabel = `v${__APP_VERSION__}`;
@@ -185,6 +186,7 @@ export default function App() {
     { id: 'fileManager', label: '文件', icon: Files },
     { id: 'task', label: '任务', icon: ClipboardList },
     { id: 'autoSeries', label: '自动追剧', icon: PlayCircle },
+    { id: 'hdhive', label: '影巢', icon: Search },
     { id: 'organizer', label: '整理器', icon: LayoutGrid },
     { id: 'subscription', label: '订阅', icon: Rss },
     { id: 'strmConfig', label: 'STRM', icon: Link2 },
@@ -423,6 +425,7 @@ export default function App() {
                 )}
                 {activeTab === 'fileManager' && <FileManagerTab />}
                 {activeTab === 'autoSeries' && <AutoSeriesTab />}
+                {activeTab === 'hdhive' && <HdhiveTab onTransfer={handleOpenCreateTask} />}
                 {activeTab === 'organizer' && <OrganizerTab />}
                 {activeTab === 'subscription' && <SubscriptionTab onTransfer={handleOpenCreateTask} />}
                 {activeTab === 'strmConfig' && <StrmConfigTab />}

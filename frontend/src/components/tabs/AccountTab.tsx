@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, MoreVertical } from 'lucide-react';
+import { Database, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
 import Modal from '../Modal';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
@@ -21,6 +21,7 @@ interface Account {
   alias: string | null;
   accountType: 'personal' | 'family';
   familyId: string | null;
+  familyFolderId: string | null;
   isDefault: boolean;
   capacity: Capacity;
   cloudStrmPrefix: string | null;
@@ -28,6 +29,20 @@ interface Account {
   embyPathReplace: string | null;
   password?: string;
   cookies?: string;
+}
+
+interface StorageSummary {
+  enabled: boolean;
+  cloud: { used: number; total: number };
+  family: { used: number; total: number };
+  accounts: Array<{
+    id: number;
+    username: string;
+    alias?: string;
+    accountType: 'personal' | 'family';
+    cloud: CapacityInfo;
+    family: CapacityInfo;
+  }>;
 }
 
 const formatBytes = (bytes: number) => {
@@ -46,8 +61,13 @@ const AccountTab: React.FC = () => {
   const toast = useToast();
   const dialog = useDialog();
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [capacityRefreshing, setCapacityRefreshing] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrData, setQrData] = useState<any | null>(null);
+  const [qrMessage, setQrMessage] = useState('等待扫码');
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [formData, setFormData] = useState({
     username: '',
@@ -56,6 +76,7 @@ const AccountTab: React.FC = () => {
     alias: '',
     accountType: 'personal' as 'personal' | 'family',
     familyId: '',
+    familyFolderId: '',
     cloudStrmPrefix: '',
     localStrmPrefix: '',
     embyPathReplace: '',
@@ -82,9 +103,62 @@ const AccountTab: React.FC = () => {
     }
   };
 
+  const fetchStorageSummary = async () => {
+    try {
+      const response = await fetch('/api/accounts/storage-summary');
+      const data = await response.json();
+      if (data.success) {
+        setStorageSummary(data.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch storage summary:', error);
+    }
+  };
+
   useEffect(() => {
     fetchAccounts();
+    fetchStorageSummary();
   }, []);
+
+  useEffect(() => {
+    if (!isQrModalOpen || !qrData) return;
+
+    let stopped = false;
+    const pollQrStatus = async () => {
+      try {
+        const response = await fetch('/api/accounts/qr-status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(qrData)
+        });
+        const data = await response.json();
+        if (stopped) return;
+        if (!data.success) {
+          setQrMessage(data.error || '扫码状态检查失败');
+          return;
+        }
+        setQrMessage(data.message || '等待确认');
+        if (data.status === 0) {
+          toast.success(`扫码登录成功: ${data.data?.username || ''}`);
+          setIsQrModalOpen(false);
+          setQrData(null);
+          fetchAccounts();
+          fetchStorageSummary();
+        }
+      } catch (error) {
+        if (!stopped) {
+          setQrMessage('扫码状态检查失败');
+        }
+      }
+    };
+
+    pollQrStatus();
+    const timer = window.setInterval(pollQrStatus, 2000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [isQrModalOpen, qrData, toast]);
 
   const handleOpenAddModal = () => {
     setEditingAccount(null);
@@ -95,6 +169,7 @@ const AccountTab: React.FC = () => {
       alias: '',
       accountType: 'personal',
       familyId: '',
+      familyFolderId: '',
       cloudStrmPrefix: '',
       localStrmPrefix: '',
       embyPathReplace: '',
@@ -113,6 +188,7 @@ const AccountTab: React.FC = () => {
       alias: account.alias || '',
       accountType: account.accountType || 'personal',
       familyId: account.familyId || '',
+      familyFolderId: account.familyFolderId || '',
       cloudStrmPrefix: account.cloudStrmPrefix || '',
       localStrmPrefix: account.localStrmPrefix || '',
       embyPathReplace: account.embyPathReplace || '',
@@ -120,6 +196,51 @@ const AccountTab: React.FC = () => {
     });
     setCaptchaInfo(null);
     setIsModalOpen(true);
+  };
+
+  const handleOpenQrLogin = async () => {
+    setQrMessage('正在获取二维码...');
+    setQrData(null);
+    setIsQrModalOpen(true);
+    try {
+      const response = await fetch('/api/accounts/qr-code');
+      const data = await response.json();
+      if (!data.success) {
+        toast.error('获取二维码失败: ' + data.error);
+        setQrMessage(data.error || '获取二维码失败');
+        return;
+      }
+      setQrData(data.data);
+      setQrMessage('等待扫码');
+    } catch (error) {
+      toast.error('获取二维码失败');
+      setQrMessage('获取二维码失败');
+    }
+  };
+
+  const handleRefreshCapacity = async (accountId?: number) => {
+    setCapacityRefreshing(true);
+    try {
+      const response = await fetch('/api/accounts/refresh-capacity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(accountId ? { accountId } : {})
+      });
+      const data = await response.json();
+      if (data.success) {
+        const refreshed = data.data?.refreshed ?? 0;
+        const errors = data.data?.errors?.length ?? 0;
+        toast.success(`容量刷新完成，成功 ${refreshed} 个${errors ? `，失败 ${errors} 个` : ''}`);
+        await fetchAccounts();
+        await fetchStorageSummary();
+      } else {
+        toast.error('容量刷新失败: ' + data.error);
+      }
+    } catch (error) {
+      toast.error('容量刷新失败');
+    } finally {
+      setCapacityRefreshing(false);
+    }
   };
 
   const handleDeleteAccount = async (id: number) => {
@@ -223,12 +344,13 @@ const AccountTab: React.FC = () => {
     }
   };
 
-  const updateField = async (id: number, type: 'alias' | 'cloud' | 'local' | 'emby', currentVal: string) => {
+  const updateField = async (id: number, type: 'alias' | 'cloud' | 'local' | 'emby' | 'familyFolder', currentVal: string) => {
     const labels = {
       alias: '新的别名',
       cloud: '新的媒体目录前缀',
       local: '新的本地目录前缀',
-      emby: '新的Emby替换路径'
+      emby: '新的Emby替换路径',
+      familyFolder: '家庭中转目录ID'
     };
     const newVal = await dialog.prompt({
       title: labels[type],
@@ -237,8 +359,16 @@ const AccountTab: React.FC = () => {
     });
     if (newVal === null) return;
 
-    const endpoint = type === 'alias' ? `/api/accounts/${id}/alias` : `/api/accounts/${id}/strm-prefix`;
-    const body = type === 'alias' ? { alias: newVal } : { strmPrefix: newVal, type: type };
+    const endpoint = type === 'alias'
+      ? `/api/accounts/${id}/alias`
+      : type === 'familyFolder'
+        ? `/api/accounts/${id}/family-folder`
+        : `/api/accounts/${id}/strm-prefix`;
+    const body = type === 'alias'
+      ? { alias: newVal }
+      : type === 'familyFolder'
+        ? { familyFolderId: newVal }
+        : { strmPrefix: newVal, type: type };
 
     fetch(endpoint, {
       method: 'PUT',
@@ -250,6 +380,7 @@ const AccountTab: React.FC = () => {
       if (data.success) {
         toast.success('更新成功');
         fetchAccounts();
+        fetchStorageSummary();
       } else {
         toast.error('更新失败: ' + data.error);
       }
@@ -267,6 +398,19 @@ const AccountTab: React.FC = () => {
           >
             <Plus size={18} /> 添加账号
           </button>
+          <button
+            onClick={handleOpenQrLogin}
+            className="bg-white border border-slate-200 text-slate-700 px-6 py-2.5 rounded-full text-sm font-medium hover:bg-slate-50 transition-all shadow-sm flex items-center gap-2"
+          >
+            <QrCode size={18} /> 扫码登录
+          </button>
+          <button
+            onClick={() => handleRefreshCapacity()}
+            disabled={capacityRefreshing}
+            className="bg-white border border-slate-200 text-slate-700 px-6 py-2.5 rounded-full text-sm font-medium hover:bg-slate-50 transition-all shadow-sm flex items-center gap-2 disabled:opacity-60"
+          >
+            <RefreshCw size={18} className={capacityRefreshing ? 'animate-spin' : ''} /> 刷新容量
+          </button>
           <button 
             onClick={handleClearRecycleBin}
             className="bg-[#f8dada] text-[#900b09] px-6 py-2.5 rounded-full text-sm font-medium hover:bg-[#f8dada]/80 transition-all flex items-center gap-2"
@@ -275,6 +419,43 @@ const AccountTab: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {storageSummary && storageSummary.enabled && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-white rounded-3xl border border-slate-200/60 p-6 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <Database size={20} className="text-[#0b57d0]" />
+              <span className="text-sm font-semibold text-slate-900">个人容量聚合</span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-semibold text-slate-900">{formatBytes(storageSummary.cloud.used)}</p>
+                <p className="text-xs text-slate-500 mt-1">总容量 {formatBytes(storageSummary.cloud.total)}</p>
+              </div>
+              <span className="text-xs text-slate-400">{storageSummary.accounts.length} 个账号</span>
+            </div>
+            <div className="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full bg-[#0b57d0]" style={{ width: `${storageSummary.cloud.total ? Math.min(100, storageSummary.cloud.used / storageSummary.cloud.total * 100) : 0}%` }} />
+            </div>
+          </div>
+          <div className="bg-white rounded-3xl border border-slate-200/60 p-6 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <Database size={20} className="text-slate-500" />
+              <span className="text-sm font-semibold text-slate-900">家庭容量聚合</span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-semibold text-slate-900">{formatBytes(storageSummary.family.used)}</p>
+                <p className="text-xs text-slate-500 mt-1">总容量 {formatBytes(storageSummary.family.total)}</p>
+              </div>
+              <span className="text-xs text-slate-400">含家庭空间</span>
+            </div>
+            <div className="mt-4 h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full bg-slate-500" style={{ width: `${storageSummary.family.total ? Math.min(100, storageSummary.family.used / storageSummary.family.total * 100) : 0}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
       
       <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
@@ -286,17 +467,18 @@ const AccountTab: React.FC = () => {
                 <th className="px-6 py-4 font-medium text-slate-500">别名</th>
                 <th className="px-6 py-4 font-medium text-slate-500">个人容量</th>
                 <th className="px-6 py-4 font-medium text-slate-500">家庭容量</th>
+                <th className="px-6 py-4 font-medium text-slate-500">家庭中转</th>
                 <th className="px-6 py-4 font-medium text-slate-500">媒体目录</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-slate-500">加载中...</td>
+                  <td colSpan={7} className="px-6 py-4 text-center text-slate-500">加载中...</td>
                 </tr>
               ) : !Array.isArray(accounts) || accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-4 text-center text-slate-500">暂无账号</td>
+                  <td colSpan={7} className="px-6 py-4 text-center text-slate-500">暂无账号</td>
                 </tr>
               ) : accounts.map(account => {
                 if (!account) return null;
@@ -323,6 +505,12 @@ const AccountTab: React.FC = () => {
                         className="text-[#0b57d0] hover:text-[#0b57d0]/80 font-medium transition-colors"
                       >
                         编辑
+                      </button>
+                      <button
+                        onClick={() => handleRefreshCapacity(account.id)}
+                        className="text-slate-600 hover:text-[#0b57d0] font-medium transition-colors"
+                      >
+                        刷新
                       </button>
                       <button 
                         onClick={() => handleDeleteAccount(account.id)}
@@ -367,6 +555,14 @@ const AccountTab: React.FC = () => {
                         />
                       </div>
                     </div>
+                  </td>
+                  <td
+                    className="px-6 py-4 cursor-pointer"
+                    onClick={() => updateField(account.id, 'familyFolder', account.familyFolderId || '')}
+                  >
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+                      {account.familyFolderId || '未设置'}
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-1.5">
@@ -466,14 +662,26 @@ const AccountTab: React.FC = () => {
             </div>
           </div>
           {formData.accountType === 'family' && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Family ID</label>
-              <input 
-                type="text" 
-                value={formData.familyId}
-                onChange={e => setFormData({...formData, familyId: e.target.value})}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700">Family ID</label>
+                <input
+                  type="text"
+                  value={formData.familyId}
+                  onChange={e => setFormData({...formData, familyId: e.target.value})}
+                  className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-slate-700">家庭中转目录ID</label>
+                <input
+                  type="text"
+                  value={formData.familyFolderId}
+                  onChange={e => setFormData({...formData, familyFolderId: e.target.value})}
+                  className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  placeholder="留空使用家庭根目录"
+                />
+              </div>
             </div>
           )}
           {captchaInfo && (
@@ -491,6 +699,43 @@ const AccountTab: React.FC = () => {
             </div>
           )}
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={isQrModalOpen}
+        onClose={() => {
+          setIsQrModalOpen(false);
+          setQrData(null);
+        }}
+        title="天翼云盘扫码登录"
+        footer={(
+          <div className="px-8 py-6 flex shrink-0 justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                setIsQrModalOpen(false);
+                setQrData(null);
+              }}
+              className="px-6 py-2.5 rounded-full text-sm font-medium text-[#0b57d0] hover:bg-[#0b57d0]/10 transition-colors"
+            >
+              关闭
+            </button>
+          </div>
+        )}
+      >
+        <div className="flex flex-col items-center gap-4 py-4">
+          {qrData?.qrUrl ? (
+            <img src={qrData.qrUrl} alt="天翼云盘登录二维码" className="h-56 w-56 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" />
+          ) : (
+            <div className="flex h-56 w-56 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
+              获取二维码中...
+            </div>
+          )}
+          <div className="text-center">
+            <p className="text-sm font-medium text-slate-900">{qrMessage}</p>
+            <p className="mt-1 text-xs text-slate-500">使用天翼云盘 App 扫码并确认后会自动添加或更新账号。</p>
+          </div>
+        </div>
       </Modal>
     </div>
   );

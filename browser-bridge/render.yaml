@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: hdhive-browser-bridge
+    env: docker
+    plan: starter
+    dockerfilePath: ./browser-bridge/Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    disk:
+      name: hdhive-browser-profile
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: HDHIVE_BASE_URL
+        value: https://hdhive.com
+      - key: BROWSER_PROFILE_DIR
+        value: /data/hdhive-profile
+      - key: WARMUP_URLS
+        value: /,/search
+      - key: WARMUP_INTERVAL_MS
+        value: "300000"
+      - key: KEEPALIVE_INTERVAL_MS
+        value: "25000"
+      - key: BRIDGE_TOKEN
+        generateValue: true

@@ -393,21 +393,35 @@ class TaskService {
         const tmdb = new TMDBService();
         let tmdbInfo = null;
 
-        const preferredSeasonNumber = Number(task.tmdbSeasonNumber || parsed.season || 0) || null;
+        const preferredSeasonNumber = Number(task.manualSeason || task.tmdbSeasonNumber || parsed.season || 0) || null;
 
         if (task.tmdbId) {
             tmdbInfo = await tmdb.getTVDetails(task.tmdbId);
             if (tmdbInfo && preferredSeasonNumber) {
-                const seasonDetail = await tmdb.getTVSeasonDetails(task.tmdbId, preferredSeasonNumber);
-                if (seasonDetail) {
-                    tmdbInfo = {
-                        ...tmdbInfo,
-                        seasonNumber: preferredSeasonNumber,
-                        seasonName: seasonDetail.name || '',
-                        seasonEpisodes: seasonDetail.episodeCount || 0,
-                        totalEpisodes: seasonDetail.episodeCount || tmdbInfo.totalEpisodes || 0,
-                        tmdbSeasonUrl: seasonDetail.tmdbUrl
-                    };
+                if (typeof tmdb.getTVSeasonDetails === 'function') {
+                    const seasonDetail = await tmdb.getTVSeasonDetails(task.tmdbId, preferredSeasonNumber);
+                    if (seasonDetail) {
+                        tmdbInfo = {
+                            ...tmdbInfo,
+                            seasonNumber: preferredSeasonNumber,
+                            seasonName: seasonDetail.name || '',
+                            seasonEpisodes: seasonDetail.episodeCount || 0,
+                            totalEpisodes: seasonDetail.episodeCount || tmdbInfo.totalEpisodes || 0,
+                            tmdbSeasonUrl: seasonDetail.tmdbUrl
+                        };
+                    }
+                } else if (Array.isArray(tmdbInfo.seasons)) {
+                    const seasonInfo = tmdbInfo.seasons.find(season => Number(season.season_number) === preferredSeasonNumber);
+                    if (seasonInfo) {
+                        tmdbInfo = {
+                            ...tmdbInfo,
+                            seasonNumber: preferredSeasonNumber,
+                            seasonName: seasonInfo.name || '',
+                            seasonEpisodes: Number(seasonInfo.episode_count || 0),
+                            totalEpisodes: Number(seasonInfo.episode_count || tmdbInfo.totalEpisodes || 0),
+                            tmdbSeasonUrl: `https://www.themoviedb.org/tv/${task.tmdbId}/season/${preferredSeasonNumber}`
+                        };
+                    }
                 }
             }
         }
@@ -442,6 +456,7 @@ class TaskService {
             const updates = {
                 totalEpisodes,
                 tmdbId: result.tmdbId ? String(result.tmdbId) : task.tmdbId,
+                tmdbTitle: result.title || task.tmdbTitle,
                 tmdbSeasonNumber: seasonNumber,
                 tmdbSeasonName: result.seasonName,
                 tmdbSeasonEpisodes: seasonEpisodes || totalEpisodes
@@ -843,6 +858,112 @@ class TaskService {
         await taskProcessedFileRepo.delete({
             taskId: In(normalizedTaskIds)
         });
+    }
+
+    async clearTaskCache(taskId) {
+        const task = await this.getTaskById(taskId);
+        if (!task) {
+            throw new Error('任务不存在');
+        }
+        await this.resetProcessedRecords(Number(taskId));
+        task.retryCount = 0;
+        task.nextRetryTime = null;
+        task.lastError = null;
+        if (task.status === 'failed') {
+            task.status = 'pending';
+        }
+        await this.taskRepo.save(task);
+        logTaskEvent(`任务[${task.resourceName}]缓存已清理`, 'info', 'transfer');
+        return task;
+    }
+
+    _inferSeasonFromTaskName(task) {
+        const taskName = String(task?.shareFolderName || task?.resourceName || '');
+        const match = taskName.match(/(?:Season|S)\.?\s*(\d+)|第\.?\s*(\d+)\.?\s*季/i);
+        return match ? Number(match[1] || match[2]) : null;
+    }
+
+    _getSeasonEpisodeCount(detail, seasonNumber) {
+        if (!seasonNumber || !Array.isArray(detail?.seasons)) {
+            return 0;
+        }
+        const seasonInfo = detail.seasons.find(season => Number(season.season_number) === Number(seasonNumber));
+        return Number(seasonInfo?.episode_count || 0);
+    }
+
+    async bindManualTmdb(taskId, params = {}) {
+        const task = await this.getTaskById(taskId);
+        if (!task) {
+            throw new Error('任务不存在');
+        }
+        const tmdbId = String(params.tmdbId || '').trim();
+        const videoType = String(params.videoType || params.type || '').trim();
+        if (!tmdbId || !['movie', 'tv'].includes(videoType)) {
+            throw new Error('TMDB ID 和类型不能为空');
+        }
+
+        const { TMDBService } = require('./tmdb');
+        const tmdbService = new TMDBService();
+        const detail = videoType === 'movie'
+            ? await tmdbService.getMovieDetails(tmdbId)
+            : await tmdbService.getTVDetails(tmdbId);
+        if (!detail) {
+            throw new Error('获取 TMDB 详情失败');
+        }
+
+        const manualSeason = params.manualSeason !== undefined && params.manualSeason !== ''
+            ? Number(params.manualSeason)
+            : this._inferSeasonFromTaskName(task);
+        const seasonEpisodes = videoType === 'tv'
+            ? this._getSeasonEpisodeCount(detail, manualSeason)
+            : 0;
+
+        task.tmdbId = tmdbId;
+        task.videoType = videoType;
+        task.tmdbTitle = params.title || detail.title || '';
+        task.manualTmdbBound = true;
+        task.manualSeason = Number.isInteger(manualSeason) && manualSeason > 0 ? manualSeason : null;
+        task.tmdbContent = JSON.stringify(detail);
+        if (videoType === 'tv') {
+            task.tmdbSeasonNumber = task.manualSeason;
+            task.tmdbSeasonEpisodes = seasonEpisodes || Number(detail.totalEpisodes || 0);
+            task.totalEpisodes = seasonEpisodes || Number(detail.totalEpisodes || task.totalEpisodes || 0);
+        } else if (!task.totalEpisodes || task.totalEpisodes < 1) {
+            task.totalEpisodes = 1;
+        }
+        this._alignTaskTotalEpisodesToSeason(task);
+        this._syncTaskCompletionState(task);
+        await this.taskRepo.save(task);
+
+        let cascaded = 0;
+        if (videoType === 'tv' && task.realRootFolderId) {
+            const siblings = await this.taskRepo.find({
+                where: { realRootFolderId: task.realRootFolderId },
+                relations: { account: true }
+            });
+            for (const sibling of siblings) {
+                if (sibling.id === task.id || sibling.manualTmdbBound || sibling.tmdbId) {
+                    continue;
+                }
+                const siblingSeason = this._inferSeasonFromTaskName(sibling);
+                const siblingEpisodes = this._getSeasonEpisodeCount(detail, siblingSeason);
+                sibling.tmdbId = tmdbId;
+                sibling.videoType = videoType;
+                sibling.tmdbTitle = task.tmdbTitle;
+                sibling.manualSeason = Number.isInteger(siblingSeason) && siblingSeason > 0 ? siblingSeason : null;
+                sibling.tmdbSeasonNumber = sibling.manualSeason;
+                sibling.tmdbSeasonEpisodes = siblingEpisodes || Number(detail.totalEpisodes || 0);
+                sibling.totalEpisodes = siblingEpisodes || Number(sibling.totalEpisodes || 0);
+                sibling.tmdbContent = JSON.stringify(detail);
+                this._alignTaskTotalEpisodesToSeason(sibling);
+                this._syncTaskCompletionState(sibling);
+                await this.taskRepo.save(sibling);
+                cascaded++;
+            }
+        }
+
+        logTaskEvent(`[TMDB绑定] 任务[${task.resourceName}]已手动绑定 TMDB ${tmdbId}，级联 ${cascaded} 个任务`, 'info', 'transfer');
+        return { task, cascaded };
     }
 
     async deleteProcessedRecord(taskId, recordId) {
@@ -1661,7 +1782,9 @@ class TaskService {
                     username: true,
                     localStrmPrefix: true,
                     cloudStrmPrefix: true,
-                    embyPathReplace: true
+                    embyPathReplace: true,
+                    familyId: true,
+                    familyFolderId: true
                 }
             }
         });
@@ -1694,7 +1817,7 @@ class TaskService {
             new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
         }
         // 只允许更新特定字段
-        const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer', 'keepCasAfterRestore'];
+        const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'manualTmdbBound', 'manualSeason', 'tmdbTitle', 'videoType', 'tmdbContent', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer', 'keepCasAfterRestore'];
         for (const field of allowedFields) {
             if (updates[field] !== undefined) {
                 task[field] = updates[field];
@@ -2398,6 +2521,34 @@ class TaskService {
         }
     }
 
+    async runAccountsKeepAlive() {
+        const accounts = await this.accountRepo.find();
+        const results = [];
+        logTaskEvent('================================', 'info', 'transfer');
+        logTaskEvent('[账号保活] 开始执行账号Session心跳探测', 'info', 'transfer');
+        for (const account of accounts || []) {
+            if (!account?.username || account.username.startsWith('n_')) {
+                continue;
+            }
+            const usernameDisplay = account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
+            try {
+                const cloud189 = Cloud189Service.getInstance(account);
+                const result = await cloud189.keepAlive();
+                results.push({ accountId: account.id, username: usernameDisplay, success: true, mode: result.mode });
+                logTaskEvent(`[账号保活] 账号 ${usernameDisplay} 心跳正常(${result.mode})`, 'info', 'transfer');
+            } catch (error) {
+                const message = error.message || String(error);
+                results.push({ accountId: account.id, username: usernameDisplay, success: false, error: message });
+                logTaskEvent(`[账号保活] 账号 ${usernameDisplay} 保活失败: ${message}`, 'error', 'transfer');
+                this.messageUtil.sendMessage(`【账号失效警告】天翼云盘账号 ${usernameDisplay} 保活失败，请重新登录。\n原因: ${message}`).catch(() => {});
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        logTaskEvent('[账号保活] 执行完成', 'info', 'transfer');
+        logTaskEvent('================================', 'info', 'transfer');
+        return results;
+    }
+
     async cleanupLazyTransferredFiles() {
         const enabled = ConfigService.getConfigValue('task.enableAutoCleanLazyFiles');
         const retentionHours = Number(ConfigService.getConfigValue('task.lazyFileRetentionHours'));
@@ -2774,7 +2925,9 @@ class TaskService {
                     username: true,
                     localStrmPrefix: true,
                     cloudStrmPrefix: true,
-                    embyPathReplace: true
+                    embyPathReplace: true,
+                    familyId: true,
+                    familyFolderId: true
                 }
             }
         });

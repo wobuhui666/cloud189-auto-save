@@ -34,6 +34,10 @@ interface Task {
   matchValue?: string;
   cronExpression?: string;
   tmdbId?: string;
+  videoType?: 'movie' | 'tv';
+  manualSeason?: number | null;
+  tmdbTitle?: string;
+  manualTmdbBound?: boolean;
   enableTaskScraper?: boolean;
   enableLazyStrm: boolean;
   enableOrganizer: boolean;
@@ -306,6 +310,85 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
+    }
+  };
+
+  const handleClearTaskCache = async (task: Task) => {
+    const ok = await dialog.confirm({
+      title: '清理任务缓存',
+      message: `确定清理「${task.resourceName}」的转存记录缓存吗？清理后后续执行会重新检查文件。`,
+      confirmText: '清理',
+      tone: 'warning',
+    });
+    if (!ok) return;
+    try {
+      const response = await fetch(`/api/tasks/${task.id}/clear-cache`, { method: 'POST' });
+      const data = await response.json();
+      if (data.success) {
+        toast.success('任务缓存已清理');
+      } else {
+        toast.error(data.error || '清理缓存失败');
+      }
+    } catch (error) {
+      toast.error('清理缓存失败');
+    }
+  };
+
+  const handleManualTmdbBind = async (task: Task) => {
+    const tmdbId = await dialog.prompt({
+      title: '手动绑定 TMDB',
+      message: '请输入 TMDB ID',
+      defaultValue: task.tmdbId || '',
+      validate: (value) => value.trim() ? null : 'TMDB ID 不能为空'
+    });
+    if (tmdbId === null) return;
+
+    const videoType = await dialog.prompt({
+      title: '媒体类型',
+      message: '请输入 movie 或 tv',
+      defaultValue: task.videoType || 'tv',
+      validate: (value) => ['movie', 'tv'].includes(value.trim()) ? null : '只能填写 movie 或 tv'
+    });
+    if (videoType === null) return;
+
+    let manualSeason: string | null = '';
+    if (videoType.trim() === 'tv') {
+      manualSeason = await dialog.prompt({
+        title: '手动季度',
+        message: '请输入季度号；留空则自动从任务名推断',
+        defaultValue: task.manualSeason ? String(task.manualSeason) : '',
+        validate: (value) => !value.trim() || Number(value) > 0 ? null : '季度必须大于 0'
+      });
+      if (manualSeason === null) return;
+    }
+
+    const title = await dialog.prompt({
+      title: '显示标题',
+      message: '可选：自定义 TMDB 标题；留空使用 TMDB 返回标题',
+      defaultValue: task.tmdbTitle || task.resourceName || ''
+    });
+    if (title === null) return;
+
+    try {
+      const response = await fetch(`/api/tasks/${task.id}/manual-tmdb`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tmdbId: tmdbId.trim(),
+          videoType: videoType.trim(),
+          manualSeason: manualSeason?.trim() || '',
+          title: title.trim()
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success(`TMDB 绑定成功${data.data?.cascaded ? `，级联 ${data.data.cascaded} 个任务` : ''}`);
+        fetchTasks();
+      } else {
+        toast.error(data.error || 'TMDB 绑定失败');
+      }
+    } catch (error) {
+      toast.error('TMDB 绑定失败');
     }
   };
 
@@ -739,7 +822,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                       {openTaskMenuId === task.id && dropdownPos && createPortal(
                         <div
                           data-task-item-menu-dropdown
-                          className="fixed w-32 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-[9999]"
+                          className="fixed w-44 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-[9999]"
                           style={{ top: dropdownPos.top, right: dropdownPos.right }}
                         >
                           <button
@@ -750,6 +833,24 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                             className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors flex items-center gap-2"
                           >
                             <Edit3 size={14} /> 修改任务
+                          </button>
+                          <button
+                            onClick={() => {
+                              setOpenTaskMenuId(null);
+                              handleClearTaskCache(task);
+                            }}
+                            className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors flex items-center gap-2"
+                          >
+                            <RefreshCw size={14} /> 清理缓存
+                          </button>
+                          <button
+                            onClick={() => {
+                              setOpenTaskMenuId(null);
+                              handleManualTmdbBind(task);
+                            }}
+                            className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors flex items-center gap-2"
+                          >
+                            <Search size={14} /> 绑定 TMDB
                           </button>
                           <button
                             onClick={() => {
