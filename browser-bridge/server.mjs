@@ -477,6 +477,8 @@ async function warmup(urls) {
 }
 
 let loggingIn = null;
+let lastLoginAttempt = 0;
+let loginFailures = 0;
 
 async function ensureLoggedIn(page) {
   if (!config.username || !config.password) {
@@ -486,20 +488,32 @@ async function ensureLoggedIn(page) {
   const cookies = await readContextCookies(targetPage.context()).catch(() => []);
   const loginCookieNames = ['token', 'csrf_access_token', 'hdh_uid'];
   if (cookies.some((cookie) => loginCookieNames.includes(cookie.name))) {
+    loginFailures = 0;
     return true;
   }
   if (loggingIn) {
     return loggingIn;
   }
+  // 失败退避：连续登录失败时拉长重试间隔（1/2/3.../最多 5 分钟），避免在影巢持续拒绝或 CPU 紧张时
+  // 每 25s 触发重度重登，占满 CPU 并阻塞串行查询队列。用户查询路径仍可经客户端按需触发 /hdhive/login 重登，不受此退避影响。
+  const backoffMs = Math.min(loginFailures * 60_000, 300_000);
+  if (loginFailures > 0 && (Date.now() - lastLoginAttempt) < backoffMs) {
+    return false;
+  }
+  lastLoginAttempt = Date.now();
   console.log('[browser-bridge] 登录态缺失，自动使用环境变量账号重新登录');
   loggingIn = loginWithPassword(config.username, config.password)
     .then((result) => {
-      if (!result.success) {
-        console.warn('[browser-bridge] 自动登录失败:', result.error || '未知错误');
+      if (result.success) {
+        loginFailures = 0;
+      } else {
+        loginFailures += 1;
+        console.warn('[browser-bridge] 自动登录失败(' + loginFailures + '次):', result.error || '未知错误');
       }
       return Boolean(result.success);
     })
     .catch((error) => {
+      loginFailures += 1;
       console.warn('[browser-bridge] 自动登录异常:', error instanceof Error ? error.message : String(error));
       return false;
     })
@@ -527,8 +541,6 @@ async function keepAlive() {
       page = await ensurePage();
     }
   }
-  // 续签登录态：仅在登录 cookie 缺失时才真正重登，正常只读 cookie，开销极小
-  await ensureLoggedIn(page).catch(() => false);
   return { success: true, data: await buildStatus() };
 }
 
@@ -1173,9 +1185,9 @@ async function getMediaResources(type, tmdbId) {
       waitUntil: 'domcontentloaded',
       timeout: config.navigationTimeoutMs
     });
-    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 6_000 }).catch(() => undefined);
     await dismissKnownNotice(page);
-    await scrollPage(page, 6, 900, 400);
+    await scrollUntilResources(page, 6, 900, 300);
 
     const pageText = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '');
     if (/出现了很奇怪的错误/.test(pageText)) {
@@ -1195,8 +1207,9 @@ async function getMediaResources(type, tmdbId) {
 
     const clickedCloud189Tab = await clickCloud189Tab(page);
     if (clickedCloud189Tab) {
-      await page.waitForTimeout(1500);
-      await scrollPage(page, 4, 700, 250);
+      // 点天翼 tab 后显式等天翼资源卡片渲染出现（而非固定 1.5s），最多等 8s
+      await page.waitForSelector('a[href*="/resource/189/"], a[href*="/resource/cloud189/"], a[href*="/resource/8/"]', { timeout: 8000 }).catch(() => undefined);
+      await scrollUntilResources(page, 4, 700, 250);
     }
 
     const html = await page.content();
@@ -1242,6 +1255,19 @@ async function scrollPage(page, times, deltaY, waitMs) {
     await page.mouse.wheel(0, deltaY);
     await page.waitForTimeout(waitMs);
   }
+}
+
+// 边滚动边检测天翼资源链接：一旦出现立即停止（加速），否则滚满 times 次兜底（避免漏抓懒加载）
+async function scrollUntilResources(page, times, deltaY, waitMs) {
+  const sel = 'a[href*="/resource/189/"], a[href*="/resource/cloud189/"], a[href*="/resource/8/"]';
+  for (let index = 0; index < times; index += 1) {
+    if ((await page.locator(sel).count().catch(() => 0)) > 0) {
+      return true;
+    }
+    await page.mouse.wheel(0, deltaY);
+    await page.waitForTimeout(waitMs);
+  }
+  return (await page.locator(sel).count().catch(() => 0)) > 0;
 }
 
 async function clickCloud189Tab(page) {
