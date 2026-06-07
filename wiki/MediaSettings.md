@@ -105,7 +105,26 @@ TMDB 配置会影响自动追剧、任务刮削、整理器识别等功能的准
 
 ---
 
-## 8. 媒体库分类命名
+## 8. 影巢资源
+
+影巢资源支持 Cookie 网页解析、OpenAPI OAuth 和 Browser Bridge 签名网页模式。
+
+| 配置项 | 说明 |
+| :--- | :--- |
+| 启用影巢 | 开启后启用影巢搜索、资源查询和解锁 |
+| 影巢站点地址 | 默认 `https://hdhive.com` |
+| 网页登录账号 / 密码 | 用于主项目调用 Browser Bridge 登录取 Cookie |
+| Cookie | Cookie 兜底解析，登录取 Cookie 后会自动同步 |
+| Browser Bridge 地址 | 独立 Bridge 服务地址，例如 `http://服务器IP:10000` |
+| Browser Bridge Token | 必须与 Bridge 容器的 `BRIDGE_TOKEN` 一致 |
+| 启用 Browser Bridge 签名模式 | 使用影巢网页签名接口调用 `/api/customer/*` |
+| API Key / Client ID | OpenAPI 相关凭证 |
+
+推荐把影巢账号密码只保存在主项目设置页，不要写入 Bridge 容器环境变量。使用说明请参考 [[HDHive]]，Bridge 的 Docker 部署方式请参考 [[HDHiveBridge]]。
+
+---
+
+## 9. 媒体库分类命名
 
 用于整理器按媒体类型归档。
 
@@ -121,7 +140,7 @@ TMDB 配置会影响自动追剧、任务刮削、整理器识别等功能的准
 
 ---
 
-## 9. 正则预设管理
+## 10. 正则预设管理
 
 媒体页提供 **正则预设管理**，用于维护任务创建时可复用的过滤和重命名规则。
 
@@ -141,7 +160,7 @@ TMDB 配置会影响自动追剧、任务刮削、整理器识别等功能的准
 
 ---
 
-## 10. 保存配置
+## 11. 保存配置
 
 修改媒体页配置后：
 

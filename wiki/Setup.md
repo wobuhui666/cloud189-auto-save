@@ -128,4 +128,5 @@ server {
 
 - 首次部署后先配置一个账号，确认登录正常。
 - 如果需要使用 Emby 代理播放，确保 `8097` 端口已在 Docker 中映射。
+- 如果需要影巢资源解锁和 `/api/customer/*` 网页签名能力，请另外部署 [[HDHiveBridge]]，并在媒体设置中配置 [[HDHive]]。
 - 遇到双栈网络登录问题时，优先设置 `DNS_LOOKUP_IP_VERSION=ipv4`。

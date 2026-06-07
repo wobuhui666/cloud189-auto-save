@@ -6,7 +6,9 @@
 
 ### 核心功能
 - [[Features]]
+- [[Tasks]]
 - [[AutoSeries]]
+- [[HDHive]]
 - [[CAS]]
 - [[Organizer]]
 - [[Subscription]]
@@ -20,6 +22,7 @@
 ### 系统配置
 - [[MediaSettings]]
 - [[SystemSettings]]
+- [[HDHiveBridge]]
 
 ### 开发者与扩展
 - [[Bot]]

@@ -133,6 +133,8 @@ docker compose up -d
 2. 设置 `HDHIVE_API_KEY` 为你的密钥。
 3. 搜索时会先通过 TMDB 匹配，再调用影巢接口获取资源。
 
+如果需要影巢网页签名接口、签到、积分日志、资源解锁和 Cookie 同步，请使用主项目内置的 [[HDHive]] 功能，并单独部署 [[HDHiveBridge]]。CloudSaver 的影巢配置只作为资源搜索来源之一。
+
 ---
 
 ## 3. 接入 cloud189-auto-save

@@ -47,6 +47,9 @@ x-api-key: YOUR_SYSTEM_API_KEY
 | PUT | `/api/accounts/:id/strm-prefix` | 修改云端/本地路径前缀或 Emby 替换路径 |
 | PUT | `/api/accounts/:id/default` | 设置默认账号 |
 | DELETE | `/api/accounts/recycle` | 清空回收站 |
+| GET | `/api/accounts/storage-summary` | 获取个人容量和家庭容量聚合 |
+| POST | `/api/accounts/refresh-capacity` | 刷新账号容量缓存 |
+| POST | `/api/accounts/keep-alive` | 手动执行账号 Session 保活 |
 
 ### `PUT /api/accounts/:id/strm-prefix`
 
@@ -77,6 +80,8 @@ x-api-key: YOUR_SYSTEM_API_KEY
 | PUT | `/api/tasks/:id` | 更新任务 |
 | DELETE | `/api/tasks/:id` | 删除任务 |
 | POST | `/api/tasks/:id/execute` | 执行指定任务 |
+| POST | `/api/tasks/:id/clear-cache` | 清理指定任务转存记录缓存 |
+| POST | `/api/tasks/:id/manual-tmdb` | 手动绑定任务 TMDB 信息 |
 | POST | `/api/tasks/executeAll` | 执行所有任务 |
 | POST | `/api/tasks/strm` | 根据任务批量生成 STRM |
 | PUT | `/api/tasks/batch/status` | 批量修改任务状态 |
@@ -204,7 +209,21 @@ GET /api/file-manager/list?accountId=1&folderId=-11
 
 ---
 
-## 11. CloudSaver
+## 11. AI 助手
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| POST | `/api/chat` | 调用已配置的 AI 助手并通过日志 SSE 返回流式内容 |
+| POST | `/api/chat/enhanced` | 根据用户消息返回可执行工具建议 |
+| POST | `/api/chat/execute-function` | 执行增强助手工具函数 |
+
+`/api/chat/enhanced` 会返回工具清单和建议动作。可用工具包括账号列表、容量聚合、刷新容量、账号 Session 保活、执行任务、清理任务缓存、搜索 TMDB 和创建任务。
+
+写操作必须在前端二次确认后再调用 `/api/chat/execute-function`。
+
+---
+
+## 12. CloudSaver
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
@@ -218,7 +237,50 @@ GET /api/cloudsaver/search?keyword=庆余年
 
 ---
 
-## 12. 其他常用接口
+## 13. 影巢资源
+
+影巢接口用于状态检查、OAuth、网页登录取 Cookie、Bridge Cookie 同步、签到、积分日志、资源查询和解锁。
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| GET | `/api/hdhive/status` | 获取影巢配置和授权状态 |
+| GET | `/api/hdhive/auth/status` | 获取 OAuth 授权状态 |
+| GET | `/api/hdhive/oauth/url` | 获取 OAuth 授权 URL |
+| GET | `/api/hdhive/oauth/callback` | OAuth 回调 |
+| POST | `/api/hdhive/oauth/revoke` | 撤销 OAuth 授权 |
+| GET | `/api/hdhive/ping` | 测试影巢 OpenAPI 可用性 |
+| GET | `/api/hdhive/quota` | 获取影巢配额 |
+| GET | `/api/hdhive/me` | 获取当前影巢用户 |
+| POST | `/api/hdhive/login` | 使用主项目配置的账号密码调用 Bridge 登录取 Cookie |
+| POST | `/api/hdhive/bridge/cookies` | 从 Bridge 同步 Cookie 到主项目 |
+| POST | `/api/hdhive/checkin` | 影巢签到 |
+| GET | `/api/hdhive/points-logs` | 查询积分日志 |
+| GET | `/api/hdhive/resources` | 按 `type` 和 `tmdbId` 查询天翼资源 |
+| POST | `/api/hdhive/unlock` | 解锁影巢资源并返回天翼分享链接 |
+| GET | `/api/hdhive/detail` | 解析影巢详情页 |
+| GET | `/api/hdhive/search` | 搜索影巢资源 |
+| POST | `/api/hdhive/cache/clear` | 清空影巢 SDK 缓存 |
+
+资源查询示例：
+
+```http
+GET /api/hdhive/resources?type=movie&tmdbId=550
+x-api-key: YOUR_SYSTEM_API_KEY
+```
+
+解锁示例：
+
+```json
+{
+  "slug": "影巢资源 slug"
+}
+```
+
+Bridge 部署和配置见 [[HDHiveBridge]]，Web 端使用见 [[HDHive]]。
+
+---
+
+## 14. 其他常用接口
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |

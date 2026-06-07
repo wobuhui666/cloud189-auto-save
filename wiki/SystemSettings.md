@@ -33,6 +33,11 @@
 | 自动清理懒转存文件 | 定时删除过期懒转存文件 |
 | 仅转存媒体文件 | 创建任务时只处理媒体后缀文件 |
 | 目标文件夹自动创建 | 目标目录不存在时自动创建 |
+| 账号容量聚合 | 账号页显示多账号个人容量和家庭容量汇总 |
+| 账号 Session 保活 | 定时刷新账号会话，降低长期运行时失效概率 |
+| 账号 Session 保活 Cron | 控制保活任务执行频率，默认 `0 */4 * * *` |
+
+可以点击 **立即执行账号保活** 手动触发一次保活。容量聚合关闭后，账号页不会再请求 `/api/accounts/storage-summary`。
 
 ### Cron 示例
 
@@ -117,9 +122,10 @@
 - `TMDB`
 - `OPENAI`
 - `天翼网盘`
+- `影巢`
 - `CUSTOMPUSH`
 
-如果 Telegram、TMDB 或 OpenAI 请求失败，优先检查代理和服务选择是否正确。
+如果 Telegram、TMDB、OpenAI、天翼网盘或影巢请求失败，优先检查代理和服务选择是否正确。
 
 ---
 
@@ -159,6 +165,9 @@ x-api-key: YOUR_API_KEY
 | POST | `/api/settings/media` | 保存媒体设置 |
 | GET | `/api/settings/regex-presets` | 获取正则预设 |
 | POST | `/api/settings/regex-presets` | 保存正则预设 |
+| GET | `/api/accounts/storage-summary` | 获取账号容量聚合 |
+| POST | `/api/accounts/refresh-capacity` | 刷新账号容量缓存 |
+| POST | `/api/accounts/keep-alive` | 手动执行账号 Session 保活 |
 
 ---
 

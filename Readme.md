@@ -13,6 +13,9 @@
         <a href="https://github.com/wobuhui666/cloud189-auto-save/stargazers">
             <img src="https://img.shields.io/github/stars/wobuhui666/cloud189-auto-save?style=flat-square" alt="GitHub Stars">
         </a>
+        <a href="https://deepwiki.com/wobuhui666/cloud189-auto-save">
+            <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
+        </a>
         <a href="https://github.com/wobuhui666/cloud189-auto-save/blob/main/LICENSE">
             <img src="https://img.shields.io/github/license/wobuhui666/cloud189-auto-save?style=flat-square" alt="License">
         </a>
