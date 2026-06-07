@@ -17,6 +17,7 @@ const config = {
   navigationTimeoutMs: Number(process.env.NAVIGATION_TIMEOUT_MS || 30_000),
   loginTimeoutMs: Number(process.env.LOGIN_TIMEOUT_MS || 45_000),
   customerApiTimeoutMs: Number(process.env.CUSTOMER_API_TIMEOUT_MS || 30_000),
+  actionTimeoutMs: Number(process.env.ACTION_TIMEOUT_MS || 120_000),
   idlePageUrl: process.env.IDLE_PAGE_URL || '/',
   warmupUrls: parseWarmupUrls(process.env.WARMUP_URLS || '/,/search'),
   maxHtmlChars: Number(process.env.MAX_HTML_CHARS || 0),
@@ -145,18 +146,24 @@ app.post('/hdhive/login', requireSensitiveEndpoint, async (req, res) => {
 });
 
 app.get('/hdhive/customer/current', requireSensitiveEndpoint, async (req, res) => {
-  const result = await enqueueAction('hdhive-customer-current', () => customerRequest('/api/customer/user/current'));
+  const result = await enqueueAction('hdhive-customer-current', () => customerRequest('/api/customer/user/current', {
+    allowUnsignedResponseFallback: true
+  }));
   res.status(result.success ? 200 : 500).json(result);
 });
 
 app.post('/hdhive/customer/checkin', requireSensitiveEndpoint, async (req, res) => {
-  const result = await enqueueAction('hdhive-customer-checkin', () => customerRequest('/api/customer/user/checkin', { method: 'POST' }));
+  const result = await enqueueAction('hdhive-customer-checkin', () => customerRequest('/api/customer/user/checkin', {
+    method: 'POST',
+    allowUnsignedResponseFallback: true
+  }));
   res.status(result.success ? 200 : 500).json(result);
 });
 
 app.get('/hdhive/customer/points-logs', requireSensitiveEndpoint, async (req, res) => {
   const result = await enqueueAction('hdhive-customer-points-logs', () => customerRequest('/api/customer/points-logs', {
-    query: pickPrimitiveQuery(req.query)
+    query: pickPrimitiveQuery(req.query),
+    allowUnsignedResponseFallback: true
   }));
   res.status(result.success ? 200 : 500).json(result);
 });
@@ -188,16 +195,13 @@ app.post('/hdhive/customer/media-resources', requireSensitiveEndpoint, async (re
 
 app.get('/hdhive/customer/resources/:resourceId', requireSensitiveEndpoint, async (req, res) => {
   const resourceId = normalizeResourceId(req.params.resourceId);
-  const result = await enqueueAction('hdhive-customer-resource', () => customerRequest(`/api/customer/resources/${resourceId}`));
+  const result = await enqueueAction('hdhive-customer-resource', () => getResourceDetail(resourceId));
   res.status(result.success ? 200 : 500).json(result);
 });
 
 app.post('/hdhive/customer/resources/:resourceId/unlock', requireSensitiveEndpoint, async (req, res) => {
   const resourceId = normalizeResourceId(req.params.resourceId);
-  const result = await enqueueAction('hdhive-customer-resource-unlock', () => customerRequest(`/api/customer/resources/${resourceId}/unlock`, {
-    method: 'POST',
-    body: req.body?.body
-  }));
+  const result = await enqueueAction('hdhive-customer-resource-unlock', () => unlockResource(resourceId, req.body?.body));
   res.status(result.success ? 200 : 500).json(result);
 });
 
@@ -238,8 +242,11 @@ async function enqueueAction(name, action) {
   const run = async () => {
     state.activeAction = { id, name, startedAt: Date.now() };
     try {
-      return await action();
+      return await runActionWithTimeout(name, action);
     } catch (error) {
+      if (error instanceof ActionTimeoutError) {
+        await closeBrowser(`timeout:${name}`, { persist: false });
+      }
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -253,6 +260,24 @@ async function enqueueAction(name, action) {
   const next = state.actionQueue.then(run, run);
   state.actionQueue = next.then(() => undefined, () => undefined);
   return next;
+}
+
+class ActionTimeoutError extends Error {
+  constructor(name, timeoutMs) {
+    super(`Bridge action ${name} timed out after ${timeoutMs}ms`);
+    this.name = 'ActionTimeoutError';
+  }
+}
+
+async function runActionWithTimeout(name, action) {
+  const actionPromise = Promise.resolve().then(action);
+  actionPromise.catch(() => undefined);
+  return await Promise.race([
+    actionPromise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new ActionTimeoutError(name, config.actionTimeoutMs)), config.actionTimeoutMs).unref();
+    })
+  ]);
 }
 
 async function ensurePage() {
@@ -550,21 +575,23 @@ async function waitForLoggedIn(page, startedAt) {
     const cookies = await page.context().cookies(config.baseUrl);
     const cookieHeader = cookiesToHeader(cookies);
     if (cookieHeader && cookies.some((cookie) => ['token', 'csrf_access_token', 'hdh_uid'].includes(cookie.name))) {
-      const current = await customerRequest('/api/customer/user/current').catch((error) => ({
+      const current = await customerRequest('/api/customer/user/current', { allowUnsignedResponseFallback: true }).catch((error) => ({
         success: false,
         error: error instanceof Error ? error.message : String(error)
       }));
-      if (current.success) {
+      const currentPayload = current.data?.payload || current.data;
+      const currentFailure = getCustomerPayloadFailure(currentPayload);
+      if (current.success && !currentFailure) {
         return {
           success: true,
           data: {
             cookieHeader,
             cookieNames: cookies.map((cookie) => cookie.name),
-            currentUser: current.data?.payload || current.data
+            currentUser: currentPayload
           }
         };
       }
-      lastError = current.error || '';
+      lastError = current.error || currentFailure || '';
     }
     const pageText = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '');
     if (/验证码|二次验证|两步验证|错误|失败|不存在|密码/.test(pageText)) {
@@ -581,13 +608,44 @@ async function waitForLoggedIn(page, startedAt) {
 async function customerRequest(pathname, options = {}) {
   const page = await ensureRuntimePage();
   const startedAt = Date.now();
+  const observedResponses = [];
+  const observedResponsePromises = [];
+  const targetPathname = normalizeUrlPathname(pathname);
+  const onResponse = (response) => {
+    let url;
+    try {
+      url = new URL(response.url());
+    } catch {
+      return;
+    }
+    if (url.origin !== config.baseUrl || url.pathname !== targetPathname) {
+      return;
+    }
+    const promise = (async () => {
+      const headers = response.headers();
+      const text = await response.text().catch(() => '');
+      observedResponses.push({
+        url: response.url(),
+        status: response.status(),
+        ok: response.ok(),
+        headers: pickHeaders(headers, ['content-type', 'x-hdh-rsig', 'x-hdh-rts']),
+        body: parseMaybeJson(text)
+      });
+    })();
+    observedResponsePromises.push(promise);
+  };
   const payload = {
     path: pathname,
     method: options.method || 'GET',
     query: options.query || null,
-    body: options.body === undefined ? null : options.body
+    body: options.body === undefined ? null : options.body,
+    timeoutMs: config.customerApiTimeoutMs,
+    targetPathname
   };
-  const result = await page.evaluate(async (request) => {
+  page.on('response', onResponse);
+  let result;
+  try {
+    result = await page.evaluate(async (request) => {
     const getWebpackRequire = () => {
       let webpackRequire = null;
       const chunk = window.webpackChunk_N_E = window.webpackChunk_N_E || [];
@@ -649,38 +707,168 @@ async function customerRequest(pathname, options = {}) {
     const query = request.query && typeof request.query === 'object' ? request.query : undefined;
     const method = String(request.method || 'GET').toUpperCase();
     const config = query ? { params: query } : undefined;
-    try {
-      const response = method === 'GET'
-        ? await client.get(request.path, config)
-        : await client.post(request.path, request.body ?? undefined, config);
-      if (response?.error) {
-        return { ok: false, payload: response.error };
+    const capturedFetchResponses = [];
+    const parseMaybeJsonInPage = (value) => {
+      if (!value) {
+        return null;
       }
-      return { ok: true, payload: response?.response ?? response };
-    } catch (error) {
-      return {
-        ok: false,
-        payload: {
-          name: error?.name || '',
-          code: error?.code || '',
-          httpStatus: error?.httpStatus || error?.status || 0,
-          message: error?.message || error?.description || String(error)
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    };
+    const pickHeaderInPage = (headers, names) => {
+      const picked = {};
+      for (const name of names) {
+        const value = headers?.get?.(name);
+        if (value) {
+          picked[name] = value;
         }
+      }
+      return picked;
+    };
+    const matchesTargetUrl = (value) => {
+      let url;
+      try {
+        url = new URL(value?.url || value || '', location.origin);
+      } catch {
+        return false;
+      }
+      const target = request.targetPathname || request.path;
+      return url.origin === location.origin && (
+        url.pathname === target
+        || url.pathname === `${target}/`
+        || (
+          String(target).startsWith('/api/customer/resources/')
+          && url.pathname.startsWith('/api/customer/resources/')
+        )
+      );
+    };
+    const originalFetch = window.fetch?.bind(window);
+    if (originalFetch) {
+      window.fetch = async (...args) => {
+        const response = await originalFetch(...args);
+        if (matchesTargetUrl(response.url || args[0])) {
+          const text = await response.clone().text().catch(() => '');
+          capturedFetchResponses.push({
+            url: response.url || String(args[0] || ''),
+            status: response.status,
+            ok: response.ok,
+            headers: pickHeaderInPage(response.headers, ['content-type', 'x-hdh-rsig', 'x-hdh-rts']),
+            body: parseMaybeJsonInPage(text)
+          });
+        }
+        return response;
       };
     }
-  }, payload);
+    const call = (async () => {
+      try {
+        const response = method === 'GET'
+          ? await client.get(request.path, config)
+          : await client.post(request.path, request.body ?? undefined, config);
+        if (response?.error) {
+          return { ok: false, payload: response.error };
+        }
+        return { ok: true, payload: response?.response ?? response };
+      } catch (error) {
+        return {
+          ok: false,
+          payload: {
+            name: error?.name || '',
+            code: error?.code || '',
+            httpStatus: error?.httpStatus || error?.status || 0,
+            message: error?.message || error?.description || String(error),
+            responseStatus: error?.response?.status || 0,
+            responseData: error?.response?.data ?? null
+          }
+        };
+      }
+    })();
+    const timeoutMs = Number(request.timeoutMs || 30_000);
+    const timeout = new Promise((resolve) => {
+      setTimeout(() => resolve({
+        ok: false,
+        payload: {
+          name: 'TimeoutError',
+          code: 'customer_api_timeout',
+          httpStatus: 0,
+          message: `影巢 customer API 调用超时: ${timeoutMs}ms`
+        }
+      }), timeoutMs);
+    });
+      try {
+        const callResult = await Promise.race([call, timeout]);
+        return { ...callResult, capturedFetchResponses };
+      } finally {
+        if (originalFetch) {
+          window.fetch = originalFetch;
+        }
+      }
+    }, payload);
+    await Promise.race([
+      Promise.allSettled(observedResponsePromises),
+      delay(1000)
+    ]);
+  } finally {
+    page.off('response', onResponse);
+  }
 
-  const statePersisted = result.ok ? await persistBrowserState(page.context(), `customer:${pathname}`) : false;
+  const allObservedResponses = [
+    ...observedResponses,
+    ...(Array.isArray(result.capturedFetchResponses) ? result.capturedFetchResponses : [])
+  ];
+  const observedResponse = allObservedResponses[allObservedResponses.length - 1] || null;
+  const responseSignatureMissing = isMissingResponseSignaturePayload(result.payload);
+  const responseDataFallback = result.payload?.responseData !== undefined && result.payload?.responseData !== null
+    ? {
+        status: result.payload.responseStatus || 0,
+        ok: !result.payload.responseStatus || Number(result.payload.responseStatus) < 400,
+        headers: {},
+        body: result.payload.responseData
+      }
+    : null;
+  const fallbackResponse = observedResponse || responseDataFallback;
+  const unsignedResponseFallback = Boolean(
+    options.allowUnsignedResponseFallback
+    && !result.ok
+    && responseSignatureMissing
+    && fallbackResponse?.ok
+    && fallbackResponse.body !== undefined
+  );
+  if (unsignedResponseFallback) {
+    const fallbackPayload = fallbackResponse.body ?? { success: true, message: '影巢请求已完成但响应体为空' };
+    const fallbackFailure = getCustomerPayloadFailure(fallbackPayload);
+    result = {
+      ok: !fallbackFailure,
+      payload: fallbackPayload,
+      warning: fallbackFailure
+        ? '影巢响应缺少 X-HDH-RSig，且同源网络响应为业务失败状态'
+        : '影巢响应缺少 X-HDH-RSig，已使用 Bridge 捕获到的同源网络响应正文'
+    };
+  }
+
+  const payloadFailure = getCustomerPayloadFailure(result.payload);
+  const requestSucceeded = Boolean(result.ok && !payloadFailure);
+  const statePersisted = requestSucceeded ? await persistBrowserState(page.context(), `customer:${pathname}`) : false;
   return {
-    success: Boolean(result.ok),
+    success: requestSucceeded,
     data: {
       path: pathname,
       method: payload.method,
       payload: result.payload,
       statePersisted,
+      responseSignatureMissing,
+      unsignedResponseFallback,
+      observedResponse: observedResponse ? {
+        status: observedResponse.status,
+        ok: observedResponse.ok,
+        hasResponseSignature: Boolean(observedResponse.headers?.['x-hdh-rsig'])
+      } : null,
       elapsedMs: Date.now() - startedAt
     },
-    ...(result.ok ? {} : { error: result.payload?.message || result.payload?.description || '影巢 customer API 调用失败' })
+    ...(result.warning ? { warning: result.warning } : {}),
+    ...(requestSucceeded ? {} : { error: payloadFailure || result.payload?.message || result.payload?.description || '影巢 customer API 调用失败' })
   };
 }
 
@@ -728,6 +916,123 @@ async function ensureRuntimePage() {
     return found;
   }, { timeout: config.customerApiTimeoutMs });
   return page;
+}
+
+async function getResourceDetail(resourceId) {
+  const resourcePath = `/resource/189/${encodeURIComponent(resourceId)}`;
+  const apiResult = await customerRequest(`/api/customer/resources/${resourceId}`, {
+    allowUnsignedResponseFallback: true
+  }).catch((error) => ({
+    success: false,
+    error: error instanceof Error ? error.message : String(error)
+  }));
+  const pageResult = await readResourcePage(resourceId, resourcePath).catch((error) => ({
+    success: false,
+    error: error instanceof Error ? error.message : String(error)
+  }));
+  const payloadResources = extractResourceCandidates(apiResult.data?.payload || apiResult.data);
+  const resources = mergeResources([
+    ...payloadResources,
+    ...(pageResult.data?.resources || [])
+  ]);
+  const payload = {
+    success: true,
+    data: resources,
+    message: resources.length ? 'success' : '未解析到资源详情',
+    code: '200'
+  };
+  return {
+    success: apiResult.success || pageResult.success,
+    data: {
+      resourcePath,
+      payload,
+      resources,
+      api: apiResult,
+      page: pageResult.success ? pageResult.data : null,
+      source: 'resource-detail'
+    },
+    ...(apiResult.success || pageResult.success ? {} : {
+      error: apiResult.error || pageResult.error || '影巢资源详情读取失败'
+    })
+  };
+}
+
+async function unlockResource(resourceId, body) {
+  const unlockResult = await customerRequest(`/api/customer/resources/${resourceId}/unlock`, {
+    method: 'POST',
+    body,
+    allowUnsignedResponseFallback: true
+  });
+  if (!unlockResult.success) {
+    return unlockResult;
+  }
+  const detailResult = await getResourceDetail(resourceId).catch((error) => ({
+    success: false,
+    error: error instanceof Error ? error.message : String(error)
+  }));
+  const unlockPayload = unlockResult.data?.payload || unlockResult.data;
+  const resources = mergeResources([
+    ...extractResourceCandidates(unlockPayload),
+    ...(detailResult.data?.resources || [])
+  ]);
+  return {
+    success: true,
+    data: {
+      ...unlockResult.data,
+      payload: unlockPayload,
+      resources,
+      detail: detailResult.success ? detailResult.data : null,
+      source: 'resource-unlock'
+    },
+    ...(detailResult.success ? {} : { warning: detailResult.error || '解锁成功，但详情页回读失败' })
+  };
+}
+
+async function readResourcePage(resourceId, resourcePath) {
+  const page = await ensurePage();
+  const startedAt = Date.now();
+  const response = await page.goto(toAbsoluteUrl(resourcePath), {
+    waitUntil: 'domcontentloaded',
+    timeout: config.navigationTimeoutMs
+  });
+  await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
+  await dismissKnownNotice(page);
+
+  const pageText = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '');
+  if (/出现了很奇怪的错误/.test(pageText)) {
+    return {
+      success: false,
+      error: '影巢资源页拒绝当前浏览器环境，请重启 Bridge 或尝试关闭 Headless',
+      data: await safePageSummary(page, startedAt)
+    };
+  }
+  if (/\/login(?:\?|$)/i.test(page.url())) {
+    return {
+      success: false,
+      error: '影巢登录态已失效，请重新登录或同步 Cookie',
+      data: await safePageSummary(page, startedAt)
+    };
+  }
+
+  const domResource = await scrapeCurrentCloud189Resource(page, resourceId);
+  const html = await page.content();
+  const htmlResources = extractResourceEntriesFromHtml(html, page.url());
+  const resources = mergeResources([
+    ...(domResource ? [domResource] : []),
+    ...htmlResources
+  ]);
+  const statePersisted = await persistBrowserState(page.context(), `resource-detail:${resourceId}`);
+  return {
+    success: true,
+    data: {
+      pageUrl: page.url(),
+      status: response?.status() || 0,
+      ok: response ? response.ok() : true,
+      resources,
+      statePersisted,
+      elapsedMs: Date.now() - startedAt
+    }
+  };
 }
 
 async function getMediaResources(type, tmdbId) {
@@ -916,6 +1221,35 @@ async function scrapeCloud189Resources(page) {
       const title = lines.slice(startIndex).find((line) => line.length > 3 && !skipPattern.test(line));
       return title || lines[0] || '影巢天翼资源';
     };
+    const resourceSlugFromAnchor = (anchor) => {
+      try {
+        const href = new URL(anchor.href, location.href);
+        const parts = href.pathname.split('/').filter(Boolean);
+        return decodeURIComponent(parts[2] || '');
+      } catch {
+        return '';
+      }
+    };
+    const resourceSlugsIn = (node) => [...new Set(Array.from(node.querySelectorAll('a[href*="/resource/189/"],a[href*="/resource/cloud189/"],a[href*="/resource/8/"]'))
+      .map(resourceSlugFromAnchor)
+      .filter(Boolean))];
+    const findResourceCard = (anchor, slug) => {
+      let card = anchor;
+      let best = anchor;
+      for (let index = 0; index < 8 && card?.parentElement; index += 1) {
+        const parent = card.parentElement;
+        const slugs = resourceSlugsIn(parent);
+        if (slugs.length > 1 || (slugs.length === 1 && slugs[0] !== slug)) {
+          break;
+        }
+        const text = (parent.innerText || '').trim();
+        if (/发布于|积分|免费|疑似失效|\d+(?:\.\d+)?\s*(TB|GB|MB|KB|B)/i.test(text)) {
+          best = parent;
+        }
+        card = parent;
+      }
+      return best;
+    };
     const parseResource = (anchor) => {
       const href = new URL(anchor.href, location.href);
       const parts = href.pathname.split('/').filter(Boolean);
@@ -923,20 +1257,11 @@ async function scrapeCloud189Resources(page) {
       if (!slug) {
         return null;
       }
-      let card = anchor;
-      for (let index = 0; index < 7 && card?.parentElement; index += 1) {
-        const parentText = (card.parentElement.innerText || '').trim();
-        if (/发布于|积分|免费|疑似失效|\d+(?:\.\d+)?\s*(TB|GB|MB|KB|B)/i.test(parentText)) {
-          card = card.parentElement;
-        } else if (index > 1) {
-          break;
-        } else {
-          card = card.parentElement;
-        }
-      }
+      const card = findResourceCard(anchor, slug);
       const text = (card?.innerText || anchor.innerText || anchor.textContent || '').trim();
       const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
       const pointsMatch = text.match(/(\d+)\s*积分/);
+      const isFree = /(^|\n|\s)免费($|\n|\s)/.test(text);
       const cloudLink = text.match(/https?:\/\/(?:cloud\.189\.cn|h5\.cloud\.189\.cn|content\.21cn\.com)[^\s"'<>\\)）]+/i);
       return {
         id: slug,
@@ -945,6 +1270,7 @@ async function scrapeCloud189Resources(page) {
         pan_type: '189',
         share_size: parseSize(text),
         unlock_points: pointsMatch ? Number(pointsMatch[1]) : 0,
+        is_free: isFree,
         expired: /疑似失效/.test(text),
         is_unlocked: /已解锁|查看链接|复制链接/.test(text) || Boolean(cloudLink),
         media_url: cloudLink?.[0] || '',
@@ -957,6 +1283,41 @@ async function scrapeCloud189Resources(page) {
     const anchors = Array.from(document.querySelectorAll('a[href*="/resource/189/"],a[href*="/resource/cloud189/"],a[href*="/resource/8/"]'));
     return anchors.map(parseResource).filter(Boolean);
   }).catch(() => []);
+}
+
+async function scrapeCurrentCloud189Resource(page, resourceId) {
+  return await page.evaluate((slug) => {
+    const text = (document.body?.innerText || '').trim();
+    const parseSize = (value) => {
+      const match = String(value || '').match(/(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB|B)/i);
+      if (!match) {
+        return 0;
+      }
+      const units = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+      return Math.round(Number(match[1]) * units[match[2].toUpperCase()]);
+    };
+    const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    const title = lines.find((line) => line.length > 3 && !/^(发布于|免费|\d+\s*积分|疑似失效|查看链接|复制链接|\d+(?:\.\d+)?\s*(TB|GB|MB|KB|B))$/i.test(line))
+      || document.title
+      || '影巢天翼资源';
+    const cloudLink = text.match(/https?:\/\/(?:cloud\.189\.cn|h5\.cloud\.189\.cn|content\.21cn\.com)[^\s"'<>\\)）]+/i);
+    const accessCode = (text.match(/(?:访问码|提取码)[：:\s]*([A-Za-z0-9]{4})/) || [])[1] || '';
+    const pointsMatch = text.match(/(\d+)\s*积分/);
+    return {
+      id: slug,
+      slug,
+      title,
+      pan_type: '189',
+      share_size: parseSize(text),
+      unlock_points: pointsMatch ? Number(pointsMatch[1]) : 0,
+      expired: /疑似失效/.test(text),
+      is_unlocked: /已解锁|查看链接|复制链接/.test(text) || Boolean(cloudLink),
+      media_url: cloudLink?.[0] || '',
+      access_code: accessCode,
+      pageUrl: location.href,
+      source: 'resource-page'
+    };
+  }, resourceId).catch(() => null);
 }
 
 async function getStateDbPool() {
@@ -1209,6 +1570,61 @@ function normalizeStateDatabaseUrl(databaseUrl) {
   }
 }
 
+function normalizeUrlPathname(value) {
+  try {
+    return new URL(String(value || '/'), config.baseUrl).pathname;
+  } catch {
+    return String(value || '/').split('?')[0] || '/';
+  }
+}
+
+function isMissingResponseSignaturePayload(payload) {
+  const message = [
+    payload?.message,
+    payload?.description,
+    payload?.error,
+    payload?.name,
+    typeof payload === 'string' ? payload : ''
+  ].filter(Boolean).join(' ');
+  return /X-HDH-RSig|RSig|响应携带.*签名头|未收到.*签名头|Missing X-HDH-RSig/i.test(message);
+}
+
+function getCustomerPayloadFailure(payload, depth = 0) {
+  if (!payload || depth > 4) {
+    return '';
+  }
+  if (typeof payload === 'string') {
+    return isMissingResponseSignaturePayload(payload) ? payload : '';
+  }
+  if (Array.isArray(payload) || typeof payload !== 'object') {
+    return '';
+  }
+
+  const message = [
+    payload.message,
+    payload.description,
+    payload.error,
+    payload.name
+  ].filter((item) => typeof item === 'string' && item.trim()).join(' ');
+  if (isMissingResponseSignaturePayload(payload)) {
+    return message || '影巢响应签名校验失败';
+  }
+  if (payload.success === false || payload.ok === false) {
+    return message || '影巢业务响应失败';
+  }
+
+  const code = String(payload.code || payload.errorCode || payload.errCode || payload.httpStatus || '').trim();
+  if (/^(ERR_|ERROR|FAIL|FAILED)/i.test(code) || (/^\d+$/.test(code) && Number(code) >= 400)) {
+    return message || `影巢业务响应失败: ${code}`;
+  }
+  if (/未登录|登录态.*失效|unauthorized|forbidden|鉴权|权限不足/i.test(message)) {
+    return message;
+  }
+
+  return getCustomerPayloadFailure(payload.response, depth + 1)
+    || getCustomerPayloadFailure(payload.payload, depth + 1);
+}
+
 function encodeStateValue(value) {
   const json = JSON.stringify(value);
   if (!config.stateSecret) {
@@ -1257,9 +1673,11 @@ async function safePageSummary(page, startedAt) {
   };
 }
 
-async function closeBrowser(reason = 'close') {
+async function closeBrowser(reason = 'close', options = {}) {
   if (state.context) {
-    await persistBrowserState(state.context, reason).catch(() => false);
+    if (options.persist !== false) {
+      await persistBrowserState(state.context, reason).catch(() => false);
+    }
     await state.context.close().catch(() => undefined);
   }
   state.context = null;
@@ -1428,6 +1846,152 @@ function mergeResources(resources) {
   });
 }
 
+function extractResourceCandidates(value, depth = 0) {
+  if (!value || depth > 6) {
+    return [];
+  }
+  const unwrapped = unwrapResourcePayload(value);
+  if (typeof unwrapped === 'string') {
+    const link = extractCloudLinkFromText(unwrapped);
+    if (!link) {
+      return [];
+    }
+    return [{
+      id: link,
+      slug: '',
+      title: '影巢天翼资源',
+      pan_type: '189',
+      media_url: link,
+      access_code: extractAccessCodeFromText(unwrapped),
+      is_unlocked: true,
+      source: 'payload-text'
+    }];
+  }
+  if (Array.isArray(unwrapped)) {
+    return unwrapped.flatMap((item) => extractResourceCandidates(item, depth + 1));
+  }
+  if (typeof unwrapped !== 'object') {
+    return [];
+  }
+
+  const nestedResources = Object.values(unwrapped).flatMap((item) => extractResourceCandidates(item, depth + 1));
+  if (!looksLikeResourceCandidate(unwrapped)) {
+    return nestedResources;
+  }
+  return [
+    normalizeResourceCandidate(unwrapped),
+    ...nestedResources
+  ];
+}
+
+function unwrapResourcePayload(value) {
+  let current = value;
+  for (let index = 0; index < 6; index += 1) {
+    if (!current || typeof current !== 'object' || Array.isArray(current) || looksLikeResourceCandidate(current)) {
+      return current;
+    }
+    if (current.response !== undefined) {
+      current = current.response;
+      continue;
+    }
+    if (current.payload !== undefined) {
+      current = current.payload;
+      continue;
+    }
+    if (current.success !== undefined && current.data !== undefined) {
+      current = current.data;
+      continue;
+    }
+    return current;
+  }
+  return current;
+}
+
+function looksLikeResourceCandidate(value) {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  return Boolean(
+    value.slug
+    || value.id
+    || value.resourceId
+    || value.resource_id
+    || value.media_url
+    || value.mediaUrl
+    || value.full_url
+    || value.fullUrl
+    || value.shareLink
+    || value.share_link
+    || value.link
+    || value.url
+    || value.access_code
+    || value.accessCode
+    || value.netdisk_website_id
+    || value.net_disk_website_id
+    || value.website_id
+    || value.pan_type
+    || value.cloudType
+    || value.unlock_points !== undefined
+    || value.is_free !== undefined
+    || value.isFree !== undefined
+  );
+}
+
+function normalizeResourceCandidate(resource) {
+  const link = extractResourceLink(resource);
+  const resourceId = resource.slug || resource.id || resource.resourceId || resource.resource_id || link;
+  const accessCode = String(
+    resource.access_code
+    || resource.accessCode
+    || resource.code
+    || resource.password
+    || resource.passwd
+    || extractAccessCodeFromText(JSON.stringify(resource))
+    || ''
+  );
+  return {
+    ...resource,
+    id: String(resourceId || ''),
+    slug: resource.slug || resource.id || resource.resourceId || resource.resource_id || '',
+    title: resource.title || resource.name || resource.resource_name || resource.media_name || '影巢天翼资源',
+    pan_type: resource.pan_type || resource.netdisk_website_id || resource.net_disk_website_id || resource.website_id || resource.cloudType || '189',
+    media_url: link || resource.media_url || '',
+    access_code: accessCode,
+    is_unlocked: Boolean(resource.is_unlocked || resource.isUnlocked || link),
+    source: resource.source || 'payload'
+  };
+}
+
+function extractResourceLink(resource) {
+  const values = [
+    resource.media_url,
+    resource.mediaUrl,
+    resource.full_url,
+    resource.fullUrl,
+    resource.shareLink,
+    resource.share_link,
+    resource.link,
+    resource.url
+  ];
+  for (const value of values) {
+    const link = extractCloudLinkFromText(value);
+    if (link) {
+      return link;
+    }
+  }
+  return extractCloudLinkFromText(JSON.stringify(resource));
+}
+
+function extractCloudLinkFromText(value) {
+  const match = String(value || '').match(/https?:\/\/(?:cloud\.189\.cn|h5\.cloud\.189\.cn|content\.21cn\.com)[^\s"'<>\\)）]+/i);
+  return match?.[0] || '';
+}
+
+function extractAccessCodeFromText(value) {
+  const match = String(value || '').match(/(?:访问码|提取码|access_code|accessCode|code|password)["'：:\s=]+([A-Za-z0-9]{4})/i);
+  return match?.[1] || '';
+}
+
 function extractResourceEntriesFromHtml(html, pageUrl = config.baseUrl) {
   const text = decodeFlightText(html);
   const resources = [];
@@ -1468,6 +2032,7 @@ function addResourceEntry(resources, seen, slug, block, pageUrl) {
     pan_type: '189',
     share_size: getNumberField(block, 'share_size') || getNumberField(block, 'size') || getNumberField(block, 'file_size'),
     unlock_points: getNumberField(block, 'unlock_points') || getNumberField(block, 'points') || getNumberField(block, 'cost'),
+    is_free: /(^|[\s"'([{,，:：])免费($|[\s"'\])},，。:：])/.test(block),
     expired: /"expired"\s*:\s*true|"isExpired"\s*:\s*true|疑似失效/i.test(block),
     is_unlocked: /"is_unlocked"\s*:\s*true|"isUnlocked"\s*:\s*true|已解锁|查看链接|复制链接/i.test(block),
     media_url: linkMatch?.[0] || '',

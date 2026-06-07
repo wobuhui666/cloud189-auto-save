@@ -688,8 +688,98 @@ class HdhiveSDK {
         if (!result.success) {
             return result;
         }
-        const normalized = this.normalizeBridgeResources(result.data?.payload || result.data);
-        return { success: true, data: normalized, raw: result.data };
+        const normalized = this.normalizeBridgeResources(result.data);
+        const enriched = await this.enrichBridgeResourcesWithDetails(normalized);
+        return { success: true, data: enriched, raw: result.data };
+    }
+
+    private async enrichBridgeResourcesWithDetails(resources: any[]): Promise<any[]> {
+        const enriched: any[] = [];
+        for (const resource of resources) {
+            const slug = resource.slug || resource.id;
+            if (resource.link || !slug || !resource.isUnlocked) {
+                enriched.push(resource);
+                continue;
+            }
+            const detailResult = await this.getResourceDetailByBridge(slug).catch(() => null);
+            const detailResources = detailResult?.success ? this.normalizeBridgeResources(detailResult.data) : [];
+            const detail = detailResources.find((item: any) => item.slug && item.slug === resource.slug)
+                || detailResources.find((item: any) => item.link)
+                || detailResources[0];
+            if (!detail) {
+                enriched.push(resource);
+                continue;
+            }
+            enriched.push({
+                ...resource,
+                ...detail,
+                id: resource.id || detail.id,
+                slug: resource.slug || detail.slug,
+                title: detail.title && detail.title !== '未命名资源' ? detail.title : resource.title,
+                size: detail.size || resource.size,
+                sizeFormatted: detail.size ? detail.sizeFormatted : resource.sizeFormatted,
+                points: detail.points ?? resource.points ?? null,
+                isFree: detail.isFree ?? resource.isFree,
+                link: detail.link || resource.link,
+                code: detail.code || resource.code,
+                isUnlocked: Boolean(resource.isUnlocked || detail.isUnlocked || detail.link || resource.link)
+            });
+        }
+        return enriched;
+    }
+
+    private async getResourceDetailByBridge(slug: string): Promise<any> {
+        const resourceId = this.extractResourceSlug(this.normalizeResourcePath(slug));
+        return await this.bridgeRequest(`/hdhive/customer/resources/${encodeURIComponent(resourceId)}`);
+    }
+
+    private formatBridgeUnlockData(payload: any): { success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string } {
+        const normalizedResources = this.dedupeResources([
+            ...this.normalizeBridgeResources(payload?.resources || []),
+            ...this.normalizeBridgeResources(payload?.detail || []),
+            ...this.normalizeBridgeResources(payload?.payload || payload)
+        ]);
+        const firstResource = normalizedResources.find((item: any) => item.link);
+        if (firstResource?.link) {
+            return {
+                success: true,
+                data: {
+                    link: firstResource.link,
+                    code: firstResource.code || '',
+                    fullUrl: firstResource.link,
+                    points: firstResource.points || 0
+                }
+            };
+        }
+        const share = this.findFirstCloud189Share(payload);
+        if (share.link) {
+            return { success: true, data: { link: share.link, code: share.code, fullUrl: share.link, points: 0 } };
+        }
+        return { success: false, error: 'Browser Bridge 未解析到天翼分享链接' };
+    }
+
+    private dedupeResources(resources: any[]): any[] {
+        const seen = new Set<string>();
+        return resources.filter((item) => {
+            const key = item.slug || item.id || item.link || `${item.title}:${item.size}`;
+            if (!key || seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+    }
+
+    private async getUnlockedResourceByBridge(slug: string): Promise<{ success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string }> {
+        const detailResult = await this.getResourceDetailByBridge(slug);
+        if (!detailResult.success) {
+            return detailResult;
+        }
+        const formatted = this.formatBridgeUnlockData(detailResult.data);
+        if (formatted.success) {
+            return formatted;
+        }
+        return { success: false, error: '资源尚未解锁或详情页未返回天翼链接' };
     }
 
     async getResources(type: 'movie' | 'tv', tmdbId: string | number) {
@@ -783,6 +873,10 @@ class HdhiveSDK {
 
     private async unlockResourceByBridge(slug: string): Promise<{ success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string }> {
         const resourceId = this.extractResourceSlug(this.normalizeResourcePath(slug));
+        const existing = await this.getUnlockedResourceByBridge(resourceId).catch(() => null);
+        if (existing?.success) {
+            return existing;
+        }
         const result = await this.bridgeRequest(`/hdhive/customer/resources/${encodeURIComponent(resourceId)}/unlock`, {
             method: 'POST'
         });
@@ -790,23 +884,9 @@ class HdhiveSDK {
             return result;
         }
         this.cache.clear();
-        const payload = this.unwrapBridgePayload(result.data?.payload || result.data);
-        const normalizedResources = this.normalizeBridgeResources(payload);
-        const firstResource = normalizedResources.find((item: any) => item.link);
-        if (firstResource?.link) {
-            return {
-                success: true,
-                data: {
-                    link: firstResource.link,
-                    code: firstResource.code || '',
-                    fullUrl: firstResource.link,
-                    points: firstResource.points || 0
-                }
-            };
-        }
-        const share = this.findFirstCloud189Share(payload);
-        if (share.link) {
-            return { success: true, data: { link: share.link, code: share.code, fullUrl: share.link, points: 0 } };
+        const formatted = this.formatBridgeUnlockData(result.data);
+        if (formatted.success) {
+            return formatted;
         }
         return { success: false, error: 'Browser Bridge 解锁成功但未解析到天翼分享链接' };
     }
@@ -1027,28 +1107,31 @@ class HdhiveSDK {
             value.slug
             || value.resourceId
             || value.media_url
+            || value.mediaUrl
+            || value.full_url
+            || value.fullUrl
+            || value.shareLink
+            || value.share_link
+            || value.link
+            || value.url
             || value.access_code
+            || value.accessCode
             || value.netdisk_website_id
+            || value.net_disk_website_id
             || value.website_id
             || value.pan_type
             || value.cloudType
-            || value.unlock_points
+            || value.unlock_points !== undefined
+            || value.is_free !== undefined
+            || value.isFree !== undefined
         );
     }
 
     private normalizeBridgeResources(payload: any): any[] {
         const candidates = this.collectResourceCandidates(payload);
-        const seen = new Set<string>();
-        return this.normalizeResources(candidates)
+        return this.dedupeResources(this.normalizeResources(candidates)
             .filter((item: any) => item.cloudType === 'cloud189')
-            .filter((item: any) => {
-                const key = item.slug || item.id || item.link || `${item.title}:${item.size}`;
-                if (!key || seen.has(key)) {
-                    return false;
-                }
-                seen.add(key);
-                return true;
-            });
+        );
     }
 
     private findFirstCloud189Share(payload: any): { link: string; code: string } {
@@ -1065,8 +1148,12 @@ class HdhiveSDK {
         return resources.map((resource) => {
             const cloudType = this.mapCloudType(resource.pan_type || resource.cloudType || resource.drive || resource.netdisk_website_id || resource.net_disk_website_id || resource.website_id || resource.website || resource.type);
             const cloudMeta = CLOUD_TYPE_MAP[cloudType] || CLOUD_TYPE_MAP.unknown;
-            const parsed = Cloud189Utils.parseCloudShare(resource.media_url || resource.link || resource.url || '');
+            const shareText = resource.full_url || resource.fullUrl || resource.media_url || resource.mediaUrl || resource.shareLink || resource.share_link || resource.link || resource.url || '';
+            const parsed = Cloud189Utils.parseCloudShare(shareText);
             const resourceId = resource.slug || resource.id || resource.resourceId || resource.resource_id || '';
+            const hasPointField = resource.unlock_points !== undefined || resource.points !== undefined || resource.cost !== undefined;
+            const points = hasPointField ? resource.unlock_points ?? resource.points ?? resource.cost ?? 0 : null;
+            const explicitFree = resource.is_free === true || resource.isFree === true;
             return {
                 id: String(resourceId),
                 slug: resource.slug || resource.id || resource.resourceId || resource.resource_id || '',
@@ -1077,15 +1164,15 @@ class HdhiveSDK {
                 cloudTypeColor: cloudMeta.color,
                 size: resource.share_size || resource.size || resource.fileSize || 0,
                 sizeFormatted: this.formatSize(resource.share_size || resource.size || resource.fileSize),
-                points: resource.unlock_points || resource.points || resource.cost || 0,
-                isFree: !(resource.unlock_points || resource.points || resource.cost),
+                points,
+                isFree: explicitFree || (points !== null && Number(points) === 0),
                 expired: !!(resource.expired || resource.isExpired),
                 quality: this.extractQuality(resource.title || resource.name || ''),
                 uploader: resource.user || resource.uploader || resource.publisher || {},
                 publishedAt: resource.publishedAt || resource.createTime || '',
-                link: parsed.url || resource.media_url || resource.link || '',
-                code: parsed.accessCode || resource.access_code || resource.code || resource.password || '',
-                isUnlocked: !!resource.is_unlocked
+                link: parsed.url || resource.media_url || resource.mediaUrl || resource.shareLink || resource.share_link || resource.link || resource.url || '',
+                code: parsed.accessCode || resource.access_code || resource.accessCode || resource.code || resource.password || resource.passwd || '',
+                isUnlocked: !!(resource.is_unlocked || resource.isUnlocked || parsed.url)
             };
         });
     }
@@ -1110,8 +1197,9 @@ class HdhiveSDK {
             pan_type: '189',
             share_size: this.getNumberField(block, 'share_size') || this.getNumberField(block, 'size') || this.getNumberField(block, 'file_size'),
             unlock_points: this.getNumberField(block, 'unlock_points') || this.getNumberField(block, 'points') || this.getNumberField(block, 'cost'),
-            expired: /"expired"\s*:\s*true|"isExpired"\s*:\s*true/i.test(block),
-            is_unlocked: /"is_unlocked"\s*:\s*true|"isUnlocked"\s*:\s*true/i.test(block),
+            is_free: /(^|[\s"'([{,，:：])免费($|[\s"'\])},，。:：])/.test(block),
+            expired: /"expired"\s*:\s*true|"isExpired"\s*:\s*true|疑似失效/i.test(block),
+            is_unlocked: /"is_unlocked"\s*:\s*true|"isUnlocked"\s*:\s*true|已解锁|查看链接|复制链接/i.test(block),
             media_url: linkMatch?.[0] || '',
             pageUrl: `${this.baseUrl}/resource/189/${encodeURIComponent(normalizedSlug)}`,
             sourcePageUrl: pageUrl

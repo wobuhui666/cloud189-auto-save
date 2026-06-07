@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ExternalLink, Key, Lock, LogOut, Plus, RefreshCw, Search, ShieldAlert, ShieldCheck, Unlock } from 'lucide-react';
 import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface HdhiveItem {
   id: string;
@@ -25,7 +26,7 @@ interface HdhiveResource {
   cloudType: string;
   cloudTypeName: string;
   sizeFormatted?: string;
-  points?: number;
+  points?: number | null;
   isFree?: boolean;
   expired?: boolean;
   quality?: string[];
@@ -75,8 +76,19 @@ const normalizeType = (type?: string): 'movie' | 'tv' => {
   return type === 'movie' ? 'movie' : 'tv';
 };
 
+const getResourcePoints = (resource: HdhiveResource) => {
+  return typeof resource.points === 'number' && Number.isFinite(resource.points) ? resource.points : null;
+};
+
+const formatResourceCost = (resource: HdhiveResource) => {
+  if (resource.isFree) return '免费';
+  const points = getResourcePoints(resource);
+  return points === null ? '积分未知' : `${points} 积分`;
+};
+
 const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
   const toast = useToast();
+  const dialog = useDialog();
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<HdhiveSearchResponse | null>(null);
@@ -90,6 +102,11 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
   const [loginLoading, setLoginLoading] = useState(false);
   const [syncCookieLoading, setSyncCookieLoading] = useState(false);
   const [checkinLoading, setCheckinLoading] = useState(false);
+  const canQueryHdhiveResources = Boolean(
+    status?.signedCustomerApiAvailable
+    || status?.hasCookie
+    || (status?.hasApiKey && status?.isAuthorized)
+  );
 
   const loadStatus = async () => {
     setStatusLoading(true);
@@ -266,6 +283,27 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
       return;
     }
 
+    const points = getResourcePoints(resource);
+    if (!resource.isFree && points === null) {
+      const confirmed = await dialog.confirm({
+        title: '确认解锁影巢资源',
+        message: `「${resource.title}」的积分消耗未知，是否继续？`,
+        confirmText: '继续解锁',
+        tone: 'warning',
+      });
+      if (!confirmed) return;
+    }
+
+    if (!resource.isFree && points !== null && points > 0) {
+      const confirmed = await dialog.confirm({
+        title: '确认解锁影巢资源',
+        message: `解锁「${resource.title}」会消耗 ${points} 积分，是否继续？`,
+        confirmText: '解锁',
+        tone: 'warning',
+      });
+      if (!confirmed) return;
+    }
+
     setUnlockingSlug(resource.slug || resource.id);
     try {
       const response = await fetch('/api/hdhive/unlock', {
@@ -401,7 +439,7 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
           <button
             type="button"
             onClick={() => handleQueryResources()}
-            disabled={resourceLoading || !(status?.hasApiKey || status?.hasCookie)}
+            disabled={resourceLoading || !canQueryHdhiveResources}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-[#c4eed0] px-6 py-3 text-sm font-medium text-[#146c2e] transition-colors hover:bg-[#b2e7c0] disabled:bg-slate-100 disabled:text-slate-400"
           >
             {resourceLoading ? <RefreshCw size={18} className="animate-spin" /> : <Lock size={18} />}
@@ -422,7 +460,7 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
                       </p>
                     </div>
                     <span className="shrink-0 rounded-full bg-white px-3 py-1 text-xs text-slate-600">
-                      {resource.isFree ? '免费' : `${resource.points || 0} 积分`}
+                      {formatResourceCost(resource)}
                     </span>
                   </div>
                   <button
@@ -535,7 +573,7 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
                   </button>
                   <button
                     type="button"
-                    disabled={!canQueryResources}
+                    disabled={!canQueryResources || !canQueryHdhiveResources}
                     onClick={() => handleQueryResources(normalizeType(item.type), item.tmdbId || item.id)}
                     className="inline-flex items-center gap-1.5 rounded-full bg-[#d3e3fd] px-4 py-2 text-xs font-medium text-[#0b57d0] transition-colors hover:bg-[#c2e7ff] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
                   >
