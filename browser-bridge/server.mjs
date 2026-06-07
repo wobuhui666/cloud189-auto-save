@@ -72,12 +72,12 @@ app.get('/health', async (req, res) => {
   const ready = Boolean(state.context && state.page);
   res.status(ready ? 200 : 503).json({
     success: ready,
-    data: buildStatus()
+    data: await buildStatus()
   });
 });
 
 app.get('/metrics', async (req, res) => {
-  res.json({ success: true, data: buildStatus() });
+  res.json({ success: true, data: await buildStatus() });
 });
 
 app.post('/warmup', async (req, res) => {
@@ -209,7 +209,7 @@ app.post('/browser/restart', async (req, res) => {
   const result = await enqueueAction('browser-restart', async () => {
     await closeBrowser('restart');
     await ensurePage();
-    return { success: true, data: buildStatus() };
+    return { success: true, data: await buildStatus() };
   });
   res.status(result.success ? 200 : 500).json(result);
 });
@@ -250,7 +250,7 @@ async function enqueueAction(name, action) {
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
-        data: buildStatus()
+        data: await buildStatus()
       };
     } finally {
       state.activeAction = null;
@@ -450,7 +450,7 @@ async function warmup(urls) {
     success: !failed,
     data: {
       results,
-      status: buildStatus()
+      status: await buildStatus()
     },
     ...(failed ? { error: failed.error || 'warmup failed' } : {})
   };
@@ -466,7 +466,7 @@ async function keepAlive() {
     await closeBrowser();
     await ensurePage();
   });
-  return { success: true, data: buildStatus() };
+  return { success: true, data: await buildStatus() };
 }
 
 async function openPage(urlOrPath, includeHtml = false) {
@@ -1695,8 +1695,9 @@ async function shutdown() {
   process.exit(0);
 }
 
-function buildStatus() {
+async function buildStatus() {
   const memory = process.memoryUsage();
+  const cookieStatus = await buildCookieStatus();
   return {
     uptimeSec: Math.round((Date.now() - state.startedAt) / 1000),
     browserReady: Boolean(state.context && state.page && !state.page.isClosed()),
@@ -1710,7 +1711,11 @@ function buildStatus() {
     restartCount: state.restartCount,
     activeAction: state.activeAction,
     baseUrl: config.baseUrl,
-    hasCookie: Boolean(config.cookie),
+    hasCookie: cookieStatus.hasCookie,
+    hasConfiguredCookie: cookieStatus.hasConfiguredCookie,
+    hasRuntimeCookie: cookieStatus.hasRuntimeCookie,
+    hasLoginCookie: cookieStatus.hasLoginCookie,
+    runtimeCookieCount: cookieStatus.runtimeCookieCount,
     hasUsername: Boolean(config.username),
     protectedEndpoints: Boolean(config.bridgeToken),
     cloudState: {
@@ -1729,6 +1734,26 @@ function buildStatus() {
       heapUsed: memory.heapUsed,
       heapTotal: memory.heapTotal
     }
+  };
+}
+
+async function buildCookieStatus() {
+  const configuredCookies = parseCookieHeader(config.cookie, config.baseUrl);
+  let runtimeCookies = [];
+  if (state.context) {
+    runtimeCookies = await readContextCookies(state.context).catch(() => []);
+  }
+  const cookieNames = new Set([
+    ...configuredCookies.map((cookie) => cookie.name),
+    ...runtimeCookies.map((cookie) => cookie.name)
+  ]);
+  const loginCookieNames = ['token', 'csrf_access_token', 'hdh_uid'];
+  return {
+    hasCookie: configuredCookies.length > 0 || runtimeCookies.length > 0,
+    hasConfiguredCookie: configuredCookies.length > 0,
+    hasRuntimeCookie: runtimeCookies.length > 0,
+    hasLoginCookie: loginCookieNames.some((name) => cookieNames.has(name)),
+    runtimeCookieCount: runtimeCookies.length
   };
 }
 

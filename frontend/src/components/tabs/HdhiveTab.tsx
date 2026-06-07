@@ -246,6 +246,10 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
       toast.warning('TMDB ID 不能为空');
       return;
     }
+    if (!/^\d+$/.test(normalizedTmdbId)) {
+      toast.warning('这里需要填写 TMDB 数字 ID；片名请使用上方片名 / TMDB 搜索框');
+      return;
+    }
 
     setTmdbType(nextType);
     setTmdbId(normalizedTmdbId);
@@ -420,6 +424,51 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#0b57d0]">优先搜索</p>
+          <h3 className="mt-1 text-base font-semibold text-slate-900">片名 / TMDB 搜索</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            先输入片名获取 TMDB 结果，再点“查天翼”；留空读取首页公开推荐。
+          </p>
+        </div>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center">
+          <div className="relative flex-1">
+            <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={keyword}
+              onChange={e => setKeyword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+              placeholder="优先输入片名或 TMDB 关键词，例如：天气之子"
+              className="w-full rounded-2xl border border-slate-300 bg-slate-50 py-3 pl-12 pr-4 text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleSearch}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-[#0b57d0] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[#0b57d0]/90 disabled:opacity-70"
+          >
+            {loading ? <RefreshCw size={18} className="animate-spin" /> : <Search size={18} />}
+            片名搜索
+          </button>
+        </div>
+        {result?.warning && (
+          <div className="mt-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <ShieldAlert size={18} className="mt-0.5 shrink-0" />
+            <span>{result.warning}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">备用入口</p>
+          <h3 className="mt-1 text-base font-semibold text-slate-900">直接按 TMDB ID 查天翼</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            已有 TMDB 数字 ID 时使用；从片名搜索结果点“查天翼”会自动带入类型和 ID。
+          </p>
+        </div>
         <div className="flex flex-col gap-4 md:flex-row md:items-center">
           <select
             value={tmdbType}
@@ -433,7 +482,7 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
             type="text"
             value={tmdbId}
             onChange={e => setTmdbId(e.target.value)}
-            placeholder="TMDB ID，用于查询可解锁天翼资源"
+            placeholder="TMDB 数字 ID，例如 568160"
             className="flex-1 rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
           />
           <button
@@ -479,41 +528,10 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
         )}
       </div>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center">
-          <div className="relative flex-1">
-            <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={keyword}
-              onChange={e => setKeyword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              placeholder="搜索影巢资源，留空读取首页公开推荐"
-              className="w-full rounded-2xl border border-slate-300 bg-slate-50 py-3 pl-12 pr-4 text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={handleSearch}
-            disabled={loading}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-[#0b57d0] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[#0b57d0]/90 disabled:opacity-70"
-          >
-            {loading ? <RefreshCw size={18} className="animate-spin" /> : <Search size={18} />}
-            网页搜索
-          </button>
-        </div>
-        {result?.warning && (
-          <div className="mt-4 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <ShieldAlert size={18} className="mt-0.5 shrink-0" />
-            <span>{result.warning}</span>
-          </div>
-        )}
-      </div>
-
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {!loading && items.length === 0 && (
           <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-white p-12 text-center text-sm text-slate-500">
-            输入关键词后搜索影巢资源，或按 TMDB ID 查询 OpenAPI 天翼资源。
+            先用上方片名 / TMDB 搜索拿到结果，再点“查天翼”；也可以在备用入口输入 TMDB 数字 ID 查询。
           </div>
         )}
 

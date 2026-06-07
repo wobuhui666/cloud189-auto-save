@@ -4,6 +4,7 @@ const ConfigService = require('../../services/ConfigService');
 const Cloud189Utils = require('../../utils/Cloud189Utils');
 const ProxyUtil = require('../../utils/ProxyUtil');
 const { logTaskEvent } = require('../../utils/logUtils');
+const { TMDBService } = require('../../services/tmdb');
 
 type HdhiveMediaType = 'movie' | 'tv' | 'unknown';
 
@@ -21,7 +22,7 @@ interface HdhiveSearchItem {
     pageUrl: string;
     shareLink: string;
     accessCode: string;
-    source: 'hdhive';
+    source: 'hdhive' | 'tmdb';
     tmdbId?: string;
 }
 
@@ -1338,6 +1339,59 @@ class HdhiveSDK {
         return items;
     }
 
+    private toHdhiveSearchItemFromTmdb(item: any): HdhiveSearchItem | null {
+        if (!item || !item.id || !['movie', 'tv'].includes(item.type)) {
+            return null;
+        }
+        const releaseDate = String(item.releaseDate || item.release_date || item.first_air_date || '');
+        const year = (releaseDate.match(/\d{4}/) || [])[0] || '';
+        return {
+            id: String(item.id),
+            tmdbId: String(item.id),
+            title: String(item.title || item.name || ''),
+            originalTitle: String(item.originalTitle || item.original_title || item.original_name || ''),
+            year,
+            type: item.type,
+            overview: String(item.overview || ''),
+            posterPath: String(item.posterPath || item.poster_path || ''),
+            backdropPath: String(item.backdropPath || item.backdrop_path || ''),
+            videoResolution: '',
+            shareNum: 0,
+            pageUrl: this.buildMediaPageUrl(item.type, String(item.id), String(item.id)),
+            shareLink: '',
+            accessCode: '',
+            source: 'tmdb'
+        };
+    }
+
+    private getTmdbApiKey(): string {
+        return String(ConfigService.getConfigValue('tmdb.tmdbApiKey') || ConfigService.getConfigValue('tmdb.apiKey') || '').trim();
+    }
+
+    private async searchTmdbMedia(keyword: string, limit: number): Promise<HdhiveSearchItem[]> {
+        if (!this.getTmdbApiKey()) {
+            return [];
+        }
+        const tmdbService = new TMDBService();
+        const result = await tmdbService.search(keyword);
+        const candidates = [
+            ...(Array.isArray(result?.movies) ? result.movies : []),
+            ...(Array.isArray(result?.tvShows) ? result.tvShows : [])
+        ];
+        const seen = new Set<string>();
+        const items: HdhiveSearchItem[] = [];
+        for (const candidate of candidates) {
+            const item = this.toHdhiveSearchItemFromTmdb(candidate);
+            if (!item) continue;
+            const key = `${item.type}:${item.tmdbId || item.id}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            items.push(item);
+            if (items.length >= limit) break;
+        }
+        return items;
+    }
+
     private extractCloudLinks(html: string, pageUrl = this.baseUrl): HdhiveSearchItem[] {
         const text = this.decodeFlightText(html);
         const urlMatches = text.match(/https?:\/\/(?:cloud\.189\.cn|h5\.cloud\.189\.cn|content\.21cn\.com)[^\s"'<>\\)）]+/gi) || [];
@@ -1371,21 +1425,55 @@ class HdhiveSDK {
     async search(keyword: string, limit = 20): Promise<HdhiveSearchResult> {
         const normalizedKeyword = String(keyword || '').trim();
         const normalizedLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
-        const pathname = normalizedKeyword ? `/search?q=${encodeURIComponent(normalizedKeyword)}` : '/';
+        const tmdbConfigured = !!this.getTmdbApiKey();
+        let tmdbSearchError = '';
+
+        if (normalizedKeyword && tmdbConfigured) {
+            try {
+                const tmdbItems = await this.searchTmdbMedia(normalizedKeyword, normalizedLimit);
+                if (tmdbItems.length > 0) {
+                    return {
+                        items: tmdbItems,
+                        directLinkCount: 0,
+                        loginRequired: false,
+                        warning: '已优先使用 TMDB 搜索结果；请点击“查天翼”查询影巢天翼资源。'
+                    };
+                }
+            } catch (error) {
+                tmdbSearchError = error instanceof Error ? error.message : String(error);
+                logTaskEvent(`影巢搜索 TMDB 优先搜索失败: ${tmdbSearchError}`, 'warn', 'hdhive');
+            }
+        }
+
+        const pathname = normalizedKeyword ? `/search?query=${encodeURIComponent(normalizedKeyword)}&type=multi&page=1` : '/';
         const page = await this.fetchPage(pathname);
         const loginRequired = this.isLoginRedirect(page.url, page.html);
         if (loginRequired && normalizedKeyword && !this.cookie) {
-            return { items: [], directLinkCount: 0, loginRequired: true, warning: '影巢搜索页需要有效网页登录 Cookie，或配置 OpenAPI 凭证后按 TMDB ID 查询。' };
+            const tmdbWarning = tmdbConfigured
+                ? tmdbSearchError
+                    ? `TMDB 优先搜索失败：${tmdbSearchError}`
+                    : 'TMDB 未返回匹配结果'
+                : 'TMDB API Key 未配置';
+            return { items: [], directLinkCount: 0, loginRequired: true, warning: `${tmdbWarning}；影巢搜索页需要有效网页登录 Cookie，或配置 OpenAPI 凭证后按 TMDB ID 查询。` };
         }
         const directItems = this.extractCloudLinks(page.html, page.url);
-        const mediaItems = this.extractMediaItems(page.html, normalizedKeyword, normalizedLimit);
+        let mediaItems = this.extractMediaItems(page.html, normalizedKeyword, normalizedLimit);
         const items = [...directItems, ...mediaItems].slice(0, normalizedLimit);
         const directLinkCount = items.filter(item => item.shareLink).length;
+        const warning = directLinkCount > 0
+            ? ''
+            : normalizedKeyword && tmdbConfigured
+                ? tmdbSearchError
+                    ? `TMDB 优先搜索失败：${tmdbSearchError}；当前搜索页未直接暴露天翼分享链接，可进入详情页或使用 OpenAPI 解锁天翼资源。`
+                    : 'TMDB 未返回匹配结果，已回退影巢搜索页；可进入详情页或使用 OpenAPI 解锁天翼资源。'
+                : normalizedKeyword
+                    ? 'TMDB API Key 未配置，已回退影巢搜索页；可进入详情页或使用 OpenAPI 解锁天翼资源。'
+                    : '当前搜索页未直接暴露天翼分享链接；可进入详情页或使用 OpenAPI 解锁天翼资源。';
         return {
             items,
             directLinkCount,
             loginRequired,
-            warning: directLinkCount > 0 ? '' : '当前搜索页未直接暴露天翼分享链接；可进入详情页或使用 OpenAPI 解锁天翼资源。'
+            warning
         };
     }
 
