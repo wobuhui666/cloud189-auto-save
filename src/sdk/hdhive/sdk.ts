@@ -688,16 +688,27 @@ class HdhiveSDK {
         return /登录态|重新登录|登录失效|登录已过期|未登录/.test(message);
     }
 
-    private async getResourcesByBridge(type: 'movie' | 'tv', tmdbId: string | number, allowRelogin = true): Promise<any> {
+    private isBridgeTransientError(result: any): boolean {
+        const message = String(result?.error || '');
+        return /Timeout|timed out|context (or browser )?(has been )?closed|Target page|newPage|navigat|ECONNRESET|socket hang up|EPIPE|HTTP 50[234]/i.test(message);
+    }
+
+    private async getResourcesByBridge(type: 'movie' | 'tv', tmdbId: string | number, attempt = 0): Promise<any> {
         const result = await this.bridgeRequest('/hdhive/customer/media-resources', {
             method: 'POST',
             json: { type, tmdbId },
             timeoutMs: 130000
         });
-        if (!result.success && allowRelogin && this.isBridgeAuthError(result)) {
-            const relogin = await this.bridgeRequest('/hdhive/login', { method: 'POST', timeoutMs: 130000 });
-            if (relogin.success) {
-                return this.getResourcesByBridge(type, tmdbId, false);
+        if (!result.success && attempt < 2) {
+            if (this.isBridgeAuthError(result)) {
+                const relogin = await this.bridgeRequest('/hdhive/login', { method: 'POST', timeoutMs: 130000 });
+                if (relogin.success) {
+                    return this.getResourcesByBridge(type, tmdbId, attempt + 1);
+                }
+            } else if (this.isBridgeTransientError(result)) {
+                // bridge 浏览器上下文崩溃/导航超时等临时故障：等其自愈后重试
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                return this.getResourcesByBridge(type, tmdbId, attempt + 1);
             }
         }
         if (!result.success) {

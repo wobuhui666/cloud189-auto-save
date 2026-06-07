@@ -285,7 +285,7 @@ async function runActionWithTimeout(name, action) {
   ]);
 }
 
-async function ensurePage() {
+async function ensurePage(retry = 0) {
   if (state.page && !state.page.isClosed()) {
     return state.page;
   }
@@ -312,12 +312,27 @@ async function ensurePage() {
     state.browserLaunchAt = startedAt;
     state.browserLaunchMs = Date.now() - startedAt;
     state.restartCount += 1;
+    // context 崩溃/关闭时主动置空，使下次 ensurePage 能重建（避免在已死的 context 上反复 newPage 失败）
+    state.context.on('close', () => {
+      state.context = null;
+      state.page = null;
+    });
     await installStealthInitScript(state.context);
     await restoreBrowserState(state.context);
     await seedCookies(state.context);
   }
 
-  state.page = state.context.pages()[0] || await state.context.newPage();
+  try {
+    state.page = state.context.pages()[0] || await state.context.newPage();
+  } catch (error) {
+    // context 已崩溃但引用残留（Target page/context closed）：置空重建，最多重试 2 次
+    state.context = null;
+    state.page = null;
+    if (retry >= 2) {
+      throw error;
+    }
+    return ensurePage(retry + 1);
+  }
   state.page.setDefaultNavigationTimeout(config.navigationTimeoutMs);
   state.page.setDefaultTimeout(config.navigationTimeoutMs);
   state.page.on('close', () => {
