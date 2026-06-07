@@ -48,6 +48,7 @@ interface HdhiveBridgeRequestOptions {
     method?: 'GET' | 'POST';
     json?: any;
     searchParams?: Record<string, string | number | boolean>;
+    timeoutMs?: number;
 }
 
 const AUTH_ENDPOINTS = {
@@ -269,7 +270,7 @@ class HdhiveSDK {
                 'x-bridge-token': this.browserBridgeToken
             },
             responseType: 'json',
-            timeout: { request: 60000 },
+            timeout: { request: options.timeoutMs || 60000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
         };
@@ -306,6 +307,7 @@ class HdhiveSDK {
         }
         const result = await this.bridgeRequest('/hdhive/login', {
             method: 'POST',
+            timeoutMs: 130000,
             json: {
                 username: normalizedUsername,
                 password: normalizedPassword
@@ -681,11 +683,23 @@ class HdhiveSDK {
         return { success: true, data: normalized };
     }
 
-    private async getResourcesByBridge(type: 'movie' | 'tv', tmdbId: string | number) {
+    private isBridgeAuthError(result: any): boolean {
+        const message = String(result?.error || '');
+        return /登录态|重新登录|登录失效|登录已过期|未登录/.test(message);
+    }
+
+    private async getResourcesByBridge(type: 'movie' | 'tv', tmdbId: string | number, allowRelogin = true): Promise<any> {
         const result = await this.bridgeRequest('/hdhive/customer/media-resources', {
             method: 'POST',
-            json: { type, tmdbId }
+            json: { type, tmdbId },
+            timeoutMs: 130000
         });
+        if (!result.success && allowRelogin && this.isBridgeAuthError(result)) {
+            const relogin = await this.bridgeRequest('/hdhive/login', { method: 'POST', timeoutMs: 130000 });
+            if (relogin.success) {
+                return this.getResourcesByBridge(type, tmdbId, false);
+            }
+        }
         if (!result.success) {
             return result;
         }
