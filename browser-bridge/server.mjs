@@ -46,7 +46,8 @@ const state = {
   statePersistedAt: 0,
   stateLoadOk: false,
   statePersistOk: false,
-  stateLastError: ''
+  stateLastError: '',
+  shuttingDown: false
 };
 
 const app = express();
@@ -202,7 +203,7 @@ app.post('/hdhive/customer/resources/:resourceId/unlock', requireSensitiveEndpoi
 
 app.post('/browser/restart', async (req, res) => {
   const result = await enqueueAction('browser-restart', async () => {
-    await closeBrowser();
+    await closeBrowser('restart');
     await ensurePage();
     return { success: true, data: buildStatus() };
   });
@@ -967,7 +968,7 @@ async function getStateDbPool() {
   }
   const { Pool } = await import('pg');
   state.stateDbPool = new Pool({
-    connectionString: config.stateDatabaseUrl,
+    connectionString: normalizeStateDatabaseUrl(config.stateDatabaseUrl),
     ssl: resolveStateDatabaseSsl(config.stateDatabaseUrl, config.stateDatabaseSsl),
     max: 2,
     idleTimeoutMillis: 30_000,
@@ -1045,7 +1046,7 @@ async function persistBrowserState(context, reason = 'manual') {
   }
   try {
     const pool = await ensureStateTable();
-    const snapshot = await context.storageState();
+    const snapshot = await readBrowserStorageState(context);
     const encoded = encodeStateValue({
       ...snapshot,
       meta: {
@@ -1068,9 +1069,93 @@ async function persistBrowserState(context, reason = 'manual') {
   } catch (error) {
     state.statePersistOk = false;
     state.stateLastError = `persist: ${error instanceof Error ? error.message : String(error)}`;
-    console.warn('[browser-bridge] persist state failed:', state.stateLastError);
+    if (state.shuttingDown && isBrowserContextUnavailableError(error)) {
+      console.warn('[browser-bridge] persist state skipped during shutdown:', state.stateLastError);
+    } else {
+      console.warn('[browser-bridge] persist state failed:', state.stateLastError);
+    }
     return false;
   }
+}
+
+async function readBrowserStorageState(context) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await waitForContextPagesSettled(context);
+      return await context.storageState();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableStorageStateError(error)) {
+        break;
+      }
+      await delay(350 * attempt);
+    }
+  }
+  return await readBrowserStorageStateFallback(context, lastError);
+}
+
+async function readBrowserStorageStateFallback(context, cause) {
+  const cookies = await readContextCookies(context).catch(() => []);
+  const origins = await readContextOrigins(context).catch(() => []);
+  if (cookies.length > 0 || origins.length > 0) {
+    return { cookies, origins };
+  }
+  throw cause || new Error('browser storage state is empty');
+}
+
+async function waitForContextPagesSettled(context) {
+  const pages = context.pages().filter((page) => !page.isClosed());
+  await Promise.all(pages.map(async (page) => {
+    await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 2000 }).catch(() => undefined);
+  }));
+}
+
+async function readContextCookies(context) {
+  try {
+    return await context.cookies(config.baseUrl);
+  } catch (error) {
+    const page = context.pages().find((candidate) => !candidate.isClosed() && candidate.url().startsWith(config.baseUrl));
+    if (!page) {
+      throw error;
+    }
+    const header = await page.evaluate(() => document.cookie || '');
+    return parseCookieHeader(header, config.baseUrl);
+  }
+}
+
+async function readContextOrigins(context) {
+  const origins = [];
+  const seen = new Set();
+  for (const page of context.pages()) {
+    if (page.isClosed() || !/^https?:\/\//i.test(page.url())) {
+      continue;
+    }
+    const origin = await page.evaluate(() => ({
+      origin: window.location.origin,
+      localStorage: Array.from({ length: window.localStorage.length }, (_, index) => {
+        const name = window.localStorage.key(index);
+        return name ? { name, value: window.localStorage.getItem(name) || '' } : null;
+      }).filter(Boolean)
+    })).catch(() => null);
+    if (!origin?.origin || seen.has(origin.origin)) {
+      continue;
+    }
+    seen.add(origin.origin);
+    origins.push(origin);
+  }
+  return origins;
+}
+
+function isRetryableStorageStateError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Execution context was destroyed|navigation|Storage\.getCookies|Browser context management is not supported|Target page, context or browser has been closed|Protocol error/i.test(message);
+}
+
+function isBrowserContextUnavailableError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Browser context management is not supported|Target page, context or browser has been closed|browser has been closed|Protocol error/i.test(message);
 }
 
 async function closeStateDatabase() {
@@ -1087,11 +1172,24 @@ function resolveStateDatabaseSsl(databaseUrl, sslMode) {
   if (['false', '0', 'off', 'disable'].includes(normalizedMode)) {
     return false;
   }
-  if (['true', '1', 'on', 'require'].includes(normalizedMode)) {
+  if (['verify-full'].includes(normalizedMode)) {
+    return true;
+  }
+  if (['true', '1', 'on', 'require', 'prefer', 'verify-ca'].includes(normalizedMode)) {
     return { rejectUnauthorized: false };
   }
   try {
     const url = new URL(databaseUrl);
+    const urlSslMode = String(url.searchParams.get('sslmode') || '').trim().toLowerCase();
+    if (['disable', 'false', '0', 'off'].includes(urlSslMode)) {
+      return false;
+    }
+    if (urlSslMode === 'verify-full') {
+      return true;
+    }
+    if (['require', 'prefer', 'verify-ca'].includes(urlSslMode)) {
+      return { rejectUnauthorized: false };
+    }
     if (['localhost', '127.0.0.1', '::1'].includes(url.hostname)) {
       return false;
     }
@@ -1099,6 +1197,16 @@ function resolveStateDatabaseSsl(databaseUrl, sslMode) {
     return { rejectUnauthorized: false };
   }
   return { rejectUnauthorized: false };
+}
+
+function normalizeStateDatabaseUrl(databaseUrl) {
+  try {
+    const url = new URL(databaseUrl);
+    url.searchParams.delete('sslmode');
+    return url.toString();
+  } catch {
+    return databaseUrl;
+  }
 }
 
 function encodeStateValue(value) {
@@ -1149,9 +1257,9 @@ async function safePageSummary(page, startedAt) {
   };
 }
 
-async function closeBrowser() {
+async function closeBrowser(reason = 'close') {
   if (state.context) {
-    await persistBrowserState(state.context, 'close').catch(() => false);
+    await persistBrowserState(state.context, reason).catch(() => false);
     await state.context.close().catch(() => undefined);
   }
   state.context = null;
@@ -1159,8 +1267,12 @@ async function closeBrowser() {
 }
 
 async function shutdown() {
+  if (state.shuttingDown) {
+    return;
+  }
+  state.shuttingDown = true;
   console.log('[browser-bridge] shutting down');
-  await closeBrowser();
+  await closeBrowser('shutdown');
   await closeStateDatabase();
   process.exit(0);
 }
@@ -1230,6 +1342,10 @@ function toAbsoluteUrl(value) {
 
 function trimTrailingSlash(value) {
   return String(value || '').replace(/\/+$/, '');
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseCookieHeader(cookieHeader, baseUrl) {

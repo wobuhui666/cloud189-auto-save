@@ -39,7 +39,7 @@ npm start
 - `DATABASE_URL` / `BRIDGE_STATE_DATABASE_URL`：可选，Postgres 连接串；配置后会把浏览器 Cookie/StorageState 加密持久化到云数据库，容器重启后自动恢复登录态。
 - `BRIDGE_STATE_SECRET`：可选，云端状态加密密钥；不填时使用 `BRIDGE_TOKEN` 派生密钥。
 - `BRIDGE_STATE_KEY`：可选，同一个数据库里区分不同 Bridge 实例，默认 `hdhive-default`。
-- `BRIDGE_STATE_DATABASE_SSL`：可选，设为 `false` 可关闭 Postgres SSL；云数据库默认自动启用 SSL。
+- `BRIDGE_STATE_DATABASE_SSL`：可选，设为 `false` 可关闭 Postgres SSL，设为 `verify-full` 可启用证书校验；云数据库默认自动启用 SSL。
 - `BROWSER_PROFILE_DIR`：默认 `/data/hdhive-profile`；有云数据库后不再必须配置 Render Disk。
 - `BROWSER_HEADLESS`：默认 `true`；如登录页拒绝 Headless，可设为 `false` 做排查。
 - `LOGIN_TIMEOUT_MS`：默认 `45000`。
@@ -58,3 +58,9 @@ npm start
 2. 主项目设置页配置 Browser Bridge 地址、Token、影巢网页登录账号和密码。
 3. 在主项目“影巢”页点击网页登录取 Cookie。Bridge 登录成功后会把登录态写入云数据库。
 4. 后续 Render 容器冷启动或重启时，Bridge 会从云数据库恢复 Cookie/StorageState。
+
+## 常见日志
+
+- `Execution context was destroyed`：通常是页面正在跳转时保存登录态，Bridge 会自动重试并兜底读取 Cookie/localStorage。
+- `Browser context management is not supported`：通常发生在 Render 关机或浏览器上下文关闭阶段，正常登录后的状态已提前保存；关机阶段失败不会影响服务启动。
+- `SSL modes 'prefer', 'require', and 'verify-ca'...`：来自 Postgres 连接串里的 `sslmode=require`。新版 Bridge 会在内部规整连接串并用 `BRIDGE_STATE_DATABASE_SSL` 控制 SSL。
