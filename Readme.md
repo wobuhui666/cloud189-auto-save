@@ -26,7 +26,6 @@
 本项目仅供学习交流，请勿用于非法用途。开发者不对任何资源内容负责。  
 精力有限，更新速度可能不是很快，敬请谅解。  
 问题反馈与功能请求，请提交 [Issues](https://github.com/wobuhui666/cloud189-auto-save/issues)  
-hdhive相关功能暂时存在问题
 
 - 📖 [**Wiki 文档**](https://github.com/wobuhui666/cloud189-auto-save/wiki) - 完整功能文档与配置指南
 - 🤖 [**DeepWiki**](https://deepwiki.com/wobuhui666/cloud189-auto-save) - AI 驱动的项目文档与代码解读
