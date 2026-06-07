@@ -15,7 +15,7 @@
 - 使用 Render、VPS、NAS 或自建 Docker 环境运行常驻浏览器。
 - 希望把影巢登录态持久化到云端数据库，容器重启后自动恢复。
 
-账号密码不建议配置在 Bridge 容器里。推荐只在主项目 **媒体设置 → 影巢资源** 中填写影巢网页登录账号和密码，由主项目调用 Bridge 完成登录。
+账号密码可只在主项目 **媒体设置 → 影巢资源** 中填写，由主项目调用 Bridge 完成登录；如果希望 Bridge 启动自动登录并持续续签登录态（推荐），可额外在 Bridge 容器配置 `HDHIVE_USERNAME` / `HDHIVE_PASSWORD` 环境变量，详见 4.1。
 
 ---
 
@@ -125,6 +125,17 @@ services:
 2. 配置了 `DATABASE_URL` 时，Bridge 会把登录态加密保存到云数据库。
 3. 主项目会同步 Cookie，用于 Cookie 兜底解析。
 
+### 4.1 自动登录与登录态续签（推荐）
+
+如果在 Bridge 容器配置 `HDHIVE_USERNAME` 和 `HDHIVE_PASSWORD` 环境变量，Bridge 会自动维护登录态：
+
+- **启动自动登录**：容器启动并完成首页预热后，自动用环境变量账号登录影巢，无需手动点击 **账号登录取 Cookie**。
+- **登录态自动续签**：保活任务（默认每 25 秒）检测到登录 Cookie 缺失时，自动用环境变量账号重新登录，避免登录态过期导致查询被弹回登录页。
+- **软恢复**：保活探测失败时优先重新导航当前页，尽量不销毁重建浏览器上下文，减少登录态丢失。
+- **登录加固**：登录时显式等待登录表单渲染完成（`waitForSelector`），降低影巢页面异步渲染导致的「未找到登录表单」概率。
+
+未配置账号密码环境变量时，仍可沿用「主项目填写账号密码 → 手动点击账号登录取 Cookie」的方式。配合 `DATABASE_URL` 持久化，容器重启后会先恢复云端登录态，失效再自动续签，稳定性最佳。
+
 ---
 
 ## 5. 健康检查和验证
@@ -181,6 +192,8 @@ curl -H "x-bridge-token: 换成BRIDGE_TOKEN" \
 | `BRIDGE_STATE_SECRET` | 可选 | 云端状态加密密钥 |
 | `BRIDGE_STATE_KEY` | 可选 | 同一数据库区分多个 Bridge 实例，默认 `hdhive-default` |
 | `BRIDGE_STATE_DATABASE_SSL` | 可选 | 设置为 `false` 可关闭数据库 SSL |
+| `HDHIVE_USERNAME` | 可选 | 影巢登录账号；配置后 Bridge 启动即自动登录，登录态失效时自动续签，无需主项目手动触发登录 |
+| `HDHIVE_PASSWORD` | 可选 | 影巢登录密码；与 `HDHIVE_USERNAME` 搭配启用自动登录与续签 |
 | `HDHIVE_BASE_URL` | 可选 | 默认 `https://hdhive.com` |
 | `HDHIVE_COOKIE` | 可选 | 启动时注入 Cookie；通常不需要 |
 | `BROWSER_PROFILE_DIR` | 可选 | 默认 `/data/hdhive-profile` |
