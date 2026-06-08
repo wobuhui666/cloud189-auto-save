@@ -1806,6 +1806,7 @@ async function buildStatus() {
     restartCount: state.restartCount,
     activeAction: state.activeAction,
     baseUrl: config.baseUrl,
+    headless: config.headless,
     hasCookie: cookieStatus.hasCookie,
     hasConfiguredCookie: cookieStatus.hasConfiguredCookie,
     hasRuntimeCookie: cookieStatus.hasRuntimeCookie,

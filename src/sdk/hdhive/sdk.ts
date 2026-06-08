@@ -829,7 +829,11 @@ class HdhiveSDK {
         if (this.browserBridgeEnabled && this.browserBridgeToken) {
             bridgeResult = await this.getResourcesByBridge(type, tmdbId);
             if (bridgeResult.success) {
-                this.setCache(cacheKey, bridgeResult.data);
+                if (Array.isArray(bridgeResult.data) && bridgeResult.data.length > 0) {
+                    this.setCache(cacheKey, bridgeResult.data);
+                } else if (bridgeResult.raw && typeof bridgeResult.raw === 'object') {
+                    bridgeResult.raw.emptyUncached = true;
+                }
                 return bridgeResult;
             }
         }

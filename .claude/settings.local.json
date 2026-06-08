@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Playwright__browser_snapshot",
+      "mcp__Playwright__browser_click",
+      "mcp__Playwright__browser_console_messages",
+      "mcp__Playwright__browser_select_option",
+      "mcp__Playwright__browser_type",
+      "mcp__Playwright__browser_handle_dialog",
+      "mcp__context7__query-docs"
+    ]
+  }
+}
