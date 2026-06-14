@@ -665,27 +665,29 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           显示 {pageStart}-{pageEnd} / {totalTasks} 项
         </span>
 
-        <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
-          <select
-            value={batchStatus}
-            onChange={(e) => setBatchStatus(e.target.value as TaskStatus)}
-            className="bg-transparent px-2 py-1 text-sm text-slate-700 outline-none"
-          >
-            {TASK_STATUS_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={handleBatchStatusUpdate}
-            disabled={selectedTaskIds.length === 0 || isBatchUpdatingStatus}
-            className="rounded-full bg-[#0b57d0] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#0b57d0]/90 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-          >
-            {isBatchUpdatingStatus ? '设置中...' : '批量设状态'}
-          </button>
-        </div>
+        {selectedTaskIds.length > 0 && (
+          <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
+            <select
+              value={batchStatus}
+              onChange={(e) => setBatchStatus(e.target.value as TaskStatus)}
+              className="bg-transparent px-2 py-1 text-sm text-slate-700 outline-none"
+            >
+              {TASK_STATUS_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleBatchStatusUpdate}
+              disabled={isBatchUpdatingStatus}
+              className="rounded-full bg-[#0b57d0] px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#0b57d0]/90 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+            >
+              {isBatchUpdatingStatus ? '设置中...' : '批量设状态'}
+            </button>
+          </div>
+        )}
 
         <label className="flex items-center gap-2 cursor-pointer group">
           <div
