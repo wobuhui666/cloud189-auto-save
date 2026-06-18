@@ -30,10 +30,11 @@ async function handleStart(svc, msg) {
         '2. /fl 查看常用目录',
         '3. 直接发送 cloud.189.cn 分享链接创建任务',
         '4. /search_cs 搜索 CloudSaver 资源',
-        '5. /tasks 查看当前任务',
+        '5. /hdhive 搜索影巢资源',
+        '6. /tasks 查看当前任务',
         '',
         '常用快捷命令：',
-        '/help /tasks /stats /logs /subs',
+        '/help /tasks /hdhive /stats /logs /subs',
     ].join('\n');
     const keyboard = helpNavKeyboard();
     await send(svc.bot, chatId, text, { keyboard });
@@ -112,9 +113,15 @@ async function handleCancel(svc, msg) {
     session.ptSearch.results = [];
     session.ptSearch.groups = [];
 
+    // 清除影巢搜索模式
+    const hdhiveHandler = require('./hdhive');
+    hdhiveHandler.clearHdhiveState(session);
+
     // 清除待分享
     session.pendingShare.link = null;
     session.pendingShare.accessCode = null;
+    session.pendingShare.taskName = null;
+    session.pendingShare.tmdbId = null;
 
     // 清除 UI 按钮消息
     if (session.ui.lastButtonMsgId) {
@@ -132,7 +139,7 @@ async function handleHelpNav(svc, chatId, view, messageId) {
             await tasksHandler.handleTaskPage(svc, chatId, 1);
             break;
         case 'search':
-            await send(svc.bot, chatId, '请使用 /search_cs 进入搜索模式');
+            await send(svc.bot, chatId, '请使用 /search_cs 搜索 CloudSaver，或使用 /hdhive 搜索影巢资源');
             break;
         case 'folders':
             const foldersHandler = require('./folders');

@@ -17,6 +17,7 @@ function getHandlers() {
             search: require('./handlers/search'),
             series: require('./handlers/series'),
             share: require('./handlers/share'),
+            hdhive: require('./handlers/hdhive'),
             stats: require('./handlers/stats'),
             logs: require('./handlers/logs'),
             subs: require('./handlers/subs'),
@@ -192,6 +193,16 @@ function registerCommands(svc) {
         await getHandlers().search.handleSearchMode(svc, msg);
     });
 
+    bot.onText(/^\/hdhive(?:\s+(.+))?$/i, async (msg, match) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        await getHandlers().hdhive.handleHdhive(svc, msg, match?.[1]);
+    });
+
+    bot.onText(/^\/hdhive_checkin$/i, async (msg) => {
+        if (!svc.checkChatId(msg.chat.id)) return;
+        await getHandlers().hdhive.handleCheckin(svc, msg);
+    });
+
     bot.onText(/^\/series(?:\s+(.+))?$/i, async (msg, match) => {
         if (!svc.checkChatId(msg.chat.id)) return;
         await getHandlers().series.handleSeries(svc, msg, match?.[1], 'normal');
@@ -299,6 +310,10 @@ function registerCommands(svc) {
         const session = svc.sessionStore.get(msg.chat.id);
         if (session.ptSearch.active) {
             await getHandlers().ptSearch.handlePtSearchMessage(svc, msg);
+            return;
+        }
+        if (session.hdhive.active) {
+            await getHandlers().hdhive.handleHdhiveMessage(svc, msg);
             return;
         }
         await getHandlers().search.handleSearchMessage(svc, msg);
@@ -427,6 +442,15 @@ function registerCommands(svc) {
                             return;
                         }
                         await getHandlers().ptSubs.handlePtReleaseDelete(svc, { chat: { id: chatId } }, data.i);
+                        break;
+                    case CB.HDHIVE_UNLOCK:
+                        await getHandlers().hdhive.handleUnlockCallback(svc, chatId, data, messageId);
+                        break;
+                    case CB.HDHIVE_ITEM:
+                        await getHandlers().hdhive.handleItemCallback(svc, chatId, data, messageId);
+                        break;
+                    case CB.HDHIVE_RESOURCE:
+                        await getHandlers().hdhive.handleResourceCallback(svc, chatId, data, messageId);
                         break;
                     default:
                         break;

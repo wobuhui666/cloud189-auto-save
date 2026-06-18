@@ -161,6 +161,34 @@ function helpNavKeyboard() {
     ];
 }
 
+/**
+ * 构建影巢搜索结果键盘
+ */
+function hdhiveSearchKeyboard(items = []) {
+    return items.slice(0, 12).map((item, index) => {
+        const label = item?.shareLink ? '⚡ 直转' : '🎬 查天翼';
+        return [{
+            text: truncateBtn(`${index + 1}. ${label} ${item?.title || '未命名结果'}`, 34),
+            callback_data: serializeCb({ t: CB.HDHIVE_ITEM, i: index + 1 }),
+        }];
+    });
+}
+
+/**
+ * 构建影巢资源列表键盘
+ */
+function hdhiveResourceKeyboard(resources = []) {
+    return resources.slice(0, 12).map((resource, index) => {
+        const label = resource?.link
+            ? '⚡ 转存'
+            : (resource?.isFree ? '🔓 免费解锁' : '🔐 解锁');
+        return [{
+            text: truncateBtn(`${index + 1}. ${label} ${resource?.title || '未命名资源'}`, 34),
+            callback_data: serializeCb({ t: CB.HDHIVE_RESOURCE, i: index + 1 }),
+        }];
+    });
+}
+
 module.exports = {
     truncateBtn,
     serializeCb,
@@ -172,4 +200,6 @@ module.exports = {
     ptSubActionRow,
     ptReleaseActionRow,
     helpNavKeyboard,
+    hdhiveSearchKeyboard,
+    hdhiveResourceKeyboard,
 };

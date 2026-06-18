@@ -30,6 +30,7 @@ class SessionStore {
         if (session) {
             if (session.search.timeoutRef) clearTimeout(session.search.timeoutRef);
             if (session.ptSearch.timeoutRef) clearTimeout(session.ptSearch.timeoutRef);
+            if (session.hdhive.timeoutRef) clearTimeout(session.hdhive.timeoutRef);
         }
         this.sessions.delete(chatId);
     }
@@ -82,7 +83,7 @@ class SessionStore {
     _createDefault() {
         return {
             account: { id: null, entity: null },
-            pendingShare: { link: null, accessCode: null },
+            pendingShare: { link: null, accessCode: null, taskName: null, tmdbId: null },
             folderNav: {
                 path: '',
                 id: '-11',
@@ -105,6 +106,15 @@ class SessionStore {
                 preset: null,
                 results: [],
                 groups: [],
+                timeoutRef: null,
+            },
+            hdhive: {
+                active: false,
+                mode: 'search',
+                keyword: '',
+                results: [],
+                resources: [],
+                selectedItem: null,
                 timeoutRef: null,
             },
             callbackLocks: new Map(),

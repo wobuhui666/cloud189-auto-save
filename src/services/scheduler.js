@@ -6,6 +6,10 @@ const { MessageUtil } = require('./message');
 class SchedulerService {
     static taskJobs = new Map();
     static messageUtil = new MessageUtil();
+    static hdhiveCheckinState = {
+        date: null,
+        scheduledAt: null
+    };
 
     static async initTaskJobs(taskRepo, taskService) {
         // 初始化所有启用定时任务的任务
@@ -85,11 +89,8 @@ class SchedulerService {
         try {
             const hdhiveEnabled = ConfigService.getConfigValue('hdhive.enabled');
             const checkinEnabled = ConfigService.getConfigValue('hdhive.checkin.enabled');
-            const checkinCron = ConfigService.getConfigValue('hdhive.checkin.cron');
-            if (hdhiveEnabled && checkinEnabled && checkinCron) {
-                this.saveDefaultTaskJob('影巢自动签到', checkinCron, async () => {
-                    await SchedulerService.runHdhiveCheckin();
-                });
+            if (hdhiveEnabled && checkinEnabled) {
+                this.refreshHdhiveCheckinJob();
             }
         } catch (err) {
             logTaskEvent(`[影巢] 初始化自动签到失败: ${err.message || err}`);
@@ -169,6 +170,122 @@ class SchedulerService {
         this.taskJobs.set(name, job);
         logTaskEvent(`定时任务 ${name}, 表达式: ${cronExpression} 已设置`)
         return job;
+    }
+
+    static refreshHdhiveCheckinJob(snapshot = null) {
+        const hdhiveEnabled = snapshot?.hdhiveEnabled ?? !!ConfigService.getConfigValue('hdhive.enabled');
+        const checkinConfig = snapshot?.checkinConfig || ConfigService.getConfigValue('hdhive.checkin', {}) || {};
+        const enabled = hdhiveEnabled && !!checkinConfig.enabled;
+        const randomTimeEnabled = checkinConfig.randomTimeEnabled === true;
+        const cronExpression = checkinConfig.cron;
+        const randomWindowStart = checkinConfig.randomWindowStart;
+        const randomWindowEnd = checkinConfig.randomWindowEnd;
+
+        this.removeTaskJob('影巢自动签到');
+        this.hdhiveCheckinState = {
+            date: null,
+            scheduledAt: null
+        };
+
+        if (!enabled) {
+            return;
+        }
+
+        if (randomTimeEnabled) {
+            const window = this.getHdhiveRandomWindow(randomWindowStart, randomWindowEnd);
+            if (!window) {
+                logTaskEvent('[影巢] 自动签到随机时间窗口无效，跳过设置');
+                return;
+            }
+            this.saveDefaultTaskJob('影巢自动签到', '* * * * *', async () => {
+                await SchedulerService.runHdhiveCheckinByRandomWindow(window);
+            });
+            logTaskEvent(`[影巢] 自动签到随机时间已启用，窗口: ${window.startLabel}-${window.endLabel}`);
+            return;
+        }
+
+        if (!cronExpression) {
+            logTaskEvent('[影巢] 自动签到 Cron 为空，跳过设置');
+            return;
+        }
+        this.saveDefaultTaskJob('影巢自动签到', cronExpression, async () => {
+            await SchedulerService.runHdhiveCheckin();
+        });
+    }
+
+    static getTodayDateKey() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    static parseTimeWindowValue(value) {
+        const match = /^(\d{1,2}):(\d{2})$/.exec(String(value || '').trim());
+        if (!match) {
+            return null;
+        }
+        const hour = Number(match[1]);
+        const minute = Number(match[2]);
+        if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+            return null;
+        }
+        return {
+            hour,
+            minute,
+            totalMinutes: hour * 60 + minute
+        };
+    }
+
+    static getHdhiveRandomWindow(startValue, endValue) {
+        const start = this.parseTimeWindowValue(startValue);
+        const end = this.parseTimeWindowValue(endValue);
+        if (!start || !end || end.totalMinutes < start.totalMinutes) {
+            return null;
+        }
+        return {
+            startMinutes: start.totalMinutes,
+            endMinutes: end.totalMinutes,
+            startLabel: `${String(start.hour).padStart(2, '0')}:${String(start.minute).padStart(2, '0')}`,
+            endLabel: `${String(end.hour).padStart(2, '0')}:${String(end.minute).padStart(2, '0')}`
+        };
+    }
+
+    static createRandomTimeForToday(totalMinutes) {
+        const scheduledAt = new Date();
+        scheduledAt.setHours(Math.floor(totalMinutes / 60), totalMinutes % 60, 0, 0);
+        return scheduledAt;
+    }
+
+    static getOrCreateTodayHdhiveCheckinTime(window) {
+        const dateKey = this.getTodayDateKey();
+        if (this.hdhiveCheckinState.date === dateKey && this.hdhiveCheckinState.scheduledAt instanceof Date) {
+            return this.hdhiveCheckinState.scheduledAt;
+        }
+        const range = window.endMinutes - window.startMinutes;
+        const offset = Math.floor(Math.random() * (range + 1));
+        const scheduledAt = this.createRandomTimeForToday(window.startMinutes + offset);
+        this.hdhiveCheckinState = {
+            date: dateKey,
+            scheduledAt
+        };
+        logTaskEvent(`[影巢] 今日自动签到随机时间: ${scheduledAt.toLocaleString('zh-CN', { hour12: false })}`);
+        return scheduledAt;
+    }
+
+    static async runHdhiveCheckinByRandomWindow(window) {
+        const scheduledAt = this.getOrCreateTodayHdhiveCheckinTime(window);
+        const now = new Date();
+        if (now < scheduledAt) {
+            return { success: false, skipped: true, reason: 'not_due_yet' };
+        }
+        const result = await this.runHdhiveCheckin();
+        this.hdhiveCheckinState = {
+            date: this.getTodayDateKey(),
+            scheduledAt: new Date(now.getTime() + 24 * 60 * 60 * 1000)
+        };
+        return result;
     }
 
     static removeTaskJob(taskId) {
@@ -290,17 +407,39 @@ class SchedulerService {
 
         // 影巢自动签到 cron / 开关变更（注意：本方法在 ConfigService.setConfig 之前调用，getConfigValue 取到的是旧值）
         if (settings.hdhive) {
-            const checkinNew = settings.hdhive.checkin || {};
-            const currentEnabled = !!ConfigService.getConfigValue('hdhive.enabled') && !!ConfigService.getConfigValue('hdhive.checkin.enabled');
-            const nextEnabled = !!settings.hdhive.enabled && !!checkinNew.enabled;
-            handleScheduleTask(
-                currentEnabled,
-                nextEnabled,
-                ConfigService.getConfigValue('hdhive.checkin.cron'),
-                checkinNew.cron,
-                '影巢自动签到',
-                async () => SchedulerService.runHdhiveCheckin()
-            );
+            const currentCheckin = ConfigService.getConfigValue('hdhive.checkin', {}) || {};
+            const nextCheckin = settings.hdhive.checkin || {};
+            const currentEnabled = !!ConfigService.getConfigValue('hdhive.enabled') && !!currentCheckin.enabled;
+            const nextEnabled = !!settings.hdhive.enabled && !!nextCheckin.enabled;
+            const currentRandom = currentCheckin.randomTimeEnabled === true;
+            const nextRandom = nextCheckin.randomTimeEnabled === true;
+            const currentStart = currentCheckin.randomWindowStart || '';
+            const currentEnd = currentCheckin.randomWindowEnd || '';
+            const nextStart = nextCheckin.randomWindowStart || '';
+            const nextEnd = nextCheckin.randomWindowEnd || '';
+            const currentCron = currentCheckin.cron || '';
+            const nextCron = nextCheckin.cron || '';
+            const shouldRefresh = currentEnabled !== nextEnabled
+                || currentRandom !== nextRandom
+                || (!nextRandom && currentCron !== nextCron)
+                || (nextRandom && (currentStart !== nextStart || currentEnd !== nextEnd));
+
+            if (!nextEnabled) {
+                this.removeTaskJob('影巢自动签到');
+                this.hdhiveCheckinState = {
+                    date: null,
+                    scheduledAt: null
+                };
+            } else if (shouldRefresh) {
+                const mergedCheckin = {
+                    ...currentCheckin,
+                    ...nextCheckin
+                };
+                this.refreshHdhiveCheckinJob({
+                    hdhiveEnabled: !!settings.hdhive.enabled,
+                    checkinConfig: mergedCheckin
+                });
+            }
         }
         return true;
     }

@@ -130,6 +130,8 @@ function helpText() {
         `/cancel - 取消当前操作\n\n` +
         `🔍 ${bold('搜索与追剧')}\n` +
         `/search_cs - 搜索CloudSaver资源\n` +
+        `/hdhive [关键字] - 搜索影巢资源\n` +
+        `/hdhive_checkin - 影巢签到\n` +
         `/series 剧名 [年份] - 自动追剧(正常任务)\n` +
         `/lazy_series 剧名 [年份] - 自动追剧(懒转存STRM)\n\n` +
         `📝 ${bold('任务操作')}\n` +

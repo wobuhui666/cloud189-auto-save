@@ -12,6 +12,7 @@ const { TMDBService } = require('../tmdb');
 const { AutoSeriesService } = require('../autoSeries');
 const { LazyShareStrmService } = require('../lazyShareStrm');
 const { default: cloudSaverSDK } = require('../../sdk/cloudsaver/sdk');
+const hdhiveSDK = require('../../sdk/hdhive/sdk').default;
 const ProxyUtil = require('../../utils/ProxyUtil');
 const cloud189Utils = require('../../utils/Cloud189Utils');
 const path = require('path');
@@ -40,6 +41,7 @@ class TelegramBotService {
         this.lazyShareStrmService = new LazyShareStrmService(this.accountRepo, this.taskService);
         this.autoSeriesService = new AutoSeriesService(this.taskService, this.accountRepo, this.lazyShareStrmService);
         this.cloudSaverSdk = cloudSaverSDK;
+        this.hdhiveSdk = hdhiveSDK;
         this.tmdbService = new TMDBService();
         this.cloud189Utils = cloud189Utils;
         this.Cloud189Service = Cloud189Service;
@@ -94,6 +96,8 @@ class TelegramBotService {
             { command: 'start', description: '首次使用引导' },
             { command: 'help', description: '帮助信息' },
             { command: 'search_cs', description: '搜索CloudSaver资源' },
+            { command: 'hdhive', description: '搜索影巢资源' },
+            { command: 'hdhive_checkin', description: '影巢签到' },
             { command: 'pt_search', description: '搜索PT站点资源' },
             { command: 'series', description: '自动追剧(正常任务)' },
             { command: 'lazy_series', description: '自动追剧(懒转存STRM)' },

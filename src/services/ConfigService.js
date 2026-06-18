@@ -171,7 +171,10 @@ class ConfigService {
         checkin: {
           enabled: false,
           cron: '35 8 * * *',
-          autoVerify: true
+          autoVerify: true,
+          randomTimeEnabled: false,
+          randomWindowStart: '08:00',
+          randomWindowEnd: '09:00'
         },
         accessToken: '',
         refreshToken: '',

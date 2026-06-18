@@ -27,6 +27,9 @@ const CB = {
     PT_SUB_REFRESH: 'px',      // PT 订阅刷新
     PT_RELEASE_RETRY: 'pk',    // PT Release 重试
     PT_RELEASE_DEL: 'pd',      // PT Release 删除
+    HDHIVE_UNLOCK: 'hu',       // 影巢资源解锁确认
+    HDHIVE_ITEM: 'hi',         // 影巢搜索结果选择
+    HDHIVE_RESOURCE: 'hr',     // 影巢资源选择
 };
 
 // 任务状态枚举

@@ -171,6 +171,9 @@ interface SettingsData {
       enabled: boolean;
       cron: string;
       autoVerify: boolean;
+      randomTimeEnabled: boolean;
+      randomWindowStart: string;
+      randomWindowEnd: string;
     };
   };
 }
@@ -236,7 +239,10 @@ const initialSettings: SettingsData = {
     checkin: {
       enabled: false,
       cron: '35 8 * * *',
-      autoVerify: true
+      autoVerify: true,
+      randomTimeEnabled: false,
+      randomWindowStart: '08:00',
+      randomWindowEnd: '09:00'
     }
   }
 };
@@ -1204,14 +1210,13 @@ const SettingsTab: React.FC = () => {
               {settings.hdhive.checkin.enabled && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">签到 Cron</label>
-                    <input
-                      type="text"
-                      value={settings.hdhive.checkin.cron}
-                      onChange={(e) => updateSettings('hdhive.checkin.cron', e.target.value)}
-                      className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                      placeholder="35 8 * * *（默认每天 08:35）"
-                    />
+                    <div className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3">
+                      <div>
+                        <div className="text-sm font-medium text-slate-700">随机签到时间</div>
+                        <div className="mt-1 text-xs text-slate-500">开启后每天在时间窗口内随机一次，关闭后按固定 Cron 执行。</div>
+                      </div>
+                      <Switch checked={settings.hdhive.checkin.randomTimeEnabled} onChange={(v) => updateSettings('hdhive.checkin.randomTimeEnabled', v)} />
+                    </div>
                   </div>
                   <div className="flex items-end">
                     <div className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3">
@@ -1222,6 +1227,39 @@ const SettingsTab: React.FC = () => {
                       <Switch checked={settings.hdhive.checkin.autoVerify} onChange={(v) => updateSettings('hdhive.checkin.autoVerify', v)} />
                     </div>
                   </div>
+                  {settings.hdhive.checkin.randomTimeEnabled ? (
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">开始时间</label>
+                        <input
+                          type="time"
+                          value={settings.hdhive.checkin.randomWindowStart}
+                          onChange={(e) => updateSettings('hdhive.checkin.randomWindowStart', e.target.value)}
+                          className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-700">结束时间</label>
+                        <input
+                          type="time"
+                          value={settings.hdhive.checkin.randomWindowEnd}
+                          onChange={(e) => updateSettings('hdhive.checkin.randomWindowEnd', e.target.value)}
+                          className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">签到 Cron</label>
+                      <input
+                        type="text"
+                        value={settings.hdhive.checkin.cron}
+                        onChange={(e) => updateSettings('hdhive.checkin.cron', e.target.value)}
+                        className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                        placeholder="35 8 * * *（默认每天 08:35）"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>

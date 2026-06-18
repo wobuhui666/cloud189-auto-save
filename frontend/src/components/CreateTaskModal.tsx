@@ -150,11 +150,43 @@ const readLastTargetFolder = () => {
   }
 };
 
+// 记忆「启用刮削」那一行的开关偏好（不含定时任务），仅新建任务时生效
+const TASK_TOGGLE_PREFS_KEY = 'lastTaskTogglePrefs';
+const TASK_TOGGLE_PREFS_FIELDS = [
+  'enableTaskScraper',
+  'enableLazyStrm',
+  'enableOrganizer',
+  'keepCasAfterRestore'
+] as const;
+
+const readLastTaskTogglePrefs = () => {
+  const raw = localStorage.getItem(TASK_TOGGLE_PREFS_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const prefs: Partial<Record<string, boolean>> = {};
+    for (const field of TASK_TOGGLE_PREFS_FIELDS) {
+      if (typeof parsed[field] === 'boolean') {
+        prefs[field] = parsed[field];
+      }
+    }
+    return prefs;
+  } catch (error) {
+    localStorage.removeItem(TASK_TOGGLE_PREFS_KEY);
+    return null;
+  }
+};
+
 const createInitialFormData = (initialData?: TaskInitialData | null): TaskFormData => {
   const savedTarget = readLastTargetFolder();
+  const savedToggles = readLastTaskTogglePrefs();
   const baseData: TaskFormData = {
     ...EMPTY_FORM_DATA,
-    ...(savedTarget || {})
+    ...(savedTarget || {}),
+    ...(savedToggles || {})
   };
 
   if (!initialData) {
@@ -236,6 +268,28 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
     fetchAccounts(nextFormData.accountId);
     fetchRegexPresets();
   }, [isOpen, initialData]);
+
+  // 新建任务时，把「启用刮削」那一行的开关偏好持久化，供下次记忆
+  useEffect(() => {
+    if (isEditing) {
+      return;
+    }
+    localStorage.setItem(
+      TASK_TOGGLE_PREFS_KEY,
+      JSON.stringify({
+        enableTaskScraper: formData.enableTaskScraper,
+        enableLazyStrm: formData.enableLazyStrm,
+        enableOrganizer: formData.enableOrganizer,
+        keepCasAfterRestore: formData.keepCasAfterRestore
+      })
+    );
+  }, [
+    isEditing,
+    formData.enableTaskScraper,
+    formData.enableLazyStrm,
+    formData.enableOrganizer,
+    formData.keepCasAfterRestore
+  ]);
 
   const fetchAccounts = async (preferredAccountId?: string) => {
     try {

@@ -28,6 +28,12 @@ async function handleShareLink(svc, msg) {
         await send(svc.bot, chatId, '检测到分享链接，已自动退出搜索模式');
     }
 
+    if (session.hdhive.active) {
+        const hdhiveHandler = require('./hdhive');
+        hdhiveHandler.clearHdhiveState(session);
+        await send(svc.bot, chatId, '检测到分享链接，已自动退出影巢搜索模式');
+    }
+
     if (!svc.checkAccount(chatId)) {
         await send(svc.bot, chatId, '请先使用 /accounts 选择账号');
         return;
@@ -43,7 +49,7 @@ async function handleShareLink(svc, msg) {
 }
 
 // ─── 处理分享链接（供搜索编号选择复用） ───
-async function processShareLink(svc, chatId, shareLink, accessCode) {
+async function processShareLink(svc, chatId, shareLink, accessCode, options = {}) {
     const session = svc.sessionStore.get(chatId);
 
     const folders = await svc.commonFolderRepo.find({
@@ -64,18 +70,23 @@ async function processShareLink(svc, chatId, shareLink, accessCode) {
     // 缓存分享信息到会话
     session.pendingShare.link = shareLink;
     session.pendingShare.accessCode = accessCode;
+    session.pendingShare.taskName = options.taskName ? String(options.taskName).trim() : null;
+    session.pendingShare.tmdbId = options.tmdbId ? String(options.tmdbId).trim() : null;
 
     // 解析链接获取资源名
     await typing(svc.bot, chatId);
-    let taskName = '';
-    try {
-        const shareFolders = await svc.taskService.parseShareFolderByShareLink(
-            shareLink, session.account.id, accessCode
-        );
-        taskName = shareFolders[0].name;
-    } catch (e) {
-        await send(svc.bot, chatId, friendlyError(e));
-        return;
+    let taskName = session.pendingShare.taskName || '';
+    if (!taskName) {
+        try {
+            const shareFolders = await svc.taskService.parseShareFolderByShareLink(
+                shareLink, session.account.id, accessCode
+            );
+            taskName = shareFolders[0].name;
+            session.pendingShare.taskName = taskName;
+        } catch (e) {
+            await send(svc.bot, chatId, friendlyError(e));
+            return;
+        }
     }
 
     // ─── 静默模式：直接使用默认目录 ───
@@ -120,20 +131,23 @@ async function processShareLink(svc, chatId, shareLink, accessCode) {
 // ─── 静默模式直接创建任务 ───
 async function createTaskDirectly(svc, chatId, folderId, taskName) {
     const session = svc.sessionStore.get(chatId);
-    const { link: shareLink, accessCode } = session.pendingShare;
+    const { link: shareLink, accessCode, tmdbId } = session.pendingShare;
 
     try {
-        const task = await svc.taskService.createTask({
+        const tasks = await svc.taskService.createTask({
             accountId: session.account.id,
             shareLink,
             accessCode: accessCode || undefined,
             targetFolderId: folderId,
+            taskName: taskName || undefined,
+            tmdbId: tmdbId || undefined,
         });
 
-        await send(svc.bot, chatId, `✅ 任务已创建: ${bold(taskName)}\n任务ID: ${task.id}`);
+        const firstTask = Array.isArray(tasks) ? tasks[0] : tasks;
+        await send(svc.bot, chatId, `✅ 任务已创建: ${bold(taskName)}\n任务ID: ${firstTask?.id || '-'}`);
 
         // 清理会话
-        session.pendingShare = { link: null, accessCode: null };
+        session.pendingShare = { link: null, accessCode: null, taskName: null, tmdbId: null };
     } catch (e) {
         await send(svc.bot, chatId, `❌ 创建任务失败: ${escapeHtml(e.message)}`);
     }

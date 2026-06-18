@@ -267,6 +267,8 @@ async function handleCreateTask(svc, chatId, data, messageId) {
             tgbot: true,
             overwriteFolder: data?.o,
             accessCode: session.pendingShare.accessCode,
+            taskName: session.pendingShare.taskName || undefined,
+            tmdbId: session.pendingShare.tmdbId || undefined,
         };
 
         const tasks = await svc.taskService.createTask(taskDto);
@@ -284,6 +286,8 @@ async function handleCreateTask(svc, chatId, data, messageId) {
         // 清空缓存
         session.pendingShare.link = null;
         session.pendingShare.accessCode = null;
+        session.pendingShare.taskName = null;
+        session.pendingShare.tmdbId = null;
     } catch (error) {
         if (error.message && error.message.includes('folder already exists')) {
             const keyboard = [
@@ -295,6 +299,8 @@ async function handleCreateTask(svc, chatId, data, messageId) {
             await edit(svc.bot, chatId, messageId, friendlyError(error));
             session.pendingShare.link = null;
             session.pendingShare.accessCode = null;
+            session.pendingShare.taskName = null;
+            session.pendingShare.tmdbId = null;
         }
     }
 }
