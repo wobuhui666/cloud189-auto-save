@@ -21,22 +21,30 @@
     --nav-active-text: #001d35;
     --modal-bg: #f8fafd;
     --modal-border: #e2e8f0;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
   }
 
   .dark {
-    --bg-surface: #0f172a;
-    --bg-main: #1e293b;
+    --bg-surface: #0a0f1a;
+    --bg-main: #111827;
     --text-primary: #f1f5f9;
     --text-secondary: #94a3b8;
-    --border-color: #334155;
+    --border-color: #1e293b;
     --nav-active-bg: #0b57d0;
     --nav-active-text: #ffffff;
     --modal-bg: #0f172a;
-    --modal-border: #334155;
+    --modal-border: #1e293b;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.6), 0 8px 10px -6px rgb(0 0 0 / 0.5);
   }
 
   body {
-    @apply bg-[var(--bg-surface)] text-[var(--text-primary)] antialiased transition-colors duration-200;
+    @apply bg-[var(--bg-surface)] text-[var(--text-primary)] antialiased transition-colors duration-300;
   }
 }
 
@@ -45,19 +53,28 @@
 }
 
 .glass-panel {
-  @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-sm dark:bg-slate-800/80 dark:border-slate-700/30;
+  @apply bg-white/90 backdrop-blur-xl border border-white/30 shadow-lg dark:bg-slate-800/90 dark:border-slate-700/40;
+}
+
+.card-hover {
+  @apply transition-all duration-300 hover:shadow-xl hover:-translate-y-1;
+}
+
+.nav-item-hover {
+  @apply transition-all duration-200 hover:scale-[1.02] active:scale-[0.98];
 }
 
 /* Scrollbar styles */
 @layer utilities {
   .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
     @apply bg-transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-slate-200 rounded-full dark:bg-slate-700;
+    @apply bg-slate-300 rounded-full hover:bg-slate-400 dark:bg-slate-600 dark:hover:bg-slate-500;
+    transition: background-color 0.2s;
   }
 
   .scrollbar-hide {
@@ -66,6 +83,31 @@
   }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+
+  /* 渐变文字 */
+  .text-gradient {
+    @apply bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent dark:from-blue-400 dark:to-cyan-300;
+  }
+
+  /* 浮动动画 */
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  /* 脉冲光晕 */
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 20px rgba(11, 87, 208, 0.3); }
+    50% { box-shadow: 0 0 40px rgba(11, 87, 208, 0.6); }
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
   }
 }
 

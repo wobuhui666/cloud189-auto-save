@@ -80,6 +80,39 @@ class SchedulerService {
         } catch (err) {
             logTaskEvent(`[PT] 初始化定时任务失败: ${err.message || err}`);
         }
+
+        // 7. 影巢自动签到
+        try {
+            const hdhiveEnabled = ConfigService.getConfigValue('hdhive.enabled');
+            const checkinEnabled = ConfigService.getConfigValue('hdhive.checkin.enabled');
+            const checkinCron = ConfigService.getConfigValue('hdhive.checkin.cron');
+            if (hdhiveEnabled && checkinEnabled && checkinCron) {
+                this.saveDefaultTaskJob('影巢自动签到', checkinCron, async () => {
+                    await SchedulerService.runHdhiveCheckin();
+                });
+            }
+        } catch (err) {
+            logTaskEvent(`[影巢] 初始化自动签到失败: ${err.message || err}`);
+        }
+    }
+
+    // 影巢自动签到执行体
+    static async runHdhiveCheckin() {
+        try {
+            const hdhiveSDK = require('../sdk/hdhive/sdk').default;
+            const result = await hdhiveSDK.checkinByBridge();
+            const message = result.message || (result.success ? '影巢自动签到：签到成功' : `影巢自动签到失败：${result.error || '未知错误'}`);
+            logTaskEvent(`[影巢] ${message}`);
+            try {
+                SchedulerService.messageUtil.sendMessage(message, { level: result.success ? 'success' : 'error' });
+            } catch (pushErr) {
+                logTaskEvent(`[影巢] 签到结果推送失败: ${pushErr.message || pushErr}`);
+            }
+            return result;
+        } catch (err) {
+            logTaskEvent(`[影巢] 自动签到异常: ${err.message || err}`);
+            return { success: false, error: err.message || String(err) };
+        }
     }
 
     static async initStrmConfigJobs(strmConfigRepo, strmConfigService) {
@@ -253,6 +286,21 @@ class SchedulerService {
                 const { resetDownloader } = require('./downloader');
                 resetDownloader();
             } catch (_) {}
+        }
+
+        // 影巢自动签到 cron / 开关变更（注意：本方法在 ConfigService.setConfig 之前调用，getConfigValue 取到的是旧值）
+        if (settings.hdhive) {
+            const checkinNew = settings.hdhive.checkin || {};
+            const currentEnabled = !!ConfigService.getConfigValue('hdhive.enabled') && !!ConfigService.getConfigValue('hdhive.checkin.enabled');
+            const nextEnabled = !!settings.hdhive.enabled && !!checkinNew.enabled;
+            handleScheduleTask(
+                currentEnabled,
+                nextEnabled,
+                ConfigService.getConfigValue('hdhive.checkin.cron'),
+                checkinNew.cron,
+                '影巢自动签到',
+                async () => SchedulerService.runHdhiveCheckin()
+            );
         }
         return true;
     }

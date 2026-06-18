@@ -167,6 +167,11 @@ interface SettingsData {
       token: string;
       hasToken?: boolean;
     };
+    checkin: {
+      enabled: boolean;
+      cron: string;
+      autoVerify: boolean;
+    };
   };
 }
 
@@ -227,6 +232,11 @@ const initialSettings: SettingsData = {
       enabled: false,
       baseUrl: '',
       token: ''
+    },
+    checkin: {
+      enabled: false,
+      cron: '35 8 * * *',
+      autoVerify: true
     }
   }
 };
@@ -309,6 +319,10 @@ const SettingsTab: React.FC = () => {
               ...initialSettings.hdhive.browserBridge,
               ...(loaded.hdhive?.browserBridge || {}),
               token: ''
+            },
+            checkin: {
+              ...initialSettings.hdhive.checkin,
+              ...(loaded.hdhive?.checkin || {})
             }
           },
           telegram: {
@@ -1178,6 +1192,38 @@ const SettingsTab: React.FC = () => {
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
                 placeholder="Next-Action ID，影巢部署轮换后可在这里更新"
               />
+            </div>
+            <div className="space-y-3 md:col-span-2">
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
+                <div>
+                  <div className="text-sm font-medium text-slate-700">每日自动签到</div>
+                  <div className="mt-1 text-xs text-slate-500">依赖 Browser Bridge 签名模式，按下方 Cron 定时调用影巢签到接口并推送积分结果。</div>
+                </div>
+                <Switch checked={settings.hdhive.checkin.enabled} onChange={(v) => updateSettings('hdhive.checkin.enabled', v)} />
+              </div>
+              {settings.hdhive.checkin.enabled && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">签到 Cron</label>
+                    <input
+                      type="text"
+                      value={settings.hdhive.checkin.cron}
+                      onChange={(e) => updateSettings('hdhive.checkin.cron', e.target.value)}
+                      className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                      placeholder="35 8 * * *（默认每天 08:35）"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <div className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3">
+                      <div>
+                        <div className="text-sm font-medium text-slate-700">自动过人机校验</div>
+                        <div className="mt-1 text-xs text-slate-500">遇到 space_captcha 时让 Bridge 浏览器侧自动验证。</div>
+                      </div>
+                      <Switch checked={settings.hdhive.checkin.autoVerify} onChange={(v) => updateSettings('hdhive.checkin.autoVerify', v)} />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

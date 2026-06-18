@@ -353,12 +353,55 @@ class HdhiveSDK {
         return { success: true, data: this.unwrapBridgePayload(result.data?.payload) };
     }
 
-    async checkinByBridge() {
-        const result = await this.bridgeRequest('/hdhive/customer/checkin', { method: 'POST' });
+    private get checkinAutoVerify(): boolean {
+        return ConfigService.getConfigValue('hdhive.checkin.autoVerify') !== false;
+    }
+
+    async checkinByBridge(options: { autoVerify?: boolean } = {}) {
+        const autoVerify = options.autoVerify ?? this.checkinAutoVerify;
+        const result = await this.bridgeRequest('/hdhive/customer/checkin', {
+            method: 'POST',
+            // bridge 文档：可选 autoVerify=true 让浏览器侧自动处理 space_captcha 人机校验
+            ...(autoVerify ? { searchParams: { autoVerify: true } } : {})
+        });
         if (!result.success) {
-            return result;
+            return { success: false, error: result.error, message: `影巢签到失败：${result.error || '未知错误'}` };
         }
-        return { success: true, data: this.unwrapBridgePayload(result.data?.payload) };
+        const data = this.unwrapBridgePayload(result.data?.payload);
+        return { success: true, data, message: this.summarizeCheckin(data) };
+    }
+
+    private summarizeCheckin(data: any): string {
+        const payload = this.unwrapBridgePayload(data) || {};
+        const pick = (...keys: string[]): any => {
+            for (const key of keys) {
+                const value = (payload as any)?.[key];
+                if (value !== undefined && value !== null && value !== '') {
+                    return value;
+                }
+            }
+            return null;
+        };
+        const delta = pick('pointsDelta', 'points_delta', 'pointsChange', 'points_change', 'gain', 'reward');
+        const current = pick('currentPoints', 'current_points', 'points', 'balance', 'total_points');
+        const serialized = JSON.stringify(payload || {});
+        const already = payload.already === true
+            || payload.alreadyCheckedIn === true
+            || payload.repeated === true
+            || /已签到|今日已|重复签到|already/i.test(serialized);
+        const parts: string[] = [already ? '今日已签到' : '签到成功'];
+        if (delta !== null && delta !== undefined && Number(delta) !== 0) {
+            const numericDelta = Number(delta);
+            parts.push(`本次 ${numericDelta > 0 ? '+' : ''}${Number.isFinite(numericDelta) ? numericDelta : delta} 积分`);
+        }
+        if (current !== null && current !== undefined) {
+            parts.push(`当前 ${current} 积分`);
+        }
+        const message = pick('message', 'msg', 'description');
+        if (message && parts.length === 1) {
+            parts.push(String(message));
+        }
+        return `影巢自动签到：${parts.join('，')}`;
     }
 
     async getPointsLogsByBridge(searchParams: Record<string, string | number | boolean> = {}) {

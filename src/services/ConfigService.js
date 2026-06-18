@@ -168,6 +168,11 @@ class ConfigService {
           baseUrl: process.env.HDHIVE_BROWSER_BRIDGE_URL || '',
           token: process.env.HDHIVE_BROWSER_BRIDGE_TOKEN || ''
         },
+        checkin: {
+          enabled: false,
+          cron: '35 8 * * *',
+          autoVerify: true
+        },
         accessToken: '',
         refreshToken: '',
         tokenExpiresAt: null

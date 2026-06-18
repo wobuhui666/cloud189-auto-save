@@ -89,6 +89,7 @@ export default function App() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [ptPrefill, setPtPrefill] = useState<PtPrefillData | null>(null);
+  const [scrolled, setScrolled] = useState(false);
 
   const resolvedTheme = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -152,6 +153,23 @@ export default function App() {
 
     localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [isDarkMode, themeMode]);
+
+  // 监听滚动以实现顶栏动态效果
+  useEffect(() => {
+    const handleScroll = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.classList.contains('content-scrollable')) {
+        setScrolled(target.scrollTop > 20);
+      }
+    };
+
+    const scrollContainer = document.querySelector('.content-scrollable');
+    scrollContainer?.addEventListener('scroll', handleScroll);
+
+    return () => {
+      scrollContainer?.removeEventListener('scroll', handleScroll);
+    };
+  }, [activeTab]);
 
   const themeOptions: Array<{ value: ThemeMode; label: string; description: string; icon: any }> = [
     { value: 'light', label: '浅色模式', description: '始终使用浅色外观', icon: Sun },
@@ -243,57 +261,61 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-[var(--bg-surface)] overflow-hidden font-sans transition-colors duration-200">
-      
+    <div className="flex h-screen bg-[var(--bg-surface)] overflow-hidden font-sans transition-colors duration-300">
+
       {/* Mobile Navigation Drawer Overlay */}
       <AnimatePresence>
         {isMobileMenuOpen && (
           <>
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="fixed inset-0 bg-slate-900/40 z-40 md:hidden dark:bg-slate-950/60"
+              className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 md:hidden dark:bg-slate-950/70"
             />
-            <motion.nav 
+            <motion.nav
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', bounce: 0, duration: 0.4 }}
               className="fixed inset-y-0 left-0 w-72 bg-[var(--bg-surface)] flex flex-col z-50 md:hidden shadow-2xl border-r border-[var(--border-color)]"
             >
-              <div className="px-6 py-8">
+              <div className="px-6 py-8 border-b border-[var(--border-color)]">
                 <h1 className="text-2xl font-medium text-[var(--text-primary)]">天翼自动转存</h1>
                 <p className="text-sm text-[var(--text-secondary)] mt-1">{appVersionLabel}</p>
               </div>
-              <div className="flex-1 px-3 space-y-1 overflow-y-auto custom-scrollbar">
+              <div className="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar">
                 {tabs.map(tab => (
-                  <button
+                  <motion.button
                     key={tab.id}
                     onClick={() => {
                       setActiveTab(tab.id);
                       setIsMobileMenuOpen(false);
                     }}
-                    className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-full text-sm font-medium transition-colors ${
-                      activeTab === tab.id 
-                        ? 'bg-[var(--nav-active-bg)] text-[var(--nav-active-text)]' 
-                        : 'text-[var(--text-primary)] hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-full text-sm font-medium transition-all duration-200 ${
+                      activeTab === tab.id
+                        ? 'bg-[var(--nav-active-bg)] text-[var(--nav-active-text)]'
+                        : 'text-[var(--text-primary)] hover:bg-slate-100/80 dark:hover:bg-slate-800/80'
                     }`}
                   >
                     <tab.icon size={22} className={activeTab === tab.id ? 'text-[var(--nav-active-text)]' : 'text-[var(--text-secondary)]'} />
                     {tab.label}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
               <div className="p-4 border-t border-[var(--border-color)]">
-                <button 
+                <motion.button
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-4 px-4 py-3.5 rounded-full text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full flex items-center gap-4 px-4 py-3.5 rounded-full text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all duration-200"
                 >
                   <LogOut size={22} />
                   退出登录
-                </button>
+                </motion.button>
               </div>
             </motion.nav>
           </>
@@ -301,112 +323,150 @@ export default function App() {
       </AnimatePresence>
 
       {/* Desktop Navigation Drawer */}
-      <nav className="w-72 bg-[var(--bg-surface)] flex flex-col hidden md:flex z-10 border-r border-[var(--border-color)]">
-        <div className="px-8 py-8">
+      <nav className="w-72 bg-[var(--bg-surface)] flex flex-col hidden md:flex z-10 border-r border-[var(--border-color)] shadow-lg">
+        <div className="px-8 py-8 border-b border-[var(--border-color)]">
           <h1 className="text-2xl font-medium text-[var(--text-primary)]">天翼自动转存</h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1">{appVersionLabel}</p>
         </div>
-        <div className="flex-1 px-3 space-y-1 overflow-y-auto pb-6 custom-scrollbar">
+        <div className="flex-1 px-3 py-6 space-y-1 overflow-y-auto pb-6 custom-scrollbar">
           {tabs.map(tab => (
-            <button
+            <motion.button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium transition-colors ${
-                activeTab === tab.id 
-                  ? 'bg-[var(--nav-active-bg)] text-[var(--nav-active-text)]' 
-                  : 'text-[var(--text-primary)] hover:bg-slate-200/50 dark:hover:bg-slate-800/50'
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium transition-all duration-200 ${
+                activeTab === tab.id
+                  ? 'bg-[var(--nav-active-bg)] text-[var(--nav-active-text)]'
+                  : 'text-[var(--text-primary)] hover:bg-slate-100/80 dark:hover:bg-slate-800/80'
               }`}
             >
               <tab.icon size={22} className={activeTab === tab.id ? 'text-[var(--nav-active-text)]' : 'text-[var(--text-secondary)]'} />
               {tab.label}
-            </button>
+            </motion.button>
           ))}
         </div>
         <div className="p-4 border-t border-[var(--border-color)]">
-          <button 
+          <motion.button
             onClick={handleLogout}
-            className="w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium text-[var(--text-secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium text-[var(--text-secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200"
           >
             <LogOut size={22} />
             退出登录
-          </button>
+          </motion.button>
         </div>
       </nav>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 h-screen relative bg-[var(--bg-main)] rounded-tl-3xl shadow-sm border-l border-t border-[var(--border-color)] transition-colors duration-200">
-        
+      <main className="flex-1 flex flex-col min-w-0 h-screen relative bg-[var(--bg-main)] rounded-tl-3xl shadow-xl border-l border-t border-[var(--border-color)] transition-colors duration-300">
+
         {/* Top App Bar */}
-        <header className="h-16 flex items-center justify-between px-4 md:px-8 bg-[var(--bg-main)]/80 backdrop-blur-md z-10 sticky top-0 rounded-tl-3xl transition-colors duration-200">
+        <header className={`h-16 flex items-center justify-between px-4 md:px-8 bg-[var(--bg-main)]/95 backdrop-blur-xl z-10 sticky top-0 rounded-tl-3xl transition-all duration-300 ${
+          scrolled ? 'shadow-lg border-b border-[var(--border-color)]' : ''
+        }`}>
           <div className="flex items-center gap-4">
-            <button 
+            <motion.button
               onClick={() => setIsMobileMenuOpen(true)}
-              className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)] md:hidden"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 text-[var(--text-primary)] md:hidden"
             >
               <Menu size={24} />
-            </button>
-            <h2 className="text-2xl font-normal text-[var(--text-primary)]">{activeTabLabel}</h2>
+            </motion.button>
+            <h2 className="text-2xl font-medium text-[var(--text-primary)]">{activeTabLabel}</h2>
           </div>
           <div className="flex items-center gap-2">
             <div className="relative" data-theme-menu>
-              <button
+              <motion.button
                 type="button"
                 onClick={() => setIsThemeMenuOpen((currentState) => !currentState)}
-                className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)]"
+                whileHover={{ scale: 1.05, rotate: 15 }}
+                whileTap={{ scale: 0.95 }}
+                className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 text-[var(--text-primary)]"
                 title={currentThemeLabel}
                 aria-label={`主题模式：${currentThemeLabel}`}
                 aria-haspopup="menu"
                 aria-expanded={isThemeMenuOpen}
               >
                 <ThemeTriggerIcon size={22} />
-              </button>
-              {isThemeMenuOpen && (
-                <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-30">
-                  {themeOptions.map((themeOption) => {
-                    const OptionIcon = themeOption.icon;
-                    const isActive = themeOption.value === themeMode;
+              </motion.button>
+              <AnimatePresence>
+                {isThemeMenuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 top-full mt-2 w-64 rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-xl p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900/95 z-30"
+                  >
+                    {themeOptions.map((themeOption) => {
+                      const OptionIcon = themeOption.icon;
+                      const isActive = themeOption.value === themeMode;
 
-                    return (
-                      <button
-                        key={themeOption.value}
-                        type="button"
-                        onClick={() => handleSelectThemeMode(themeOption.value)}
-                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${
-                          isActive
-                            ? 'bg-[#d3e3fd] text-[#0b57d0] dark:bg-[#0b57d0]/20 dark:text-[#8ab4f8]'
-                            : 'text-[var(--text-primary)] hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        <OptionIcon size={18} className="shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium">{themeOption.label}</div>
-                          <div className="text-xs text-[var(--text-secondary)]">{themeOption.description}</div>
-                        </div>
-                        {isActive && <CheckCircle2 size={16} className="shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                      return (
+                        <motion.button
+                          key={themeOption.value}
+                          type="button"
+                          onClick={() => handleSelectThemeMode(themeOption.value)}
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left transition-all duration-200 ${
+                            isActive
+                              ? 'bg-[#d3e3fd] text-[#0b57d0] shadow-md dark:bg-[#0b57d0]/20 dark:text-[#8ab4f8]'
+                              : 'text-[var(--text-primary)] hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <OptionIcon size={18} className="shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium">{themeOption.label}</div>
+                            <div className="text-xs text-[var(--text-secondary)]">{themeOption.description}</div>
+                          </div>
+                          {isActive && (
+                            <motion.div
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                            >
+                              <CheckCircle2 size={16} className="shrink-0" />
+                            </motion.div>
+                          )}
+                        </motion.button>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-            <button 
+            <motion.button
               onClick={() => setIsAIChatOpen(true)}
-              className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)]"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 text-[var(--text-primary)]"
               title="AI 助手"
             >
               <MessageSquare size={22} />
-            </button>
-            <button className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-[var(--text-primary)]">
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 text-[var(--text-primary)]"
+            >
               <Bell size={22} />
-            </button>
-            <div className="w-9 h-9 rounded-full bg-[#0b57d0] text-white flex items-center justify-center font-medium text-sm ml-2 cursor-pointer hover:shadow-md transition-shadow">
+            </motion.button>
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="w-9 h-9 rounded-full bg-[#0b57d0] text-white flex items-center justify-center font-medium text-sm ml-2 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200"
+            >
               {username ? username.charAt(0).toUpperCase() : 'U'}
-            </div>
+            </motion.div>
           </div>
         </header>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-32 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-32 custom-scrollbar content-scrollable">
           <div className="max-w-6xl mx-auto">
             <AnimatePresence mode="wait">
               <motion.div
@@ -418,9 +478,9 @@ export default function App() {
               >
                 {activeTab === 'account' && <AccountTab />}
                 {activeTab === 'task' && (
-                  <TaskTab 
-                    key={`task-tab-${taskRefreshKey}`} 
-                    onCreateTask={(data) => handleOpenCreateTask(data)} 
+                  <TaskTab
+                    key={`task-tab-${taskRefreshKey}`}
+                    onCreateTask={(data) => handleOpenCreateTask(data)}
                   />
                 )}
                 {activeTab === 'fileManager' && <FileManagerTab />}
