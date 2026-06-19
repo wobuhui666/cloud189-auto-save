@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, RefreshCw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, ChevronDown, Loader2, Wand2, Filter, HardDrive, Users } from 'lucide-react';
+import { Plus, RefreshCw, RotateCcw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, ChevronDown, Loader2, Wand2, Filter, HardDrive, Users } from 'lucide-react';
 import Modal from '../Modal';
 import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
@@ -197,6 +197,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   const [isReleasesOpen, setIsReleasesOpen] = useState(false);
   const [currentSub, setCurrentSub] = useState<PtSubscription | null>(null);
   const [releases, setReleases] = useState<PtRelease[]>([]);
+  const [rebuildingAll, setRebuildingAll] = useState(false);
   const [releasesLoading, setReleasesLoading] = useState(false);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -522,6 +523,35 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       if (d.success) refreshReleases();
       else toast.error('删除失败: ' + d.error);
     } catch { toast.error('网络错误'); }
+  };
+
+  const handleRebuildStrm = async (id: number) => {
+    try {
+      const r = await fetch(`/api/pt/releases/${id}/rebuild-strm`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) toast.success(`STRM 已重建（${d.data?.files ?? 0} 个文件）`);
+      else toast.error('重建失败: ' + d.error);
+    } catch { toast.error('网络错误'); }
+  };
+
+  const handleRebuildAllStrm = async () => {
+    const ok = await dialog.confirm({
+      title: '重建全部 STRM',
+      message: '将从已保存的清单为所有「已完成」的 release 重新生成 STRM（不重新下载/上传，只补回缺失、不动已存在）。若启用 AI 整理会重新消耗 AI 额度。确认继续？',
+      confirmText: '重建',
+    });
+    if (!ok) return;
+    setRebuildingAll(true);
+    try {
+      const r = await fetch('/api/pt/releases/rebuild-strm-all', { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        const s = d.data || {};
+        toast.success(`重建完成：成功 ${s.ok}，跳过 ${s.skipped}，失败 ${s.failed}（共 ${s.total}）`);
+        refreshReleases();
+      } else toast.error('重建失败: ' + d.error);
+    } catch { toast.error('网络错误'); }
+    finally { setRebuildingAll(false); }
   };
 
   const openSettings = async () => {
@@ -942,7 +972,10 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       {/* releases 弹窗 */}
       <Modal isOpen={isReleasesOpen} onClose={() => setIsReleasesOpen(false)} title={`${currentSub?.name || '订阅'} 的 release`}>
         <div className="min-h-[400px]">
-          <div className="flex justify-end mb-3">
+          <div className="flex justify-end gap-2 mb-3">
+            <button onClick={handleRebuildAllStrm} disabled={rebuildingAll} className="px-4 py-2 rounded-full border border-slate-200 text-sm hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50">
+              <RotateCcw size={16} className={rebuildingAll ? 'animate-spin' : ''} /> 重建全部STRM
+            </button>
             <button onClick={refreshReleases} className="px-4 py-2 rounded-full border border-slate-200 text-sm hover:bg-slate-50 flex items-center gap-2">
               <RefreshCw size={16} className={releasesLoading ? 'animate-spin' : ''} /> 刷新
             </button>
@@ -1013,6 +1046,9 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-1">
                         <button onClick={() => handleRetryRelease(rel.id)} className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500" title="重试"><RefreshCw size={14} /></button>
+                        {rel.status === 'completed' && (
+                          <button onClick={() => handleRebuildStrm(rel.id)} className="p-1.5 hover:bg-slate-100 rounded-full text-blue-500" title="重建STRM（不重新下载/上传）"><RotateCcw size={14} /></button>
+                        )}
                         <button onClick={() => handleDeleteRelease(rel.id)} className="p-1.5 hover:bg-slate-100 rounded-full text-red-500" title="删除"><Trash2 size={14} /></button>
                       </div>
                     </td>

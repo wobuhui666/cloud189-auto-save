@@ -864,6 +864,81 @@ class PtService {
         return release;
     }
 
+    // ==================== STRM 重建（不重新下载/上传，仅从已存清单重生成） ====================
+
+    // 重建单个 release 的 STRM
+    async rebuildStrm(releaseId) {
+        if (!ConfigService.getConfigValue('strm.enable')) {
+            throw new Error('STRM 功能未启用，请先在「媒体设置」开启 STRM 后再重建');
+        }
+        const release = await getPtReleaseRepository().findOneBy({ id: Number(releaseId) });
+        if (!release) {
+            throw new Error('release 不存在');
+        }
+        const result = await this._rebuildStrmForRelease(release);
+        if (result.status !== 'ok') {
+            // 单个重建：把跳过原因直接抛给前端
+            throw new Error(result.reason);
+        }
+        return result;
+    }
+
+    // 批量重建所有已完成 release 的 STRM
+    async rebuildAllStrm() {
+        if (!ConfigService.getConfigValue('strm.enable')) {
+            throw new Error('STRM 功能未启用，请先在「媒体设置」开启 STRM 后再重建');
+        }
+        const releases = await getPtReleaseRepository().find({
+            where: { status: STATUS.COMPLETED },
+            order: { id: 'ASC' }
+        });
+        const summary = { total: releases.length, ok: 0, skipped: 0, failed: 0, details: [] };
+        for (const release of releases) {
+            try {
+                const r = await this._rebuildStrmForRelease(release);
+                summary[r.status === 'ok' ? 'ok' : 'skipped']++;
+                summary.details.push({ id: release.id, title: release.title, ...r });
+            } catch (err) {
+                summary.failed++;
+                const reason = String(err.message || err).slice(0, 300);
+                summary.details.push({ id: release.id, title: release.title, status: 'failed', reason });
+                logTaskEvent(`[PT] 重建 STRM 失败 release ${release.id}: ${reason}`);
+            }
+        }
+        logTaskEvent(`[PT] 批量重建 STRM 完成: 共${summary.total} 成功${summary.ok} 跳过${summary.skipped} 失败${summary.failed}`);
+        return summary;
+    }
+
+    // 内部复用：从 manifest 重建单个 release 的 STRM。返回 {status:'ok'|'skipped', reason?, files?}；硬错误向上抛
+    async _rebuildStrmForRelease(release) {
+        if (!release.manifestJson) {
+            return { status: 'skipped', reason: '无 manifest（可能从未上传完成）' };
+        }
+        let manifest;
+        try {
+            manifest = JSON.parse(release.manifestJson);
+        } catch (err) {
+            return { status: 'skipped', reason: 'manifest 解析失败' };
+        }
+        const valid = Array.isArray(manifest) ? manifest.filter(m => m.cloudFileId) : [];
+        if (!valid.length) {
+            return { status: 'skipped', reason: 'manifest 中无有效云盘文件' };
+        }
+        const subscription = await getPtSubscriptionRepository().findOneBy({ id: release.subscriptionId });
+        if (!subscription) {
+            return { status: 'skipped', reason: `找不到订阅 ${release.subscriptionId}` };
+        }
+        const account = await getAccountRepository().findOneBy({ id: subscription.accountId });
+        if (!account) {
+            return { status: 'skipped', reason: `找不到账号 ${subscription.accountId}` };
+        }
+        if (!account.localStrmPrefix) {
+            return { status: 'skipped', reason: '账号未配置本地 STRM 前缀' };
+        }
+        await this._generateStrmForRelease(account, subscription, release, manifest);
+        return { status: 'ok', files: valid.length };
+    }
+
     async deleteRelease(releaseId, deleteLocalFiles = true) {
         const releaseRepo = getPtReleaseRepository();
         const release = await releaseRepo.findOneBy({ id: Number(releaseId) });

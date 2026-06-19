@@ -3059,6 +3059,26 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    // 重建单个 release 的 STRM（不重新下载/上传，仅从已存清单重生成）
+    app.post('/api/pt/releases/:id/rebuild-strm', async (req, res) => {
+        try {
+            const result = await ptService.rebuildStrm(Number(req.params.id));
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 批量重建所有已完成 release 的 STRM
+    app.post('/api/pt/releases/rebuild-strm-all', async (req, res) => {
+        try {
+            const result = await ptService.rebuildAllStrm();
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.delete('/api/pt/releases/:id', async (req, res) => {
         try {
             const deleteFiles = req.query.deleteFiles !== 'false';
