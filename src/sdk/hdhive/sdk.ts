@@ -766,7 +766,12 @@ class HdhiveSDK {
         const enriched: any[] = [];
         for (const resource of resources) {
             const slug = resource.slug || resource.id;
-            if (resource.link || !slug || !resource.isUnlocked) {
+            // 跳过条件：没有 slug 无法补抓；未解锁资源补抓也拿不到 link（影巢页面不渲染）；
+            // 已有 link 且已有 code 时无需补抓。
+            // 关键调整：仅有 link 但缺 code 的已解锁资源，仍需走详情接口解析「访问码」回填。
+            // 详情接口 GET /hdhive/customer/resources/:id 只做 API 查询 + DOM 解析，不消耗积分
+            // （扣分接口是 POST .../unlock，本路径不会触发）。
+            if (!slug || !resource.isUnlocked || (resource.link && resource.code)) {
                 enriched.push(resource);
                 continue;
             }
