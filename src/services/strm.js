@@ -377,7 +377,7 @@ class StrmService {
                 const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
                  // 如果覆盖 则直接删除currentPath
                 if (overwrite) {
-                    this.deleteDir(path.join(account.localStrmPrefix, startPath), true)
+                    await this.deleteDir(path.join(account.localStrmPrefix, startPath))
                 }
                 await this._processDirectory(startPath, account, stats, mediaSuffixs, overwrite);
                 const userrname = account.username.replace(/(.{3}).*(.{4})/, '$1****$2');

@@ -1,6 +1,15 @@
 const got = require('got');
 const ConfigService = require('./ConfigService');
 const ProxyUtil = require('../utils/ProxyUtil');
+const { getTmdbCacheRepository } = require('../database');
+
+const TMDB_CACHE_TTL = {
+    SEARCH: 6 * 60 * 60 * 1000,
+    LIST: 2 * 60 * 60 * 1000,
+    DETAILS: 7 * 24 * 60 * 60 * 1000,
+    DEFAULT: 12 * 60 * 60 * 1000
+};
+
 class TMDBService {
     constructor() {
         this.apiKey = ConfigService.getConfigValue('tmdb.tmdbApiKey') || ConfigService.getConfigValue('tmdb.apiKey');
@@ -9,6 +18,15 @@ class TMDBService {
     }
 
     async _request(endpoint, params = {}) {
+        const cacheParams = {
+            language: params.language ?? this.language,
+            ...params
+        };
+        const cacheKey = this._buildCacheKey(endpoint, cacheParams);
+        const cachedResponse = await this._getCachedResponse(cacheKey);
+        if (cachedResponse) {
+            return cachedResponse;
+        }
         const proxy = ProxyUtil.getProxyAgent('tmdb');
         try {
             // DNS解析开始
@@ -20,12 +38,83 @@ class TMDBService {
                 },
                 ...proxy
             }).json();
+            await this._saveCachedResponse(cacheKey, endpoint, response);
             return response;
         } catch (error) {
             console.error(`TMDB请求失败 [${endpoint}]:`, {
                 message: error.message
             });
             throw error;
+        }
+    }
+
+    _buildCacheKey(endpoint, params = {}) {
+        return `${endpoint}:${this._stableStringify(params)}`;
+    }
+
+    _stableStringify(value) {
+        if (Array.isArray(value)) {
+            return `[${value.map(item => this._stableStringify(item)).join(',')}]`;
+        }
+        if (value && typeof value === 'object') {
+            return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${this._stableStringify(value[key])}`).join(',')}}`;
+        }
+        return JSON.stringify(value);
+    }
+
+    _getCacheCategory(endpoint) {
+        if (/^\/(movie|tv)\/\d+/.test(endpoint) || /\/images$/.test(endpoint)) {
+            return 'details';
+        }
+        if (endpoint.startsWith('/search/')) {
+            return 'search';
+        }
+        if (endpoint.includes('/trending') || endpoint.includes('/discover') || endpoint.includes('/top_rated')) {
+            return 'list';
+        }
+        return 'default';
+    }
+
+    _getCacheTtlMs(endpoint) {
+        const category = this._getCacheCategory(endpoint);
+        if (category === 'details') return TMDB_CACHE_TTL.DETAILS;
+        if (category === 'search') return TMDB_CACHE_TTL.SEARCH;
+        if (category === 'list') return TMDB_CACHE_TTL.LIST;
+        return TMDB_CACHE_TTL.DEFAULT;
+    }
+
+    async _getCachedResponse(cacheKey) {
+        try {
+            const repo = getTmdbCacheRepository();
+            const cached = await repo.findOneBy({ cacheKey });
+            if (!cached) {
+                return null;
+            }
+            if (cached.expiresAt && new Date(cached.expiresAt).getTime() <= Date.now()) {
+                await repo.delete({ id: cached.id });
+                return null;
+            }
+            return JSON.parse(cached.content);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async _saveCachedResponse(cacheKey, endpoint, response) {
+        try {
+            const repo = getTmdbCacheRepository();
+            const existing = await repo.findOneBy({ cacheKey });
+            const category = this._getCacheCategory(endpoint);
+            const payload = {
+                ...(existing || {}),
+                cacheKey,
+                category,
+                content: JSON.stringify(response),
+                expiresAt: new Date(Date.now() + this._getCacheTtlMs(endpoint))
+            };
+            await repo.save(existing ? payload : repo.create(payload));
+        } catch (error) {
+            // 缓存失败不影响 TMDB 主流程
         }
     }
     

@@ -46,7 +46,9 @@ const PASSWORD_HASH_DIGEST = 'sha256';
 const LOGIN_FAILURE_DELAY_MS = Number(process.env.LOGIN_FAILURE_DELAY_MS || 500);
 const LOGIN_RATE_LIMIT_WINDOW_MS = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const LOGIN_RATE_LIMIT_MAX = Number(process.env.LOGIN_RATE_LIMIT_MAX || 10);
+const LOGIN_FAILURE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const loginFailures = new Map();
+let lastLoginFailureCleanupAt = 0;
 
 const normalizeTelegramSettings = (settings = {}) => {
     const normalized = JSON.parse(JSON.stringify(settings || {}));
@@ -184,15 +186,32 @@ const getLoginFailureState = (key) => {
     const now = Date.now();
     const state = loginFailures.get(key);
     if (!state || state.resetAt <= now) {
+        if (state) {
+            loginFailures.delete(key);
+        }
         return { count: 0, resetAt: now + LOGIN_RATE_LIMIT_WINDOW_MS };
     }
     return state;
+};
+
+const cleanupExpiredLoginFailures = () => {
+    const now = Date.now();
+    if (now - lastLoginFailureCleanupAt < LOGIN_FAILURE_CLEANUP_INTERVAL_MS) {
+        return;
+    }
+    lastLoginFailureCleanupAt = now;
+    for (const [key, state] of loginFailures.entries()) {
+        if (!state || state.resetAt <= now) {
+            loginFailures.delete(key);
+        }
+    }
 };
 
 const getLoginRetryAfterSeconds = (req) => {
     if (LOGIN_RATE_LIMIT_MAX <= 0) {
         return 0;
     }
+    cleanupExpiredLoginFailures();
     const state = getLoginFailureState(getLoginRateLimitKey(req));
     if (state.count < LOGIN_RATE_LIMIT_MAX) {
         return 0;
@@ -214,6 +233,44 @@ const recordLoginFailure = (req) => {
 
 const clearLoginFailures = (req) => {
     loginFailures.delete(getLoginRateLimitKey(req));
+};
+
+const getBearerToken = (authorization = '') => {
+    const value = String(authorization || '').trim();
+    const match = value.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1].trim() : '';
+};
+
+const getEmbyWebhookSecret = () => String(
+    process.env.EMBY_WEBHOOK_SECRET || ConfigService.getConfigValue('emby.webhookSecret', '')
+).trim();
+
+const getEmbyWebhookToken = (req) => String(
+    req.headers['x-emby-token']
+    || req.headers['x-webhook-token']
+    || req.headers['x-cloud189-webhook-token']
+    || getBearerToken(req.headers.authorization)
+    || req.query?.token
+    || ''
+).trim();
+
+const authenticateEmbyWebhook = (req, res, next) => {
+    const secret = getEmbyWebhookSecret();
+    if (!secret) {
+        if (ConfigService.getConfigValue('emby.allowUnauthenticatedWebhook', false) === true) {
+            return next();
+        }
+        logTaskEvent('Emby Webhook 已拒绝: 未配置 emby.webhookSecret 或 EMBY_WEBHOOK_SECRET');
+        return res.status(403).send('Forbidden');
+    }
+
+    const token = getEmbyWebhookToken(req);
+    if (token && timingSafeCompare(token, secret)) {
+        return next();
+    }
+
+    logTaskEvent('Emby Webhook 已拒绝: 凭据无效');
+    return res.status(403).send('Forbidden');
 };
 
 const sendLoginFailure = async (req, res, extra = {}) => {
@@ -269,6 +326,12 @@ const redactSettingsForClient = (settings = {}) => {
     } else if (redacted.hdhive?.browserBridge) {
         redacted.hdhive.browserBridge.hasToken = false;
     }
+    if (redacted.emby?.webhookSecret) {
+        redacted.emby.webhookSecret = '';
+        redacted.emby.hasWebhookSecret = true;
+    } else if (redacted.emby) {
+        redacted.emby.hasWebhookSecret = false;
+    }
     return redacted;
 };
 
@@ -290,6 +353,19 @@ const preserveHdhiveSensitiveOnEmptyInput = (settings = {}) => {
                 ...(settings.hdhive.browserBridge || {}),
                 token: nextBridgeToken || ConfigService.getConfigValue('hdhive.browserBridge.token', '')
             }
+        };
+    }
+    return settings;
+};
+
+const preserveEmbySensitiveOnEmptyInput = (settings = {}) => {
+    if (settings.emby) {
+        const currentEmby = ConfigService.getConfigValue('emby', {}) || {};
+        const nextWebhookSecret = String(settings.emby.webhookSecret || '').trim();
+        settings.emby = {
+            ...currentEmby,
+            ...settings.emby,
+            webhookSecret: nextWebhookSecret || ConfigService.getConfigValue('emby.webhookSecret', '')
         };
     }
     return settings;
@@ -1922,8 +1998,10 @@ AppDataSource.initialize().then(async () => {
     })
 
     app.post('/api/settings', async (req, res) => {
-        const settings = preserveHdhiveSensitiveOnEmptyInput(
-            await prepareSettingsForSave(normalizeTelegramSettings(req.body))
+        const settings = preserveEmbySensitiveOnEmptyInput(
+            preserveHdhiveSensitiveOnEmptyInput(
+                await prepareSettingsForSave(normalizeTelegramSettings(req.body))
+            )
         );
         SchedulerService.handleScheduleTasks(settings,taskService);
         ConfigService.setConfig(settings)
@@ -1979,7 +2057,9 @@ AppDataSource.initialize().then(async () => {
     // 保存媒体配置
     app.post('/api/settings/media', async (req, res) => {
         try {
-            const settings = preserveHdhiveSensitiveOnEmptyInput(req.body || {});
+            const settings = preserveEmbySensitiveOnEmptyInput(
+                preserveHdhiveSensitiveOnEmptyInput(req.body || {})
+            );
             // 如果cloudSaver的配置变更 就清空cstoken.json
             if (settings.cloudSaver?.baseUrl != ConfigService.getConfigValue('cloudSaver.baseUrl')
             || settings.cloudSaver?.username != ConfigService.getConfigValue('cloudSaver.username')
@@ -2098,7 +2178,7 @@ AppDataSource.initialize().then(async () => {
     })
     
     // emby 回调
-    app.post('/emby/notify', async (req, res) => {
+    app.post('/emby/notify', authenticateEmbyWebhook, async (req, res) => {
         try {
             await embyService.handleWebhookNotification(req.body);
             res.status(200).send('OK');

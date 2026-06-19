@@ -100,14 +100,24 @@ class PtService {
 
         const items = await this.sourceService.fetchFeedItems(subscription);
 
+        const guids = [...new Set(items.map(item => item.guid).filter(Boolean))];
+        const existingReleases = guids.length
+            ? await releaseRepo.find({
+                where: {
+                    subscriptionId: subscription.id,
+                    guid: In(guids)
+                }
+            })
+            : [];
+        const seenGuids = new Set(existingReleases.map(release => release.guid));
         const newReleases = [];
         for (const item of items) {
             if (!item.guid) continue;
-            const exists = await releaseRepo.findOneBy({ subscriptionId: subscription.id, guid: item.guid });
-            if (exists) continue;
+            if (seenGuids.has(item.guid)) continue;
             if (!matchReleaseFilters(item, subscription)) {
                 continue;
             }
+            seenGuids.add(item.guid);
             newReleases.push(item);
         }
 

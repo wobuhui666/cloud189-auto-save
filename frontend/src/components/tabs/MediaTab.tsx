@@ -13,7 +13,8 @@ import {
   Edit3,
   Settings,
   AlertCircle,
-  Zap
+  Zap,
+  Key
 } from 'lucide-react';
 import Modal from '../Modal';
 import Checkbox from '../ui/Checkbox';
@@ -30,6 +31,9 @@ interface MediaSettings {
     enable: boolean;
     serverUrl: string;
     apiKey: string;
+    webhookSecret: string;
+    hasWebhookSecret?: boolean;
+    allowUnauthenticatedWebhook: boolean;
     proxy: {
       enable: boolean;
       port: number;
@@ -104,6 +108,9 @@ const initialSettings: MediaSettings = {
     enable: false,
     serverUrl: '',
     apiKey: '',
+    webhookSecret: '',
+    hasWebhookSecret: false,
+    allowUnauthenticatedWebhook: false,
     proxy: { enable: false, port: 8097 },
     prewarm: { enable: false, sessionPollIntervalMs: 30000, dedupeTtlMs: 300000 }
   },
@@ -174,6 +181,7 @@ const MediaTab: React.FC = () => {
           emby: {
             ...initialSettings.emby,
             ...fetched.emby,
+            webhookSecret: '',
             proxy: { ...initialSettings.emby.proxy, ...fetched.emby?.proxy },
             prewarm: { ...initialSettings.emby.prewarm, ...fetched.emby?.prewarm }
           },
@@ -262,6 +270,13 @@ const MediaTab: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const generateWebhookSecret = () => {
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    const secret = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    updateSetting('emby.webhookSecret', secret);
   };
 
   const updateSetting = (path: string, value: any) => {
@@ -550,6 +565,25 @@ const MediaTab: React.FC = () => {
                 onChange={e => updateSetting('emby.apiKey', e.target.value)}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-slate-700">Webhook 密钥</label>
+              <div className="flex gap-3">
+                <input
+                  type="password"
+                  value={settings.emby.webhookSecret}
+                  onChange={e => updateSetting('emby.webhookSecret', e.target.value)}
+                  placeholder={settings.emby.hasWebhookSecret ? '已保存密钥；留空不覆盖' : '用于 /emby/notify 回调校验'}
+                  className="flex-1 px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                />
+                <button
+                  type="button"
+                  onClick={generateWebhookSecret}
+                  className="px-5 py-3 bg-[#d3e3fd] text-[#041e49] rounded-2xl text-sm font-medium hover:bg-[#c2e7ff] transition-colors flex items-center gap-2"
+                >
+                  <Key size={18} /> 生成
+                </button>
+              </div>
             </div>
           </div>
           <div className="space-y-4">

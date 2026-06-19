@@ -1136,11 +1136,11 @@ class TaskService {
         if (!folderInfo || !folderInfo.fileListAO) {
             return [];
         }
-        return await this._collectFolderFilesRecursive(cloud189, folderId, '');
+        return await this._collectFolderFilesRecursive(cloud189, folderId, '', folderInfo);
     }
 
-    async _collectFolderFilesRecursive(cloud189, folderId, relativeDir = '') {
-        const folderInfo = await cloud189.listFiles(folderId);
+    async _collectFolderFilesRecursive(cloud189, folderId, relativeDir = '', folderInfo = null) {
+        folderInfo = folderInfo || await cloud189.listFiles(folderId);
         if (!folderInfo?.fileListAO) {
             return [];
         }
@@ -1152,12 +1152,31 @@ class TaskService {
             relativePath: currentRelativeDir ? path.join(currentRelativeDir, file.name) : file.name
         }));
         const folderList = folderInfo.fileListAO.folderList || [];
-        for (const folder of folderList) {
-            const nextRelativeDir = currentRelativeDir ? path.join(currentRelativeDir, folder.name) : folder.name;
-            const childFiles = await this._collectFolderFilesRecursive(cloud189, folder.id, nextRelativeDir);
-            fileList.push(...childFiles);
-        }
+        const childFileGroups = await this._mapWithConcurrency(folderList, 4, async (folder) => {
+            const folderName = folder.name || folder.fileName || '';
+            const folderId = folder.id || folder.fileId;
+            const nextRelativeDir = currentRelativeDir ? path.join(currentRelativeDir, folderName) : folderName;
+            return await this._collectFolderFilesRecursive(cloud189, folderId, nextRelativeDir);
+        });
+        childFileGroups.forEach(childFiles => fileList.push(...childFiles));
         return fileList;
+    }
+
+    async _mapWithConcurrency(items, limit, worker) {
+        if (!items.length) {
+            return [];
+        }
+        const results = new Array(items.length);
+        let nextIndex = 0;
+        const workerCount = Math.min(limit, items.length);
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+            while (nextIndex < items.length) {
+                const currentIndex = nextIndex;
+                nextIndex += 1;
+                results[currentIndex] = await worker(items[currentIndex], currentIndex);
+            }
+        }));
+        return results;
     }
 
     // 自动创建目录

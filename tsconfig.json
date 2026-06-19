@@ -16,6 +16,7 @@
   "include": ["src/**/*"],
   "exclude": [
     "vender/cloud189-sdk",
+    "src/public_bak",
     "node_modules",
     "dist"
   ]

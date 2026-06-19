@@ -10,6 +10,7 @@
 
 const { CasFileService } = require('./casFileService');
 const { CasService } = require('./casService');
+const { CasCleanupService } = require('./casCleanupService');
 const { logTaskEvent } = require('../utils/logUtils');
 const ConfigService = require('./ConfigService');
 const { Cloud189Service } = require('./cloud189');
@@ -20,6 +21,7 @@ class CasMonitorService {
         this._inFlightRestores = new Set(); // 正在恢复的 CAS 路径
         this._defaultIntervalMs = 5 * 60 * 1000; // 默认5分钟
         this._isRunning = false;
+        this._cleanupService = new CasCleanupService();
     }
 
     /**
@@ -285,12 +287,7 @@ class CasMonitorService {
      */
     async _deleteCasFile(cloud189, fileId, fileName) {
         try {
-            // 先删除到回收站
-            await cloud189.deleteFile(fileId);
-            
-            // 再清空回收站
-            await cloud189.clearRecycleBin([{ id: fileId }]);
-            
+            await this._cleanupService.deleteCasFileAfterRestore(cloud189, fileId, fileName);
             logTaskEvent(`[CAS监控] 已删除 CAS 文件: ${fileName}`);
         } catch (error) {
             logTaskEvent(`[CAS监控] 删除 CAS 文件失败: ${fileName}, 错误: ${error.message}`);

@@ -51,6 +51,49 @@ class CustomPushService extends MessageService {
         return newObj;
     }
 
+    _isSensitiveKey(key = '') {
+        return /(authorization|cookie|token|secret|password|passwd|key|spt|webhook)/i.test(String(key));
+    }
+
+    _redactUrl(url) {
+        const rawUrl = String(url || '');
+        try {
+            const parsed = new URL(rawUrl);
+            for (const key of parsed.searchParams.keys()) {
+                if (this._isSensitiveKey(key)) {
+                    parsed.searchParams.set(key, '[REDACTED]');
+                }
+            }
+            return parsed.toString();
+        } catch (error) {
+            return rawUrl.replace(/([?&][^=\s&]*(?:authorization|cookie|token|secret|password|passwd|key|spt|webhook)[^=\s&]*=)[^&\s]+/ig, '$1[REDACTED]');
+        }
+    }
+
+    _redactObject(value) {
+        if (Array.isArray(value)) {
+            return value.map(item => this._redactObject(item));
+        }
+        if (!value || typeof value !== 'object') {
+            return value;
+        }
+        const redacted = {};
+        for (const [key, item] of Object.entries(value)) {
+            redacted[key] = this._isSensitiveKey(key) ? '[REDACTED]' : this._redactObject(item);
+        }
+        return redacted;
+    }
+
+    _formatBodyForLog(options) {
+        if (options.json) {
+            return JSON.stringify(this._redactObject(options.json));
+        }
+        if (options.form) {
+            return JSON.stringify(this._redactObject(options.form));
+        }
+        return options.body ? '[TEXT_BODY]' : 'N/A';
+    }
+
     async _sendSingleRequest(title, content, singlePushConfig) {
         if (!singlePushConfig || !singlePushConfig.enabled) {
             return false;
@@ -60,7 +103,7 @@ class CustomPushService extends MessageService {
         const { url, method, contentType, fields  } = singlePushConfig;
 
         if (!url || !method) {
-            logTaskEvent(`[CustomPushService] URL 或请求方法未在配置中提供: ${JSON.stringify(singlePushConfig)}`, 'error');
+            logTaskEvent('[CustomPushService] URL 或请求方法未在配置中提供', 'error');
             return false;
         }
 
@@ -84,7 +127,7 @@ class CustomPushService extends MessageService {
                         parsedJsonValue = this._replacePlaceholdersInObject(parsedJsonValue, title, content);
                         requestBodyFields = parsedJsonValue;
                     } catch (e) {
-                        logTaskEvent(`[CustomPushService] 解析字段 "${field.key}" 的JSON值失败: ${e.message}. 原始值 (替换前): ${field.value}, 替换后尝试解析的字符串: ${this._replacePlaceholders(field.value, title, content, true)}`, 'error');
+                        logTaskEvent(`[CustomPushService] 解析字段 "${field.key}" 的JSON值失败: ${e.message}`, 'error');
                         requestBodyFields = this._replacePlaceholders(field.value, title, content); 
                     }
                 } else {
@@ -122,17 +165,18 @@ class CustomPushService extends MessageService {
             }
         }
         try {
-            logTaskEvent(`[CustomPushService] 发送自定义推送: ${options.method} ${processedUrl} | Headers: ${JSON.stringify(options.headers)} | Body: ${options.json ? JSON.stringify(options.json) : (options.form ? JSON.stringify(options.form) : options.body || 'N/A')}`);
+            const safeUrl = this._redactUrl(processedUrl);
+            logTaskEvent(`[CustomPushService] 发送自定义推送: ${options.method} ${safeUrl} | Headers: ${JSON.stringify(this._redactObject(options.headers))} | Body: ${this._formatBodyForLog(options)}`);
             const response = await got(processedUrl, options);
             if (response.statusCode >= 200 && response.statusCode < 300) {
-                logTaskEvent(`[CustomPushService] 推送成功 (${processedUrl}). 状态码: ${response.statusCode}`);
+                logTaskEvent(`[CustomPushService] 推送成功 (${safeUrl}). 状态码: ${response.statusCode}`);
                 return true;
             } else {
-                logTaskEvent(`[CustomPushService] 推送失败 (${processedUrl}). 状态码: ${response.statusCode}, 响应体: ${response.body}`, 'error');
+                logTaskEvent(`[CustomPushService] 推送失败 (${safeUrl}). 状态码: ${response.statusCode}`, 'error');
                 return false;
             }
         } catch (error) {
-            logTaskEvent(`[CustomPushService] 推送请求错误 (${processedUrl}): ${error.message}`, 'error');
+            logTaskEvent(`[CustomPushService] 推送请求错误 (${this._redactUrl(processedUrl)}): ${error.message}`, 'error');
             return false;
         }
     }

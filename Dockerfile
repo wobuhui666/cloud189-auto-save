@@ -42,6 +42,8 @@ COPY vender/cloud189-sdk ./vender/cloud189-sdk
 # 构建
 RUN cd vender/cloud189-sdk && yarn build
 RUN yarn build
+# 构建完成后裁剪开发依赖，生产镜像只复制运行时依赖
+RUN yarn install --frozen-lockfile --production=true --ignore-scripts && yarn cache clean
 
 # 构建生产版本
 FROM node:20-bookworm-slim AS production

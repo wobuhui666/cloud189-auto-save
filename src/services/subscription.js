@@ -360,7 +360,7 @@ class SubscriptionService {
     }
 
     async createResource(subscriptionId, data) {
-        await this._ensureSubscription(subscriptionId);
+        const subscription = await this._ensureSubscription(subscriptionId);
         const account = await this._getAvailableAccount();
         const shareData = await this._resolveShare(data.shareLink, data.accessCode, account);
         const duplicate = await this.resourceRepo.findOneBy({
@@ -390,7 +390,14 @@ class SubscriptionService {
             autoTaskLastError: ''
         });
         const savedResource = await this.resourceRepo.save(resource);
-        await this.refreshSubscription(subscriptionId);
+        const accounts = await this._getAvailableAccounts();
+        await this._validateResourceAgainstAccounts(savedResource, accounts);
+        let autoTaskSummary = this._createEmptyAutoTaskSummary();
+        if (subscription.autoCreateTasks) {
+            autoTaskSummary = await this._autoCreateTasksForSubscription(subscription, [savedResource]);
+        }
+        await this._refreshSubscriptionSummary(subscriptionId);
+        await this._markSingleResourceRefresh(subscriptionId, savedResource, autoTaskSummary);
         const refreshedResource = await this.resourceRepo.findOneBy({ id: savedResource.id });
         return refreshedResource || savedResource;
     }
@@ -857,6 +864,21 @@ class SubscriptionService {
         subscription.invalidResourceCount = invalidResourceCount;
         subscription.availableAccountCount = availableAccountIds.size;
         subscription.totalAccountCount = accounts.length;
+        await this.subscriptionRepo.save(subscription);
+    }
+
+    async _markSingleResourceRefresh(subscriptionId, resource, autoTaskSummary = null) {
+        const subscription = await this._ensureSubscription(subscriptionId);
+        const title = resource.title || resource.shareFileName || '新增资源';
+        const autoTaskSummaryText = autoTaskSummary ? this._buildAutoTaskSummary(autoTaskSummary) : '';
+        subscription.lastRefreshTime = new Date();
+        subscription.lastRefreshStatus = resource.verifyStatus === 'valid' ? 'success' : 'warning';
+        subscription.lastRefreshMessage = this._joinSummaryParts(
+            resource.verifyStatus === 'valid'
+                ? `新增资源 ${title} 校验成功`
+                : `新增资源 ${title} 校验失败: ${resource.lastVerifyError || '资源校验失败'}`,
+            autoTaskSummaryText
+        );
         await this.subscriptionRepo.save(subscription);
     }
 

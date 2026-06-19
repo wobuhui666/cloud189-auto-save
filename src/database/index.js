@@ -93,6 +93,7 @@ const getSubscriptionResourceRepository = () => AppDataSource.getRepository(Subs
 const getStrmConfigRepository = () => AppDataSource.getRepository(StrmConfig);
 const getTaskProcessedFileRepository = () => AppDataSource.getRepository(TaskProcessedFile);
 const getWorkflowRunRepository = () => AppDataSource.getRepository(WorkflowRun);
+const getTmdbCacheRepository = () => AppDataSource.getRepository(TmdbCache);
 const getPtSubscriptionRepository = () => AppDataSource.getRepository(PtSubscription);
 const getPtReleaseRepository = () => AppDataSource.getRepository(PtRelease);
 
@@ -108,6 +109,7 @@ module.exports = {
     getStrmConfigRepository,
     getTaskProcessedFileRepository,
     getWorkflowRunRepository,
+    getTmdbCacheRepository,
     getPtSubscriptionRepository,
     getPtReleaseRepository
 };

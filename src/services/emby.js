@@ -895,7 +895,7 @@ class EmbyService {
                 }else{
                     logTaskEvent(`删除任务和网盘, 任务id: ${task.id}`);
                     // 删掉任务并且删掉网盘
-                    this._taskService.deleteTasks(tasks.map(task => task.id), true)
+                    await this._taskService.deleteTasks([task.id], true)
                 }
             }
 

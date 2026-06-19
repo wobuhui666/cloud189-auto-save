@@ -139,6 +139,8 @@ class ConfigService {
         enable: false,
         serverUrl: '',
         apiKey: '',
+        webhookSecret: process.env.EMBY_WEBHOOK_SECRET || '',
+        allowUnauthenticatedWebhook: false,
         proxy: {
           enable: false,
           port: 8097

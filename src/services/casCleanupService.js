@@ -11,24 +11,13 @@ class CasCleanupService {
             logTaskEvent(`[CAS清理] 开始永久删除: ${fileName || fileId}`);
 
             // 1. 先删除到回收站
-            const deleteResult = await this._createBatchTask(cloud189, 'DELETE', 
-                [{ fileId, fileName, isFolder: 0 }], 
-                isFamily
+            await this._runBatchTask(cloud189, 'DELETE',
+                [{ fileId, fileName, isFolder: 0 }],
+                { isFamily }
             );
-
-            if (deleteResult?.taskId) {
-                await this._waitBatchTask(cloud189, 'DELETE', deleteResult.taskId);
-            }
 
             // 2. 清空回收站
-            const clearResult = await this._createBatchTask(cloud189, 'CLEAR_RECYCLE',
-                [{ fileId, fileName, isFolder: 0 }],
-                isFamily
-            );
-
-            if (clearResult?.taskId) {
-                await this._waitBatchTask(cloud189, 'CLEAR_RECYCLE', clearResult.taskId);
-            }
+            await this._runBatchTask(cloud189, 'EMPTY_RECYCLE', [], { isFamily });
 
             logTaskEvent(`[CAS清理] 永久删除完成: ${fileName || fileId}`);
             return true;
@@ -50,7 +39,7 @@ class CasCleanupService {
     async deleteTempPreviewFile(cloud189, fileId, fileName = '', isFamily = false) {
         logTaskEvent(`[CAS清理] 删除临时预览文件: ${fileName || fileId}`);
         try {
-            await cloud189.deleteFile(fileId);
+            await cloud189.deleteFile(fileId, fileName);
             return true;
         } catch (error) {
             logTaskEvent(`[CAS清理] 删除临时文件(可能已清理): ${fileName || fileId}`);
@@ -67,46 +56,41 @@ class CasCleanupService {
             isFolder: 0
         }));
 
-        const deleteResult = await this._createBatchTask(cloud189, 'DELETE', taskInfos, isFamily);
-        if (deleteResult?.taskId) {
-            await this._waitBatchTask(cloud189, 'DELETE', deleteResult.taskId);
-        }
-
-        const clearResult = await this._createBatchTask(cloud189, 'CLEAR_RECYCLE', taskInfos, isFamily);
-        if (clearResult?.taskId) {
-            await this._waitBatchTask(cloud189, 'CLEAR_RECYCLE', clearResult.taskId);
-        }
+        await this._runBatchTask(cloud189, 'DELETE', taskInfos, { isFamily });
+        await this._runBatchTask(cloud189, 'EMPTY_RECYCLE', [], { isFamily });
     }
 
-    async _createBatchTask(cloud189, type, taskInfos, isFamily = false) {
-        const accessToken = await cloud189.client.getAccessToken();
-        if (!accessToken) {
-            throw new Error('无法获取 AccessToken');
+    async _runBatchTask(cloud189, type, taskInfos = [], options = {}) {
+        const batchTaskDto = {
+            type,
+            taskInfos: JSON.stringify(taskInfos),
+            targetFolderId: ''
+        };
+        if (options.isFamily && typeof cloud189.resolveFamilyId === 'function') {
+            batchTaskDto.familyId = await cloud189.resolveFamilyId();
         }
-
-        const timestamp = String(Date.now());
-        const formParams = { type, taskInfos: JSON.stringify(taskInfos) };
-
-        if (isFamily && cloud189.FamilyID) {
-            formParams.familyId = String(cloud189.FamilyID);
+        const result = await cloud189.createBatchTask(batchTaskDto);
+        if (!result || result.res_code != 0) {
+            throw new Error(result?.res_msg || result?.res_message || `批量任务创建失败 type=${type}`);
         }
-
-        return await cloud189._makeSignedRequest('/open/batch/createBatchTask.action', formParams, accessToken, timestamp);
+        if (result.taskId) {
+            await this._waitBatchTask(cloud189, type, result.taskId);
+        }
+        return result;
     }
 
     async _waitBatchTask(cloud189, type, taskId, maxWaitMs = 30000) {
-        const accessToken = await cloud189.client.getAccessToken();
         const start = Date.now();
         let lastStatus = 0;
 
         while (Date.now() - start < maxWaitMs) {
             await new Promise(resolve => setTimeout(resolve, 1000));
 
-            const timestamp = String(Date.now());
-            const checkParams = { type, taskId: String(taskId) };
-
-            const result = await cloud189._makeSignedRequest('/open/batch/checkBatchTask.action', checkParams, accessToken, timestamp);
-            lastStatus = result.taskStatus ?? lastStatus;
+            const result = await cloud189.checkTaskStatus(taskId, { type });
+            if (!result || result.res_code != null && result.res_code != 0) {
+                throw new Error(result?.res_msg || result?.res_message || `批量任务查询失败 type=${type}`);
+            }
+            lastStatus = Number(result.taskStatus ?? lastStatus);
 
             if (lastStatus === 4) return;
             if (lastStatus === 2) throw new Error(`批量任务冲突 type=${type}`);
