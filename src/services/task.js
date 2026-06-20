@@ -29,6 +29,8 @@ class TaskService {
         this.taskProcessedFileRepo = taskProcessedFileRepo || (AppDataSource.isInitialized
             ? AppDataSource.getRepository(TaskProcessedFile)
             : null);
+        this.activeTaskExecutions = new Map();
+        this.activeBatchExecution = null;
         this.autoSeriesService = null;
         this.messageUtil = new MessageUtil();
         this.eventService = EventService.getInstance();
@@ -108,6 +110,20 @@ class TaskService {
         }
         const mode = String(ConfigService.getConfigValue('openai.mode', 'fallback') || 'fallback').trim().toLowerCase();
         return ['advanced', 'fallback'].includes(mode) ? mode : 'fallback';
+    }
+
+    _getTaskExecutionKey(task) {
+        if (!task || task.id == null) {
+            return null;
+        }
+        return String(task.id);
+    }
+
+    _getTaskDisplayName(task) {
+        if (!task) {
+            return '未知';
+        }
+        return task.shareFolderName ? `${task.resourceName}/${task.shareFolderName}` : (task.resourceName || `任务${task.id || ''}`);
     }
 
     _isAiAdvancedMode() {
@@ -1463,6 +1479,28 @@ class TaskService {
 
     // 执行任务
     async processTask(task, options = {}) {
+        const taskExecutionKey = this._getTaskExecutionKey(task);
+        if (!taskExecutionKey) {
+            return await this._processTaskInternal(task, options);
+        }
+
+        if (this.activeTaskExecutions.has(taskExecutionKey)) {
+            logTaskEvent(`任务[${this._getTaskDisplayName(task)}]已在执行中，忽略重复触发`, 'warn', 'transfer');
+            return '';
+        }
+
+        const executionPromise = this._processTaskInternal(task, options);
+        this.activeTaskExecutions.set(taskExecutionKey, executionPromise);
+        try {
+            return await executionPromise;
+        } finally {
+            if (this.activeTaskExecutions.get(taskExecutionKey) === executionPromise) {
+                this.activeTaskExecutions.delete(taskExecutionKey);
+            }
+        }
+    }
+
+    async _processTaskInternal(task, options = {}) {
         const { allowSourceRefresh = true } = options;
 
         // 增强：转存开始的同时，自动尝试通过 TMDB 获取总集数
@@ -1499,7 +1537,7 @@ class TaskService {
                 if (allowSourceRefresh) {
                     const refreshResult = await this._tryAutoRefreshTaskSource(task, 'share_invalid');
                     if (refreshResult?.updated) {
-                        return await this.processTask(task, { allowSourceRefresh: false });
+                        return await this._processTaskInternal(task, { allowSourceRefresh: false });
                     }
                 }
                 logTaskEvent("获取文件列表失败: " + JSON.stringify(shareDir), 'error', 'transfer');
@@ -1632,7 +1670,7 @@ class TaskService {
                 if (allowSourceRefresh) {
                     const refreshResult = await this._tryAutoRefreshTaskSource(task, 'no_increment');
                     if (refreshResult?.updated) {
-                        return await this.processTask(task, { allowSourceRefresh: false });
+                        return await this._processTaskInternal(task, { allowSourceRefresh: false });
                     }
                 }
                 if (task.lastFileUpdateTime) {
@@ -2314,6 +2352,39 @@ class TaskService {
 
     // 执行所有任务
     async processAllTasks(ignore = false, taskIds = []) {
+        const normalizedTaskIds = Array.isArray(taskIds)
+            ? taskIds.map(id => String(id)).filter(Boolean).sort()
+            : [];
+        const batchExecutionKey = normalizedTaskIds.length > 0
+            ? `selected:${normalizedTaskIds.join(',')}`
+            : `all:${ignore ? 'ignore' : 'pending'}`;
+
+        if (this.activeBatchExecution?.key === batchExecutionKey) {
+            logTaskEvent(
+                normalizedTaskIds.length > 0
+                    ? `批量任务[${normalizedTaskIds.join(',')}]已在执行中，忽略重复触发`
+                    : '执行所有任务已在运行中，忽略重复触发',
+                'warn',
+                'transfer'
+            );
+            return [];
+        }
+
+        const executionPromise = this._processAllTasksInternal(ignore, taskIds);
+        this.activeBatchExecution = {
+            key: batchExecutionKey,
+            promise: executionPromise
+        };
+        try {
+            return await executionPromise;
+        } finally {
+            if (this.activeBatchExecution?.promise === executionPromise) {
+                this.activeBatchExecution = null;
+            }
+        }
+    }
+
+    async _processAllTasksInternal(ignore = false, taskIds = []) {
         const tasks = await this.getPendingTasks(ignore, taskIds);
         if (tasks.length === 0) {
             logTaskEvent('没有待处理的任务', 'info', 'transfer');

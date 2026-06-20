@@ -109,6 +109,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [activeTagFilters, setActiveTagFilters] = useState<string[]>([]);
   const [batchStatus, setBatchStatus] = useState<TaskStatus>('pending');
   const [isBatchUpdatingStatus, setIsBatchUpdatingStatus] = useState(false);
+  const [executingTaskIds, setExecutingTaskIds] = useState<number[]>([]);
+  const [isExecutingAll, setIsExecutingAll] = useState(false);
   const [deleteCloud, setDeleteCloud] = useState(false);
   const [isTopMenuOpen, setIsTopMenuOpen] = useState(false);
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null);
@@ -248,14 +250,24 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   }, [tasks]);
 
   const handleExecuteTask = async (id: number) => {
+    if (executingTaskIds.includes(id)) {
+      return;
+    }
+
+    setExecutingTaskIds((currentIds) => [...currentIds, id]);
     try {
       const response = await fetch(`/api/tasks/${id}/execute`, { method: 'POST' });
       const data = await response.json();
       if (data.success) {
         fetchTasks();
+      } else {
+        toast.error(data.error || '任务执行失败');
       }
     } catch (error) {
       console.error('Failed to execute task:', error);
+      toast.error('任务执行失败');
+    } finally {
+      setExecutingTaskIds((currentIds) => currentIds.filter((taskId) => taskId !== id));
     }
   };
 
@@ -393,6 +405,9 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   };
 
   const handleExecuteAll = async () => {
+    if (isExecutingAll) {
+      return;
+    }
     const ok = await dialog.confirm({
       title: '执行所有任务',
       message: '确定要执行所有任务吗？',
@@ -400,14 +415,20 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       tone: 'warning',
     });
     if (!ok) return;
+    setIsExecutingAll(true);
     try {
       const response = await fetch('/api/tasks/executeAll', { method: 'POST' });
       const data = await response.json();
       if (data.success) {
         toast.info('任务已在后台执行, 请稍后查看结果');
+      } else {
+        toast.error(data.error || '执行所有任务失败');
       }
     } catch (error) {
       console.error('Failed to execute all tasks:', error);
+      toast.error('执行所有任务失败');
+    } finally {
+      setIsExecutingAll(false);
     }
   };
 
@@ -573,12 +594,16 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
               <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl py-2 z-50">
                 <button
                   onClick={() => {
+                    if (isExecutingAll) {
+                      return;
+                    }
                     setIsTopMenuOpen(false);
                     handleExecuteAll();
                   }}
-                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
+                  disabled={isExecutingAll}
+                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-slate-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  执行所有任务
+                  {isExecutingAll ? '执行中...' : '执行所有任务'}
                 </button>
                 <button
                   onClick={() => {
@@ -744,6 +769,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           const taskName = task.shareFolderName ? `${task.resourceName}/${task.shareFolderName}` : (task.resourceName || 'Unknown Resource');
           const progress = (task.totalEpisodes && task.totalEpisodes > 0) ? (task.currentEpisodes / task.totalEpisodes) * 100 : 0;
           const isSelected = selectedTaskIds.includes(task.id);
+          const isExecuting = executingTaskIds.includes(task.id);
 
           return (
             <div 
@@ -807,10 +833,11 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                   <div className="flex items-center gap-2">
                     <button 
                       onClick={() => handleExecuteTask(task.id)}
-                      className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-[#0b57d0] transition-colors"
+                      disabled={isExecuting}
+                      className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-[#0b57d0] transition-colors disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-slate-500"
                       title="立即执行"
                     >
-                      <RefreshCw size={18} />
+                      <RefreshCw size={18} className={isExecuting ? 'animate-spin' : ''} />
                     </button>
                     <div className="relative" data-task-item-menu>
                       <button
