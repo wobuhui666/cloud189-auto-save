@@ -89,7 +89,6 @@ export default function App() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [ptPrefill, setPtPrefill] = useState<PtPrefillData | null>(null);
-  const [scrolled, setScrolled] = useState(false);
 
   const resolvedTheme = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -153,23 +152,6 @@ export default function App() {
 
     localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [isDarkMode, themeMode]);
-
-  // 监听滚动以实现顶栏动态效果
-  useEffect(() => {
-    const handleScroll = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.classList.contains('content-scrollable')) {
-        setScrolled(target.scrollTop > 20);
-      }
-    };
-
-    const scrollContainer = document.querySelector('.content-scrollable');
-    scrollContainer?.addEventListener('scroll', handleScroll);
-
-    return () => {
-      scrollContainer?.removeEventListener('scroll', handleScroll);
-    };
-  }, [activeTab]);
 
   const themeOptions: Array<{ value: ThemeMode; label: string; description: string; icon: any }> = [
     { value: 'light', label: '浅色模式', description: '始终使用浅色外观', icon: Sun },
@@ -363,9 +345,7 @@ export default function App() {
       <main className="flex-1 flex flex-col min-w-0 h-screen relative bg-[var(--bg-main)] rounded-tl-3xl shadow-xl border-l border-t border-[var(--border-color)] transition-colors duration-300">
 
         {/* Top App Bar */}
-        <header className={`h-16 flex items-center justify-between px-4 md:px-8 bg-[var(--bg-main)]/95 backdrop-blur-xl z-10 sticky top-0 rounded-tl-3xl transition-all duration-300 ${
-          scrolled ? 'shadow-lg border-b border-[var(--border-color)]' : ''
-        }`}>
+        <header className="h-16 flex items-center justify-between px-4 md:px-8 bg-[var(--bg-main)]/95 backdrop-blur-xl z-10 sticky top-0 rounded-tl-3xl transition-all duration-300">
           <div className="flex items-center gap-4">
             <motion.button
               onClick={() => setIsMobileMenuOpen(true)}
@@ -489,8 +469,8 @@ export default function App() {
                 {activeTab === 'organizer' && <OrganizerTab />}
                 {activeTab === 'subscription' && <SubscriptionTab onTransfer={handleOpenCreateTask} />}
                 {activeTab === 'strmConfig' && <StrmConfigTab />}
-                {activeTab === 'media' && <MediaTab key={Date.now()} />}
-                {activeTab === 'cas' && <CasTab onNavigate={setActiveTab} key={Date.now()} />}
+                {activeTab === 'media' && <MediaTab />}
+                {activeTab === 'cas' && <CasTab onNavigate={setActiveTab} />}
                 {activeTab === 'pt' && <PtTab prefill={ptPrefill} onPrefillConsumed={() => setPtPrefill(null)} />}
                 {activeTab === 'posterWall' && (
                   <PosterWallTab
