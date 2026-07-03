@@ -47,6 +47,16 @@ const PRESET_BADGE: Record<string, string> = {
   dmhy: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
 };
 
+const formatSize = (bytes?: number) => {
+  const n = Number(bytes || 0);
+  if (!n || !Number.isFinite(n)) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024 ** 4) return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  return `${(n / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
+};
+
 const PTSearchModal: React.FC<PTSearchModalProps> = ({
   isOpen,
   onClose,
@@ -476,16 +486,27 @@ const PTSearchModal: React.FC<PTSearchModalProps> = ({
                         <div className="text-xs text-slate-400 dark:text-slate-500 py-2">该 RSS 暂无可见资源</div>
                       ) : (
                         <ul className="max-h-44 overflow-y-auto custom-scrollbar space-y-1 pr-1 border-t border-slate-200/60 dark:border-slate-700/60 pt-2">
-                          {previewItems.map((it: any, j: number) => (
-                            <li
-                              key={j}
-                              className="text-xs text-slate-600 dark:text-slate-300 truncate font-mono"
-                              title={it.title}
-                            >
-                              <span className="text-slate-400 dark:text-slate-500 mr-1">·</span>
-                              {it.title || '(无标题)'}
-                            </li>
-                          ))}
+                          {previewItems.map((it: any, j: number) => {
+                            const episode = it.episodeLabel
+                              ? `S${String(it.seasonNumber || 1).padStart(2, '0')}E${it.episodeLabel}`
+                              : '';
+                            const meta = [it.subgroup, episode, it.resolution, it.quality, formatSize(it.size), it.volumeFactor]
+                              .filter(Boolean)
+                              .join(' · ');
+                            return (
+                              <li
+                                key={j}
+                                className="text-xs text-slate-600 dark:text-slate-300 font-mono"
+                                title={it.title}
+                              >
+                                <div className="truncate">
+                                  <span className="text-slate-400 dark:text-slate-500 mr-1">·</span>
+                                  {it.title || '(无标题)'}
+                                </div>
+                                {meta && <div className="ml-3 text-[10px] text-slate-400 dark:text-slate-500 truncate">{meta}</div>}
+                              </li>
+                            );
+                          })}
                           {previewItems.length >= 20 && (
                             <li className="text-[10px] text-slate-400 dark:text-slate-500 pt-1">
                               仅展示前 {previewItems.length} 条，更多请查看 RSS 源

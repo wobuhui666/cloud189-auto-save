@@ -16,7 +16,18 @@ const { ptRenameService } = require('./ptRename');
 const { ptTorrentService } = require('./ptTorrent');
 const aiService = require('./ai');
 const { TMDBService } = require('./tmdb');
-const { computeFileHashes, collectLocalFiles, normalizeWhitespace, matchReleaseFilters, extractInfoHashFromMagnet, safeFileName } = require('./ptUtils');
+const {
+    buildEpisodeDedupKey,
+    computeFileHashes,
+    collectLocalFiles,
+    normalizeWhitespace,
+    matchReleaseFilters,
+    extractInfoHashFromMagnet,
+    normalizeInfoHash,
+    parseNumber,
+    safeJsonParse,
+    safeFileName
+} = require('./ptUtils');
 const {
     getPtSubscriptionRepository,
     getPtReleaseRepository,
@@ -96,28 +107,42 @@ class PtService {
     async _pollSubscription(subscription) {
         const repo = getPtSubscriptionRepository();
         const releaseRepo = getPtReleaseRepository();
+        const pollingSubscription = this._preparePollingSubscription(subscription);
         logTaskEvent(`[PT] 开始拉取订阅: ${subscription.name}`);
 
-        const items = await this.sourceService.fetchFeedItems(subscription);
+        const fetchedItems = (await this.sourceService.fetchFeedItems(pollingSubscription)).map(item => ({
+            ...item,
+            infoHash: normalizeInfoHash(item.infoHash || extractInfoHashFromMagnet(item.magnetUrl || ''))
+        }));
+        const filteredItems = this._filterDelayedItems(
+            this._selectDownloadNewItems(fetchedItems, pollingSubscription),
+            pollingSubscription
+        );
 
-        const guids = [...new Set(items.map(item => item.guid).filter(Boolean))];
-        const existingReleases = guids.length
-            ? await releaseRepo.find({
-                where: {
-                    subscriptionId: subscription.id,
-                    guid: In(guids)
-                }
-            })
+        const guids = [...new Set(filteredItems.map(item => item.guid).filter(Boolean))];
+        const infoHashes = [...new Set(filteredItems.map(item => item.infoHash).filter(Boolean))];
+        const shouldLoadExisting = guids.length || infoHashes.length || pollingSubscription.episodeDedup;
+        const existingReleases = shouldLoadExisting
+            ? await releaseRepo.find({ where: { subscriptionId: subscription.id } })
             : [];
         const seenGuids = new Set(existingReleases.map(release => release.guid));
+        const seenInfoHashes = new Set(existingReleases.map(release => normalizeInfoHash(release.infoHash)).filter(Boolean));
+        const seenEpisodes = new Set(existingReleases.map(release => this._buildEpisodeDedupeKey(release, pollingSubscription)).filter(Boolean));
         const newReleases = [];
-        for (const item of items) {
+        for (const item of filteredItems) {
             if (!item.guid) continue;
             if (seenGuids.has(item.guid)) continue;
-            if (!matchReleaseFilters(item, subscription)) {
+            if (item.infoHash && seenInfoHashes.has(item.infoHash)) continue;
+            if (!matchReleaseFilters(item, pollingSubscription)) {
+                continue;
+            }
+            const episodeKey = pollingSubscription.episodeDedup ? this._buildEpisodeDedupeKey(item, pollingSubscription) : '';
+            if (episodeKey && seenEpisodes.has(episodeKey)) {
                 continue;
             }
             seenGuids.add(item.guid);
+            if (item.infoHash) seenInfoHashes.add(item.infoHash);
+            if (episodeKey) seenEpisodes.add(episodeKey);
             newReleases.push(item);
         }
 
@@ -127,8 +152,16 @@ class PtService {
                 const release = releaseRepo.create({
                     subscriptionId: subscription.id,
                     guid: item.guid,
+                    rawTitle: item.rawTitle || item.title || '',
                     title: item.title || '',
-                    infoHash: extractInfoHashFromMagnet(item.magnetUrl || '') || '',
+                    infoHash: item.infoHash || '',
+                    subgroup: item.subgroup || item.author || '',
+                    seasonNumber: item.seasonNumber != null ? Number(item.seasonNumber) : null,
+                    episodeNumber: item.episodeNumber != null ? Number(item.episodeNumber) : null,
+                    episodeLabel: item.episodeLabel || '',
+                    resolution: item.resolution || '',
+                    quality: item.quality || '',
+                    releaseTagsJson: JSON.stringify(item.tags || []),
                     magnetUrl: item.magnetUrl || '',
                     torrentUrl: item.torrentUrl || '',
                     detailsUrl: item.detailsUrl || '',
@@ -150,14 +183,157 @@ class PtService {
             }
         }
 
+        await this._updateSubscriptionProgress(subscription, fetchedItems);
         subscription.lastCheckTime = new Date();
         subscription.lastStatus = 'ok';
-        subscription.lastMessage = `本次新增 ${addedCount} 条`;
+        subscription.lastMessage = this._buildPollMessage(addedCount, fetchedItems.length, filteredItems.length, subscription);
         subscription.releaseCount = (subscription.releaseCount || 0) + addedCount;
         await repo.save(subscription);
 
-        logTaskEvent(`[PT] 订阅 ${subscription.name} 拉取完成，新增 ${addedCount}/${items.length}`);
+        logTaskEvent(`[PT] 订阅 ${subscription.name} 拉取完成，新增 ${addedCount}/${fetchedItems.length}`);
         return addedCount;
+    }
+
+    _preparePollingSubscription(subscription = {}) {
+        const globalExcludePattern = String(
+            ConfigService.getConfigValue('pt.globalExcludePattern', '')
+            || ConfigService.getConfigValue('pt.excludePattern', '')
+            || ''
+        );
+        return {
+            ...subscription,
+            globalExcludePattern
+        };
+    }
+
+    _buildEpisodeDedupeKey(item = {}, subscription = {}) {
+        const baseKey = buildEpisodeDedupKey(item);
+        if (!baseKey || !subscription.coexist) {
+            return baseKey;
+        }
+        const variant = normalizeWhitespace(
+            item.subgroup
+            || item.author
+            || item.standbyLabel
+            || item.resolution
+            || item.quality
+            || item.title
+            || ''
+        ).toLowerCase();
+        return `${baseKey}:${variant || 'default'}`;
+    }
+
+    _filterDelayedItems(items = [], subscription = {}) {
+        const minutes = Math.max(0, Math.trunc(parseNumber(subscription.delayedDownloadMinutes, 0) || 0));
+        if (!minutes) {
+            return items;
+        }
+        const threshold = Date.now() - minutes * 60 * 1000;
+        return items.filter(item => {
+            if (!item.publishedAt) {
+                return true;
+            }
+            const time = new Date(item.publishedAt).getTime();
+            return !Number.isFinite(time) || time <= threshold;
+        });
+    }
+
+    _selectDownloadNewItems(items = [], subscription = {}) {
+        if (!subscription.downloadNew || items.length <= 1) {
+            return items;
+        }
+        const datedItems = items
+            .map(item => ({ item, time: item.publishedAt ? new Date(item.publishedAt).getTime() : 0 }))
+            .filter(entry => Number.isFinite(entry.time) && entry.time > 0);
+        if (datedItems.length) {
+            const latest = datedItems.reduce((best, entry) => entry.time > best.time ? entry : best, datedItems[0]);
+            const latestDay = new Date(latest.time).toISOString().slice(0, 10);
+            return items.filter(item => {
+                if (!item.publishedAt) {
+                    return false;
+                }
+                const time = new Date(item.publishedAt).getTime();
+                return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === latestDay;
+            });
+        }
+
+        const episodeItems = items
+            .map(item => ({ item, episode: parseNumber(item.episodeNumber, null) }))
+            .filter(entry => entry.episode != null);
+        if (episodeItems.length) {
+            const latestEpisode = Math.max(...episodeItems.map(entry => entry.episode));
+            return items.filter(item => parseNumber(item.episodeNumber, null) === latestEpisode);
+        }
+        return [items[0]];
+    }
+
+    async _updateSubscriptionProgress(subscription, fetchedItems = []) {
+        const releaseRepo = getPtReleaseRepository();
+        const releases = await releaseRepo.find({ where: { subscriptionId: subscription.id } });
+        subscription.currentEpisodeNumber = this._computeCurrentEpisodeNumber(subscription, releases);
+        subscription.missingEpisodesJson = subscription.omit
+            ? JSON.stringify(this._computeMissingEpisodes(fetchedItems))
+            : '';
+
+        const totalEpisodeNumber = Math.max(0, Math.trunc(parseNumber(subscription.totalEpisodeNumber, 0) || 0));
+        if (subscription.autoDisabled && totalEpisodeNumber > 0 && subscription.currentEpisodeNumber >= totalEpisodeNumber) {
+            subscription.enabled = false;
+        }
+    }
+
+    _computeCurrentEpisodeNumber(subscription = {}, releases = []) {
+        const episodes = releases
+            .map(release => parseNumber(release.episodeNumber, null))
+            .filter(episode => episode != null && episode > 0 && Math.trunc(episode) === episode);
+        if (!episodes.length) {
+            return 0;
+        }
+        if (subscription.downloadNew) {
+            return Math.max(...episodes);
+        }
+        return new Set(episodes).size;
+    }
+
+    _computeMissingEpisodes(items = []) {
+        const episodes = [...new Set(items
+            .map(item => parseNumber(item.episodeNumber, null))
+            .filter(episode => episode != null && episode > 0 && Math.trunc(episode) === episode)
+            .map(Number)
+        )].sort((a, b) => a - b);
+        if (episodes.length <= 1) {
+            return [];
+        }
+        const min = episodes[0];
+        const max = episodes[episodes.length - 1];
+        if (min === max) {
+            return [];
+        }
+        const present = new Set(episodes);
+        const missing = [];
+        for (let episode = min; episode <= max; episode += 1) {
+            if (!present.has(episode)) {
+                missing.push(episode);
+                if (missing.length >= 50) {
+                    break;
+                }
+            }
+        }
+        return missing;
+    }
+
+    _buildPollMessage(addedCount, fetchedCount, eligibleCount, subscription = {}) {
+        const parts = [`本次新增 ${addedCount} 条`];
+        if (eligibleCount !== fetchedCount) {
+            parts.push(`符合下载 ${eligibleCount}/${fetchedCount} 条`);
+        }
+        const missing = safeJsonParse(subscription.missingEpisodesJson, []);
+        if (Array.isArray(missing) && missing.length) {
+            parts.push(`缺集 ${missing.slice(0, 10).join(', ')}`);
+        }
+        if (subscription.autoDisabled && subscription.enabled === false) {
+            parts.push('已达到总集数，自动停用');
+        }
+        return parts.join('；');
     }
 
     async _dispatchToDownloader(subscription, release) {

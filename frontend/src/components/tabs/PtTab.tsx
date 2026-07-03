@@ -27,6 +27,23 @@ interface PtSubscription {
   sizeMaxMB: number;
   seedersMin: number;
   freeOnly: boolean;
+  episodeDedup: boolean;
+  standbyRssJson: string;
+  coexist: boolean;
+  downloadNew: boolean;
+  delayedDownloadMinutes: number;
+  notDownloadEpisodes: string;
+  skipHalfEpisode: boolean;
+  customEpisode: boolean;
+  customEpisodeRegex: string;
+  customEpisodeGroupIndex: number;
+  episodeOffset: number;
+  omit: boolean;
+  missingEpisodesJson: string;
+  totalEpisodeNumber: number;
+  currentEpisodeNumber: number;
+  autoDisabled: boolean;
+  globalExclude: boolean;
   accountId: number;
   targetFolderId: string;
   targetFolder: string;
@@ -53,6 +70,14 @@ interface PtRelease {
   grabs?: number;
   downloadVolumeFactor?: number | null;
   uploadVolumeFactor?: number | null;
+  rawTitle?: string;
+  subgroup?: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  episodeLabel?: string;
+  resolution?: string;
+  quality?: string;
+  releaseTagsJson?: string;
   publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -81,6 +106,7 @@ interface StrmOrganizeSettings {
 interface PtSettings {
   downloadRoot: string;
   pollCron: string;
+  globalExcludePattern: string;
   cleanupEnabled: boolean;
   cleanupCron: string;
   retryIntervalSec: number;
@@ -104,6 +130,21 @@ const DEFAULT_FORM = {
   sizeMaxMB: 0,
   seedersMin: 0,
   freeOnly: false,
+  episodeDedup: false,
+  standbyRssJson: '',
+  coexist: false,
+  downloadNew: false,
+  delayedDownloadMinutes: 0,
+  notDownloadEpisodes: '',
+  skipHalfEpisode: false,
+  customEpisode: false,
+  customEpisodeRegex: '',
+  customEpisodeGroupIndex: 1,
+  episodeOffset: 0,
+  omit: false,
+  totalEpisodeNumber: 0,
+  autoDisabled: false,
+  globalExclude: true,
   accountId: 0,
   targetFolderId: '',
   targetFolder: '',
@@ -138,6 +179,31 @@ const formatVolumeFactor = (rel: PtRelease): string => {
   if (dl != null && dl > 0 && dl < 1) return `${Math.round(dl * 100)}%`;
   if (ul != null && ul > 1) return `${ul}X`;
   return '';
+};
+
+const parseReleaseTags = (rel: PtRelease): string[] => {
+  try {
+    const parsed = JSON.parse(rel.releaseTagsJson || '[]');
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean).slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+};
+
+const formatEpisodeBadge = (rel: PtRelease): string => {
+  const season = Number(rel.seasonNumber || 0);
+  const episode = rel.episodeLabel || (rel.episodeNumber ? String(rel.episodeNumber).padStart(2, '0') : '');
+  if (!episode) return '';
+  return `S${String(season || 1).padStart(2, '0')}E${episode}`;
+};
+
+const parseMissingEpisodes = (sub: PtSubscription): number[] => {
+  try {
+    const parsed = JSON.parse(sub.missingEpisodesJson || '[]');
+    return Array.isArray(parsed) ? parsed.map(Number).filter(Number.isFinite) : [];
+  } catch {
+    return [];
+  }
 };
 
 const statusColor = (status: string) => {
@@ -256,6 +322,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       setSettings({
         downloadRoot: pt.downloadRoot || '',
         pollCron: pt.pollCron || '*/15 * * * *',
+        globalExcludePattern: pt.globalExcludePattern || '',
         cleanupEnabled: pt.cleanupEnabled !== false,
         cleanupCron: pt.cleanupCron || '0 */6 * * *',
         retryIntervalSec: Number(pt.retryIntervalSec || 300),
@@ -342,6 +409,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
   const openEdit = (sub: PtSubscription) => {
     setEditing(sub);
+    const globalExclude = sub.globalExclude !== false && String(sub.globalExclude) !== '0';
     setFormData({
       name: sub.name,
       sourcePreset: sub.sourcePreset || 'generic',
@@ -355,6 +423,21 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       sizeMaxMB: Number(sub.sizeMaxMB) || 0,
       seedersMin: Number(sub.seedersMin) || 0,
       freeOnly: !!sub.freeOnly,
+      episodeDedup: !!sub.episodeDedup,
+      standbyRssJson: sub.standbyRssJson || '',
+      coexist: !!sub.coexist,
+      downloadNew: !!sub.downloadNew,
+      delayedDownloadMinutes: Number(sub.delayedDownloadMinutes) || 0,
+      notDownloadEpisodes: sub.notDownloadEpisodes || '',
+      skipHalfEpisode: !!sub.skipHalfEpisode,
+      customEpisode: !!sub.customEpisode,
+      customEpisodeRegex: sub.customEpisodeRegex || '',
+      customEpisodeGroupIndex: Number(sub.customEpisodeGroupIndex) || 1,
+      episodeOffset: Number(sub.episodeOffset) || 0,
+      omit: !!sub.omit,
+      totalEpisodeNumber: Number(sub.totalEpisodeNumber) || 0,
+      autoDisabled: !!sub.autoDisabled,
+      globalExclude,
       accountId: sub.accountId,
       targetFolderId: sub.targetFolderId,
       targetFolder: sub.targetFolder,
@@ -362,7 +445,10 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
     });
     setShowAdvanced(
       !!(sub.qualityPattern || sub.resolutionPattern || sub.effectPattern
-        || sub.sizeMinMB || sub.sizeMaxMB || sub.seedersMin || sub.freeOnly)
+        || sub.sizeMinMB || sub.sizeMaxMB || sub.seedersMin || sub.freeOnly || sub.episodeDedup
+        || sub.standbyRssJson || sub.coexist || sub.downloadNew || sub.delayedDownloadMinutes
+        || sub.notDownloadEpisodes || sub.skipHalfEpisode || sub.customEpisode || sub.episodeOffset
+        || sub.omit || sub.totalEpisodeNumber || sub.autoDisabled || !globalExclude)
     );
     setIsModalOpen(true);
   };
@@ -757,7 +843,9 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                 <tr><td colSpan={6} className="px-6 py-4 text-center text-slate-500">加载中...</td></tr>
               ) : subs.length === 0 ? (
                 <tr><td colSpan={6} className="px-6 py-4 text-center text-slate-500">暂无 PT 订阅</td></tr>
-              ) : subs.map(sub => (
+              ) : subs.map(sub => {
+                const missingEpisodes = parseMissingEpisodes(sub);
+                return (
                 <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
@@ -776,7 +864,15 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   </td>
                   <td className="px-6 py-4 text-xs text-slate-600">
                     <div className="truncate max-w-[200px]" title={sub.targetFolder}>{sub.targetFolder || sub.targetFolderId}</div>
-                    <div className="text-slate-400">共 {sub.releaseCount || 0} 条</div>
+                    <div className="text-slate-400">
+                      共 {sub.releaseCount || 0} 条
+                      {sub.totalEpisodeNumber > 0 && ` · 进度 ${sub.currentEpisodeNumber || 0}/${sub.totalEpisodeNumber}`}
+                    </div>
+                    {missingEpisodes.length > 0 && (
+                      <div className="mt-1 text-[10px] text-amber-600 truncate max-w-[200px]" title={missingEpisodes.join(', ')}>
+                        缺集 {missingEpisodes.slice(0, 6).join(', ')}{missingEpisodes.length > 6 ? '…' : ''}
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5" title={sub.lastMessage || ''}>
@@ -796,7 +892,8 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -859,7 +956,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           <div className="rounded-2xl border border-slate-200 overflow-hidden">
             <button type="button" onClick={() => setShowAdvanced(v => !v)}
               className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-sm font-medium text-slate-700">
-              <span className="flex items-center gap-2"><Filter size={14} /> 高级过滤（清晰度 / 大小 / 做种数 / Free）</span>
+              <span className="flex items-center gap-2"><Filter size={14} /> 高级规则（过滤 / 去重 / 备用 RSS / 集数）</span>
               {showAdvanced ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
             </button>
             {showAdvanced && (
@@ -919,8 +1016,131 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   label="仅免费 (Free) 资源"
                   labelClassName="text-sm text-slate-700"
                 />
+                <Checkbox
+                  size="sm"
+                  checked={formData.episodeDedup}
+                  onChange={(v) => setFormData({ ...formData, episodeDedup: v })}
+                  label="按季集去重"
+                  labelClassName="text-sm text-slate-700"
+                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Checkbox
+                    size="sm"
+                    checked={formData.coexist}
+                    onChange={(v) => setFormData({ ...formData, coexist: v, episodeDedup: v ? true : formData.episodeDedup })}
+                    label="多字幕组共存"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={formData.downloadNew}
+                    onChange={(v) => setFormData({ ...formData, downloadNew: v })}
+                    label="只下载最新发布批次"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={formData.skipHalfEpisode}
+                    onChange={(v) => setFormData({ ...formData, skipHalfEpisode: v })}
+                    label="跳过 .5 番外集"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={formData.globalExclude}
+                    onChange={(v) => setFormData({ ...formData, globalExclude: v })}
+                    label="启用全局排除规则"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-500">备用 RSS</label>
+                  <textarea
+                    rows={3}
+                    value={formData.standbyRssJson}
+                    onChange={e => setFormData({ ...formData, standbyRssJson: e.target.value })}
+                    placeholder="一行一个：字幕组名|RSS URL|集数偏移&#10;也支持 JSON 数组 [{&quot;label&quot;:&quot;A组&quot;,&quot;url&quot;:&quot;https://...&quot;,&quot;offset&quot;:0}]"
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">延迟下载(分钟)</label>
+                    <input type="number" min={0} value={formData.delayedDownloadMinutes}
+                      onChange={e => setFormData({ ...formData, delayedDownloadMinutes: Number(e.target.value) || 0 })}
+                      placeholder="0 = 不延迟"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">不下载集数</label>
+                    <input type="text" value={formData.notDownloadEpisodes}
+                      onChange={e => setFormData({ ...formData, notDownloadEpisodes: e.target.value })}
+                      placeholder="1, 3, 7-9"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">集数偏移</label>
+                    <input type="number" step="0.5" value={formData.episodeOffset}
+                      onChange={e => setFormData({ ...formData, episodeOffset: Number(e.target.value) || 0 })}
+                      placeholder="0"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-500">总集数</label>
+                    <input type="number" min={0} value={formData.totalEpisodeNumber}
+                      onChange={e => setFormData({ ...formData, totalEpisodeNumber: Number(e.target.value) || 0 })}
+                      placeholder="0 = 不限制"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Checkbox
+                    size="sm"
+                    checked={formData.omit}
+                    onChange={(v) => setFormData({ ...formData, omit: v })}
+                    label="记录缺集"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                  <Checkbox
+                    size="sm"
+                    checked={formData.autoDisabled}
+                    onChange={(v) => setFormData({ ...formData, autoDisabled: v })}
+                    label="达到总集数后自动停用"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                </div>
+
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 space-y-3">
+                  <Checkbox
+                    size="sm"
+                    checked={formData.customEpisode}
+                    onChange={(v) => setFormData({ ...formData, customEpisode: v })}
+                    label="使用自定义集数正则"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                  {formData.customEpisode && (
+                    <div className="grid grid-cols-1 md:grid-cols-[1fr_120px] gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-slate-500">集数提取正则</label>
+                        <input type="text" value={formData.customEpisodeRegex}
+                          onChange={e => setFormData({ ...formData, customEpisodeRegex: e.target.value })}
+                          placeholder="例如: 第(\\d+)话"
+                          className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-slate-500">分组序号</label>
+                        <input type="number" min={0} value={formData.customEpisodeGroupIndex}
+                          onChange={e => setFormData({ ...formData, customEpisodeGroupIndex: Number(e.target.value) || 1 })}
+                          className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-2xl text-xs outline-none" />
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <p className="text-xs text-slate-400">
-                  匹配标题、描述、标签全文。RSS 不提供体积/做种数时（如部分公共 RSS），相关数值过滤自动跳过。
+                  匹配标题、描述、标签全文。作用域规则可写作 {'{{字幕组}}:正则'}；RSS 不提供体积/做种数时，相关数值过滤自动跳过。
                 </p>
               </div>
             )}
@@ -1000,12 +1220,26 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   const sizeText = formatSize(rel.size);
                   const factorText = formatVolumeFactor(rel);
                   const isFreeFactor = factorText.includes('免费') || /^\d+X$/i.test(factorText);
+                  const episodeBadge = formatEpisodeBadge(rel);
+                  const tags = parseReleaseTags(rel);
                   return (
                   <tr key={rel.id} className="hover:bg-slate-50/50">
                     <td className="px-4 py-3">
                       <div className="font-medium text-slate-900 truncate max-w-[300px]" title={rel.title}>{rel.title}</div>
-                      {(sizeText || rel.seeders != null && rel.seeders > 0 || factorText) && (
-                        <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500">
+                      {(sizeText || rel.seeders != null && rel.seeders > 0 || factorText || rel.subgroup || episodeBadge || rel.resolution || rel.quality || tags.length > 0) && (
+                        <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500">
+                          {rel.subgroup && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{rel.subgroup}</span>
+                          )}
+                          {episodeBadge && (
+                            <span className="px-1.5 py-0.5 rounded bg-[#d3e3fd] text-[#0b57d0] font-mono">{episodeBadge}</span>
+                          )}
+                          {rel.resolution && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{rel.resolution}</span>
+                          )}
+                          {rel.quality && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{rel.quality}</span>
+                          )}
                           {sizeText && (
                             <span className="inline-flex items-center gap-0.5">
                               <HardDrive size={11} />{sizeText}
@@ -1024,6 +1258,15 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                           {rel.publishedAt && (
                             <span className="text-slate-400">· 发布 {formatDateTime(rel.publishedAt)}</span>
                           )}
+                        </div>
+                      )}
+                      {tags.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {tags.map(tag => (
+                            <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-500 border border-slate-100">
+                              {tag}
+                            </span>
+                          ))}
                         </div>
                       )}
                       {rel.lastError && <div className="text-[11px] text-red-500 mt-0.5 truncate max-w-[300px]" title={rel.lastError}>{rel.lastError}</div>}
@@ -1140,6 +1383,16 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   <input type="text" value={settings.cleanupCron} onChange={e => setSettings({ ...settings, cleanupCron: e.target.value })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-slate-500">全局排除正则</label>
+                <textarea
+                  rows={3}
+                  value={settings.globalExcludePattern}
+                  onChange={e => setSettings({ ...settings, globalExcludePattern: e.target.value })}
+                  placeholder="一行一个正则；订阅开启“启用全局排除规则”后生效"
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs"
+                />
               </div>
               <Checkbox
                 size="sm"
@@ -1357,9 +1610,20 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                           <div className="text-xs text-slate-400 py-2">暂无资源</div>
                         ) : (
                           <div className="max-h-48 overflow-y-auto space-y-1">
-                            {groupItems.map((item: any, i: number) => (
-                              <div key={i} className="text-xs text-slate-600 py-0.5 truncate" title={item.title}>{item.title}</div>
-                            ))}
+                            {groupItems.map((item: any, i: number) => {
+                              const episode = item.episodeLabel
+                                ? `S${String(item.seasonNumber || 1).padStart(2, '0')}E${item.episodeLabel}`
+                                : '';
+                              const meta = [item.subgroup, episode, item.resolution, item.quality, formatSize(item.size), item.volumeFactor]
+                                .filter(Boolean)
+                                .join(' · ');
+                              return (
+                                <div key={i} className="text-xs text-slate-600 py-0.5" title={item.title}>
+                                  <div className="truncate">{item.title}</div>
+                                  {meta && <div className="text-[10px] text-slate-400 truncate">{meta}</div>}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

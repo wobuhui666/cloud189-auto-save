@@ -9,6 +9,15 @@ const { CB } = require('../constants');
 const { ptSubCard, ptReleaseCard, ptStatusFormat } = require('../templates');
 const { getPtSubscriptionRepository, getPtReleaseRepository } = require('../../../database');
 
+function parseMissingEpisodes(sub) {
+    try {
+        const parsed = JSON.parse(sub.missingEpisodesJson || '[]');
+        return Array.isArray(parsed) ? parsed.map(Number).filter(Number.isFinite) : [];
+    } catch (_) {
+        return [];
+    }
+}
+
 // ─── /pt_subs ───
 async function handlePtSubs(svc, msg) {
     await handlePtSubsPage(svc, msg.chat.id, 1);
@@ -83,6 +92,7 @@ async function handlePtDetail(svc, msg, subId) {
             : '从未';
         const lastStatus = sub.lastStatus === 'ok' ? '✅ 正常' : sub.lastStatus === 'error' ? '❌ 异常' : '未知';
         const lastMsg = sub.lastMessage ? escapeHtml(sub.lastMessage.substring(0, 200)) : '-';
+        const missing = parseMissingEpisodes(sub);
 
         let text = `📡 ${bold('PT 订阅详情')}\n\n` +
             `🆔 ID：${sub.id}\n` +
@@ -91,10 +101,36 @@ async function handlePtDetail(svc, msg, subId) {
             `🔗 RSS：${code(escapeHtml(sub.rssUrl || '-'))}\n` +
             `📂 目标：${escapeHtml(sub.targetFolder || sub.targetFolderId)}\n` +
             `🔘 状态：${status}\n` +
+            `🧩 季集去重：${sub.episodeDedup ? '✅ 开启' : '❌ 关闭'}\n` +
+            `🧬 多字幕组共存：${sub.coexist ? '✅ 开启' : '❌ 关闭'}\n` +
+            `🆕 只下最新批次：${sub.downloadNew ? '✅ 开启' : '❌ 关闭'}\n` +
+            `🌐 全局排除：${sub.globalExclude !== false ? '✅ 开启' : '❌ 关闭'}\n` +
             `🕐 最后检查：${escapeHtml(lastCheck)}\n` +
             `📊 检查结果：${lastStatus}\n` +
             `💬 最后消息：${lastMsg}\n` +
             `📦 Release 数：${sub.releaseCount || 0}\n`;
+
+        if (sub.standbyRssJson) {
+            text += `🧷 备用 RSS：已配置\n`;
+        }
+        if (sub.delayedDownloadMinutes > 0) {
+            text += `⏳ 延迟下载：${sub.delayedDownloadMinutes} 分钟\n`;
+        }
+        if (sub.notDownloadEpisodes) {
+            text += `🚫 不下载集数：${code(escapeHtml(sub.notDownloadEpisodes))}\n`;
+        }
+        if (sub.skipHalfEpisode) {
+            text += `🚫 跳过 .5 集：✅ 开启\n`;
+        }
+        if (sub.customEpisode) {
+            text += `🔢 自定义集数：${code(escapeHtml(sub.customEpisodeRegex || '-'))} #${sub.customEpisodeGroupIndex || 1}\n`;
+        }
+        if (sub.totalEpisodeNumber > 0) {
+            text += `📈 进度：${sub.currentEpisodeNumber || 0}/${sub.totalEpisodeNumber}${sub.autoDisabled ? '（满集自动停用）' : ''}\n`;
+        }
+        if (missing.length > 0) {
+            text += `⚠️ 缺集：${escapeHtml(missing.slice(0, 20).join(', '))}${missing.length > 20 ? '...' : ''}\n`;
+        }
 
         if (sub.includePattern) {
             text += `✅ 包含正则：${code(escapeHtml(sub.includePattern))}\n`;

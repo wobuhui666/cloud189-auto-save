@@ -725,6 +725,57 @@ export class PtSubscription {
     @Column('boolean', { default: false })
     freeOnly!: boolean;
 
+    @Column('boolean', { default: false })
+    episodeDedup!: boolean;
+
+    @Column('text', { nullable: true, default: '' })
+    standbyRssJson!: string;
+
+    @Column('boolean', { default: false })
+    coexist!: boolean;
+
+    @Column('boolean', { default: false })
+    downloadNew!: boolean;
+
+    @Column('integer', { nullable: true, default: 0 })
+    delayedDownloadMinutes!: number;
+
+    @Column('text', { nullable: true, default: '' })
+    notDownloadEpisodes!: string;
+
+    @Column('boolean', { default: false })
+    skipHalfEpisode!: boolean;
+
+    @Column('boolean', { default: false })
+    customEpisode!: boolean;
+
+    @Column('text', { nullable: true, default: '' })
+    customEpisodeRegex!: string;
+
+    @Column('integer', { nullable: true, default: 1 })
+    customEpisodeGroupIndex!: number;
+
+    @Column('float', { nullable: true, default: 0 })
+    episodeOffset!: number;
+
+    @Column('boolean', { default: false })
+    omit!: boolean;
+
+    @Column('text', { nullable: true, default: '' })
+    missingEpisodesJson!: string;
+
+    @Column('integer', { nullable: true, default: 0 })
+    totalEpisodeNumber!: number;
+
+    @Column('integer', { nullable: true, default: 0 })
+    currentEpisodeNumber!: number;
+
+    @Column('boolean', { default: false })
+    autoDisabled!: boolean;
+
+    @Column('boolean', { default: true })
+    globalExclude!: boolean;
+
     @Column('integer')
     accountId!: number;
 
@@ -776,6 +827,7 @@ export class PtSubscription {
 @Entity()
 @Index('idx_pt_release_sub_status_id', ['subscriptionId', 'status', 'id'])
 @Index('idx_pt_release_sub_guid', ['subscriptionId', 'guid'])
+@Index('idx_pt_release_sub_episode', ['subscriptionId', 'seasonNumber', 'episodeNumber'])
 export class PtRelease {
     @PrimaryGeneratedColumn()
     id!: number;
@@ -795,6 +847,30 @@ export class PtRelease {
 
     @Column('text')
     title!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    rawTitle!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    subgroup!: string;
+
+    @Column('integer', { nullable: true })
+    seasonNumber!: number | null;
+
+    @Column('float', { nullable: true })
+    episodeNumber!: number | null;
+
+    @Column('text', { nullable: true, default: '' })
+    episodeLabel!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    resolution!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    quality!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    releaseTagsJson!: string;
 
     @Column('text', { nullable: true, default: '' })
     magnetUrl!: string;

@@ -2,11 +2,15 @@ const got = require('got');
 const { logTaskEvent } = require('../utils/logUtils');
 const ProxyUtil = require('../utils/ProxyUtil');
 const {
+    applySubscriptionEpisodeRules,
     decodeHtmlEntities,
     extractInfoHashFromMagnet,
+    extractReleaseMetadata,
     extractUrlCandidates,
     matchReleaseFilters,
+    normalizeInfoHash,
     normalizeWhitespace,
+    parseStandbyRssList,
     parseNumber,
     parseSizeToBytes,
     resolveUrl,
@@ -78,22 +82,55 @@ class PtSourceService {
         }
 
         const proxyService = this.getProxyService(subscription.sourcePreset || 'generic');
-        const proxyAgent = proxyService ? ProxyUtil.getProxyAgent(proxyService) : {};
+        const feedEntries = this._getSubscriptionFeedEntries(subscription, rssUrl);
+        const items = [];
 
-        const response = await got(rssUrl, {
-            method: 'GET',
-            responseType: 'text',
-            headers: DEFAULT_HEADERS,
-            timeout: { request: 30000 },
-            retry: { limit: 1 },
-            ...proxyAgent
-        });
+        for (const entry of feedEntries) {
+            try {
+                const feedXml = await this._fetch(entry.url, proxyService, 30000);
+                const feedItems = this.parseFeedItems(feedXml, entry.url)
+                    .filter((item) => item.title)
+                    .map((item) => applySubscriptionEpisodeRules(item, subscription, entry))
+                    .map((item) => ({
+                        ...item,
+                        sourceRssUrl: entry.url,
+                        master: entry.master,
+                        standbyLabel: entry.master ? '' : entry.label
+                    }));
+                items.push(...feedItems);
+            } catch (error) {
+                if (entry.master) {
+                    throw error;
+                }
+                logTaskEvent(`[PT] 备用 RSS 拉取失败 ${entry.label || entry.url}: ${error.message || error}`);
+            }
+        }
 
-        const items = this.parseFeedItems(response.body, rssUrl)
-            .filter((item) => item.title)
+        return items
             .filter((item) => matchReleaseFilters(item, subscription));
+    }
 
-        return items;
+    _getSubscriptionFeedEntries(subscription = {}, rssUrl = '') {
+        const entries = [{
+            url: rssUrl,
+            label: '主 RSS',
+            master: true,
+            offset: 0
+        }];
+        const seen = new Set([rssUrl]);
+        for (const standby of parseStandbyRssList(subscription.standbyRssJson)) {
+            if (!standby.url || seen.has(standby.url)) {
+                continue;
+            }
+            seen.add(standby.url);
+            entries.push({
+                url: standby.url,
+                label: standby.label,
+                master: false,
+                offset: standby.offset || 0
+            });
+        }
+        return entries;
     }
 
     parseFeedItems(feedXml = '', baseUrl = '') {
@@ -136,11 +173,12 @@ class PtSourceService {
         }
 
         const description = this._getFirstTagText(block, ['description', 'summary', 'content', 'content:encoded']);
+        const author = normalizeWhitespace(this._getFirstTagText(block, ['author', 'dc:creator', 'itunes:author']));
         const guid = normalizeWhitespace(
             this._getFirstTagText(block, ['guid', 'id'])
             || ''
         );
-        const infoHashTag = normalizeWhitespace(this._getFirstTagText(block, ['infoHash', 'nyaa:infoHash', 'torrent:infohash']));
+        const infoHashTag = normalizeInfoHash(this._getFirstTagText(block, ['infoHash', 'infohash', 'nyaa:infoHash', 'torrent:infohash']));
         const publishedRaw = this._getFirstTagText(block, ['pubDate', 'published', 'updated']);
         const size = this._extractSize(block);
         const labels = this._extractLabels(block, description);
@@ -155,7 +193,14 @@ class PtSourceService {
         const magnetUrl = linkCandidates.find((link) => /^magnet:/i.test(link)) || '';
         const torrentUrl = linkCandidates.find((link) => this._looksLikeTorrentUrl(link)) || '';
         const detailsUrl = linkCandidates.find((link) => /^https?:/i.test(link) && !this._looksLikeTorrentUrl(link)) || '';
-        const infoHash = infoHashTag || extractInfoHashFromMagnet(magnetUrl);
+        const infoHash = infoHashTag || normalizeInfoHash(extractInfoHashFromMagnet(magnetUrl));
+        const metadata = extractReleaseMetadata(title, description, labels);
+        if (author && !metadata.subgroup) {
+            metadata.subgroup = author;
+        }
+        if (author) {
+            labels.push(author);
+        }
 
         const normalizedGuid = guid
             || infoHash
@@ -166,8 +211,10 @@ class PtSourceService {
 
         return {
             guid: normalizedGuid,
+            rawTitle: normalizeWhitespace(rawTitle),
             title,
             description: stripHtml(description),
+            author,
             magnetUrl,
             torrentUrl,
             detailsUrl,
@@ -179,6 +226,7 @@ class PtSourceService {
             downloadVolumeFactor,
             uploadVolumeFactor,
             labels,
+            ...metadata,
             volumeFactor: this._formatVolumeFactor(uploadVolumeFactor, downloadVolumeFactor, labels),
             publishedAt: this._parseDate(publishedRaw),
             rawPublishedAt: normalizeWhitespace(publishedRaw),
@@ -191,6 +239,10 @@ class PtSourceService {
         const linkText = this._getFirstTagText(block, ['link']);
         if (linkText) {
             links.push(resolveUrl(baseUrl, decodeHtmlEntities(linkText)));
+        }
+        const guidText = this._getFirstTagText(block, ['guid', 'id']);
+        if (/^(?:https?:|magnet:)/i.test(guidText)) {
+            links.push(resolveUrl(baseUrl, decodeHtmlEntities(guidText)));
         }
 
         const atomLinkPattern = /<link\b([^>]*?)\/?>/gi;
@@ -213,15 +265,23 @@ class PtSourceService {
             }
         }
 
-        // <enclosure> 标签（Mikan 等站点使用）
-        const enclosurePattern = /<enclosure\b([^>]*?)\/?>/gi;
-        let encMatch = null;
-        while ((encMatch = enclosurePattern.exec(block)) !== null) {
-            const attrs = encMatch[1] || '';
-            const url = this._readAttribute(attrs, 'url');
-            if (url) {
-                const resolved = resolveUrl(baseUrl, decodeHtmlEntities(url));
-                if (resolved) links.push(resolved);
+        for (const tagName of ['enclosure', 'media:content', 'media:thumbnail']) {
+            const attrPattern = new RegExp(`<${tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b([^>]*?)\\/?>`, 'gi');
+            let attrMatch = null;
+            while ((attrMatch = attrPattern.exec(block)) !== null) {
+                const attrs = attrMatch[1] || '';
+                const url = this._readAttribute(attrs, 'url') || this._readAttribute(attrs, 'href');
+                if (url) {
+                    const resolved = resolveUrl(baseUrl, decodeHtmlEntities(url));
+                    if (resolved) links.push(resolved);
+                }
+            }
+        }
+
+        for (const tagName of ['torrent:magneturi', 'torrent:magnetURI', 'magneturi', 'magnetURI', 'magnet']) {
+            const value = normalizeWhitespace(this._getFirstTagText(block, [tagName]));
+            if (/^magnet:/i.test(value)) {
+                links.push(value);
             }
         }
 
@@ -235,7 +295,9 @@ class PtSourceService {
             || normalized.includes('/download.php')
             || normalized.includes('/download/')
             || normalized.includes('download?')
-            || normalized.includes('torrent/download');
+            || normalized.includes('torrent/download')
+            || normalized.includes('action=download')
+            || normalized.includes('download=1');
     }
 
     _getFirstTagText(block = '', tagNames = []) {
@@ -308,9 +370,10 @@ class PtSourceService {
     }
 
     _readAttribute(attrs = '', attrName = '') {
-        const pattern = new RegExp(`${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
+        const escaped = attrName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(`${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i');
         const match = String(attrs || '').match(pattern);
-        return match ? match[1] : '';
+        return match ? (match[1] || match[2] || match[3] || '') : '';
     }
 
     _parseDate(value = '') {
@@ -357,7 +420,22 @@ class PtSourceService {
         const items = this.parseFeedItems(feedXml, rssUrl);
         return items.slice(0, 50).map(item => ({
             title: item.title,
-            publishedAt: item.publishedAt || null
+            rawTitle: item.rawTitle || item.title,
+            publishedAt: item.publishedAt || null,
+            size: item.size || 0,
+            seeders: item.seeders || 0,
+            peers: item.peers || 0,
+            subgroup: item.subgroup || item.author || '',
+            seasonNumber: item.seasonNumber || null,
+            episodeNumber: item.episodeNumber || null,
+            episodeLabel: item.episodeLabel || '',
+            resolution: item.resolution || '',
+            quality: item.quality || '',
+            codec: item.codec || '',
+            effect: item.effect || '',
+            subtitleType: item.subtitleType || '',
+            volumeFactor: item.volumeFactor || '',
+            tags: item.tags || []
         }));
     }
 
@@ -662,14 +740,9 @@ class PtSourceService {
             // 从标题提取 [字幕组名] 模式
             const teamMap = new Map();
             for (const item of items) {
-                const m = item.title.match(/\[([^\]]{2,30})\]/);
-                if (m) {
-                    const team = m[1].trim();
-                    // 过滤掉纯数字、编码格式等非字幕组标签
-                    if (!/^\d+$/.test(team) && !/^(HEVC|AVC|AAC|FLAC|WebRip|BDRip|MKV|MP4|1080p|720p|2160p|4K|简|繁|日|内封|内嵌)$/i.test(team)) {
-                        if (!teamMap.has(team)) teamMap.set(team, 0);
-                        teamMap.set(team, teamMap.get(team) + 1);
-                    }
+                const team = item.subgroup || '';
+                if (team) {
+                    teamMap.set(team, (teamMap.get(team) || 0) + 1);
                 }
             }
             // 按出现次数排序，取前 10
@@ -709,12 +782,9 @@ class PtSourceService {
             totalCount = items.length;
             preview = items.slice(0, 5).map(item => item.title);
 
-            // 从 RSS <author> 标签提取字幕组
-            const authorPattern = /<author><!\[CDATA\[([^\]]+)\]\]><\/author>/gi;
             const teamMap = new Map();
-            let am;
-            while ((am = authorPattern.exec(feedXml)) !== null) {
-                const name = am[1].trim();
+            for (const item of items) {
+                const name = item.author || item.subgroup || '';
                 if (name) {
                     teamMap.set(name, (teamMap.get(name) || 0) + 1);
                 }

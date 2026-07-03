@@ -203,6 +203,15 @@ function ptStatusFormat(status) {
     return map[status] || status;
 }
 
+function parsePtMissingEpisodes(sub) {
+    try {
+        const parsed = JSON.parse(sub.missingEpisodesJson || '[]');
+        return Array.isArray(parsed) ? parsed.map(Number).filter(Number.isFinite) : [];
+    } catch (_) {
+        return [];
+    }
+}
+
 /**
  * PT 订阅卡片
  */
@@ -212,11 +221,22 @@ function ptSubCard(sub, index) {
         ? new Date(sub.lastCheckTime).toLocaleString('zh-CN')
         : '从未';
     const lastStatus = sub.lastStatus === 'ok' ? '✅ 正常' : sub.lastStatus === 'error' ? '❌ 异常' : '未知';
+    const progress = sub.totalEpisodeNumber > 0
+        ? `${sub.currentEpisodeNumber || 0}/${sub.totalEpisodeNumber}`
+        : '';
+    const missing = parsePtMissingEpisodes(sub);
+    const missingLine = missing.length
+        ? `   缺集：${escapeHtml(missing.slice(0, 10).join(', '))}${missing.length > 10 ? '...' : ''}\n`
+        : '';
 
     return (
         `${index != null ? `${index}. ` : ''}📡 ${bold(escapeHtml(sub.name))}\n` +
         `   来源：${escapeHtml(sub.sourcePreset)}\n` +
         `   状态：${status}\n` +
+        `   季集去重：${sub.episodeDedup ? '✅ 开启' : '❌ 关闭'}${sub.coexist ? ' / 共存' : ''}\n` +
+        `   最新批次：${sub.downloadNew ? '✅ 开启' : '❌ 关闭'}\n` +
+        (progress ? `   进度：${escapeHtml(progress)}\n` : '') +
+        missingLine +
         `   最后检查：${escapeHtml(lastCheck)}\n` +
         `   检查结果：${lastStatus}\n` +
         `   Release 数：${sub.releaseCount || 0}\n` +
@@ -237,10 +257,16 @@ function ptReleaseCard(rel, index) {
     const updated = rel.updatedAt
         ? new Date(rel.updatedAt).toLocaleString('zh-CN')
         : '-';
+    const episode = rel.episodeLabel
+        ? `S${String(rel.seasonNumber || 1).padStart(2, '0')}E${rel.episodeLabel}`
+        : '';
+    const meta = [rel.subgroup, episode, rel.resolution, rel.quality].filter(Boolean).join(' · ');
+    const metaLine = meta ? `   ${escapeHtml(meta)}\n` : '';
     const error = rel.lastError ? `\n   ❗ ${escapeHtml(rel.lastError.substring(0, 100))}` : '';
 
     return (
         `${index != null ? `${index}. ` : ''}${bold(escapeHtml(rel.title))}\n` +
+        metaLine +
         `   状态：${status}${progress}\n` +
         `   更新：${escapeHtml(updated)}${error}`
     );

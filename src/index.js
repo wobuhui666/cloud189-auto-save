@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const { AppDataSource, ensureDatabaseIndexes } = require('./database');
+const { AppDataSource, ensureDatabaseColumns, ensureDatabaseIndexes } = require('./database');
 const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun } = require('./entities');
 const { TaskService } = require('./services/task');
 const { Cloud189Service } = require('./services/cloud189');
@@ -852,6 +852,7 @@ AppDataSource.initialize().then(async () => {
     const currentVersion = packageJson.version;
     console.log(`当前系统版本: ${currentVersion}`);
     console.log('数据库连接成功');
+    await ensureDatabaseColumns();
     await ensureDatabaseIndexes();
 
     // 初始化 STRM 目录权限
@@ -3038,6 +3039,21 @@ AppDataSource.initialize().then(async () => {
                 sizeMaxMB: Number(req.body.sizeMaxMB) || 0,
                 seedersMin: Number(req.body.seedersMin) || 0,
                 freeOnly: !!req.body.freeOnly,
+                episodeDedup: !!req.body.episodeDedup,
+                standbyRssJson: req.body.standbyRssJson || '',
+                coexist: !!req.body.coexist,
+                downloadNew: !!req.body.downloadNew,
+                delayedDownloadMinutes: Number(req.body.delayedDownloadMinutes) || 0,
+                notDownloadEpisodes: req.body.notDownloadEpisodes || '',
+                skipHalfEpisode: !!req.body.skipHalfEpisode,
+                customEpisode: !!req.body.customEpisode,
+                customEpisodeRegex: req.body.customEpisodeRegex || '',
+                customEpisodeGroupIndex: Number(req.body.customEpisodeGroupIndex) || 1,
+                episodeOffset: Number(req.body.episodeOffset) || 0,
+                omit: !!req.body.omit,
+                totalEpisodeNumber: Number(req.body.totalEpisodeNumber) || 0,
+                autoDisabled: !!req.body.autoDisabled,
+                globalExclude: req.body.globalExclude !== false,
                 accountId,
                 targetFolderId,
                 targetFolder,
@@ -3065,15 +3081,21 @@ AppDataSource.initialize().then(async () => {
                 'name', 'sourcePreset', 'rssUrl',
                 'includePattern', 'excludePattern',
                 'qualityPattern', 'resolutionPattern', 'effectPattern',
-                'sizeMinMB', 'sizeMaxMB', 'seedersMin', 'freeOnly',
+                'sizeMinMB', 'sizeMaxMB', 'seedersMin', 'freeOnly', 'episodeDedup',
+                'standbyRssJson', 'coexist', 'downloadNew', 'delayedDownloadMinutes',
+                'notDownloadEpisodes', 'skipHalfEpisode', 'customEpisode', 'customEpisodeRegex',
+                'customEpisodeGroupIndex', 'episodeOffset', 'omit', 'totalEpisodeNumber',
+                'autoDisabled', 'globalExclude',
                 'accountId', 'targetFolderId', 'targetFolder', 'enabled'
             ];
-            const numericFields = new Set(['sizeMinMB', 'sizeMaxMB', 'seedersMin']);
-            const booleanFields = new Set(['freeOnly', 'enabled']);
+            const numericFields = new Set(['sizeMinMB', 'sizeMaxMB', 'seedersMin', 'delayedDownloadMinutes', 'customEpisodeGroupIndex', 'episodeOffset', 'totalEpisodeNumber']);
+            const booleanFields = new Set(['freeOnly', 'episodeDedup', 'coexist', 'downloadNew', 'skipHalfEpisode', 'customEpisode', 'omit', 'autoDisabled', 'globalExclude', 'enabled']);
             fields.forEach((f) => {
                 if (req.body[f] === undefined) return;
                 if (numericFields.has(f)) {
-                    sub[f] = Number(req.body[f]) || 0;
+                    sub[f] = f === 'customEpisodeGroupIndex'
+                        ? (Number(req.body[f]) || 1)
+                        : (Number(req.body[f]) || 0);
                 } else if (booleanFields.has(f)) {
                     sub[f] = !!req.body[f];
                 } else {

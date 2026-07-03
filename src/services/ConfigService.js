@@ -47,6 +47,7 @@ class ConfigService {
       pt: {
         downloadRoot: '',              // qb 下载根目录（容器内可见路径）
         pollCron: '*/15 * * * *',      // RSS 拉取 cron
+        globalExcludePattern: '',      // PT 全局排除正则（订阅可单独关闭）
         cleanupEnabled: true,          // 是否清理已完成的 release（qb 任务 + 本地文件）
         cleanupCron: '0 */6 * * *',
         retryIntervalSec: 300,         // release 失败重试间隔
