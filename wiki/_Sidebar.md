@@ -7,12 +7,14 @@
 ### 核心功能
 - [[Features]]
 - [[Tasks]]
+- [[FileManager]]
 - [[AutoSeries]]
 - [[HDHive]]
 - [[CAS]]
 - [[Organizer]]
 - [[Subscription]]
 - [[PT]]
+- [[PosterWall]]
 
 ### 媒体中心
 - [[Emby]]

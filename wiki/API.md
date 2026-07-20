@@ -6,13 +6,23 @@ Cloud189 Auto Save 提供一组面向自动化脚本和第三方工具的 REST A
 
 ## 1. 认证要求
 
-所有请求都需要在 Header 中带上系统 API Key：
+### API Key
+
+自动化调用推荐在 Header 中带上系统 API Key：
 
 ```http
 x-api-key: YOUR_SYSTEM_API_KEY
 ```
 
-系统 API Key 可在 [[SystemSettings]] 中查看或重新生成。
+系统 API Key 可在 [[SystemSettings]] 中查看或重新生成。`authenticateSession` 会用常量时间比较匹配 `system.apiKey`。
+
+### Session
+
+浏览器 Web 控制台使用 Cookie Session（`data/sessions/`）。登录后同一会话可直接调用业务接口。
+
+### 白名单（无需登录 / 可无 API Key）
+
+包括但不限于：`/`、`/login`、`/api/auth/login`、`/api/stream/*`、`/emby-proxy*`、`/emby/notify`、`/assets/*` 及静态资源后缀。
 
 ---
 
@@ -41,15 +51,19 @@ x-api-key: YOUR_SYSTEM_API_KEY
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
 | GET | `/api/accounts` | 获取账号列表 |
-| POST | `/api/accounts` | 添加账号 |
+| POST | `/api/accounts` | 添加账号（密码 / Cookie） |
 | DELETE | `/api/accounts/:id` | 删除账号 |
 | PUT | `/api/accounts/:id/alias` | 修改账号别名 |
 | PUT | `/api/accounts/:id/strm-prefix` | 修改云端/本地路径前缀或 Emby 替换路径 |
 | PUT | `/api/accounts/:id/default` | 设置默认账号 |
+| PUT | `/api/accounts/:id/family-folder` | 设置家庭云文件夹 |
+| GET | `/api/accounts/:id/family/folders` | 获取家庭云目录 |
 | DELETE | `/api/accounts/recycle` | 清空回收站 |
 | GET | `/api/accounts/storage-summary` | 获取个人容量和家庭容量聚合 |
 | POST | `/api/accounts/refresh-capacity` | 刷新账号容量缓存 |
 | POST | `/api/accounts/keep-alive` | 手动执行账号 Session 保活 |
+| GET | `/api/accounts/qr-code` | 获取天翼扫码登录二维码 |
+| POST | `/api/accounts/qr-status` | 轮询扫码登录状态并落库账号 |
 
 ### `PUT /api/accounts/:id/strm-prefix`
 
@@ -62,11 +76,7 @@ x-api-key: YOUR_SYSTEM_API_KEY
 }
 ```
 
-`type` 支持：
-
-- `cloud`：云端媒体目录前缀
-- `local`：本地目录前缀
-- `emby`：Emby 替换路径
+`type` 支持：`cloud`（云端媒体目录前缀）、`local`（本地目录前缀）、`emby`（Emby 替换路径）。
 
 ---
 
@@ -84,6 +94,7 @@ x-api-key: YOUR_SYSTEM_API_KEY
 | POST | `/api/tasks/:id/manual-tmdb` | 手动绑定任务 TMDB 信息 |
 | POST | `/api/tasks/executeAll` | 执行所有任务 |
 | POST | `/api/tasks/strm` | 根据任务批量生成 STRM |
+| POST | `/api/tasks/strm/rebuild` | 重建任务 STRM |
 | PUT | `/api/tasks/batch/status` | 批量修改任务状态 |
 | DELETE | `/api/tasks/batch` | 批量删除任务 |
 | DELETE | `/api/tasks/files` | 批量删除任务相关文件 |
@@ -107,6 +118,8 @@ x-api-key: YOUR_SYSTEM_API_KEY
 GET /api/file-manager/list?accountId=1&folderId=-11
 ```
 
+Web 使用说明见 [[FileManager]]。
+
 ---
 
 ## 6. 自动追剧
@@ -126,10 +139,7 @@ GET /api/file-manager/list?accountId=1&folderId=-11
 }
 ```
 
-`mode` 支持：
-
-- `normal`
-- `lazy`
+`mode` 支持：`normal`、`lazy`。
 
 如果手动选择资源后创建，还可以附带：
 
@@ -161,7 +171,23 @@ GET /api/file-manager/list?accountId=1&folderId=-11
 
 ---
 
-## 8. STRM
+## 8. 榜单订阅（海报墙）
+
+按周期拉取豆瓣 / TMDB / Bangumi 榜单，新条目优先走自动追剧，失败可回退 PT。详见 [[PosterWall]]。
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| GET | `/api/list-subscriptions` | 列表 |
+| POST | `/api/list-subscriptions` | 创建 |
+| PUT | `/api/list-subscriptions/:id` | 更新 |
+| DELETE | `/api/list-subscriptions/:id` | 删除 |
+| POST | `/api/list-subscriptions/:id/run` | 立即执行一次 |
+
+创建体常用字段：`source`（`douban` / `tmdb` / `bangumi`）、`category`、`cron`、`limit`、`mode`（`lazy`/`normal`）、`fallbackToPt`、`ptPreset`、`name`、`enabled`。
+
+---
+
+## 9. STRM
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
@@ -177,7 +203,7 @@ GET /api/file-manager/list?accountId=1&folderId=-11
 
 ---
 
-## 9. CAS 秒传
+## 10. CAS 秒传
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
@@ -193,23 +219,63 @@ GET /api/file-manager/list?accountId=1&folderId=-11
 | POST | `/api/cas/generate-folder-files` | 批量生成云端 CAS 文件 |
 | POST | `/api/cas/export-folder-to-cloud` | 将文件夹导出为云端 CAS 文件 |
 | POST | `/api/cas/export-folder` | 导出文件夹 CAS 信息 |
+| POST | `/api/cas/import` | multipart 上传 `.cas`/`.zip` 创建导入任务 |
+| GET | `/api/cas/import/jobs` | 导入任务列表 |
+| GET | `/api/cas/import/jobs/:id` | 导入任务详情 |
+| POST | `/api/cas/import/jobs/:id/retry` | 重试失败项 |
+| DELETE | `/api/cas/import/jobs/:id` | 删除任务；`?deleteStrm=1` 同时删 STRM |
+| GET | `/api/cas/import/strm` | 浏览导入 STRM |
+| DELETE | `/api/cas/import/strm` | 删除导入相关 STRM |
+| GET | `/api/cas/metadata/share` | 列出分享懒 STRM cas-metadata |
+| DELETE | `/api/cas/metadata/share` | 清理分享 cas-metadata |
+
+更完整的字段说明见 [[CAS]]。
 
 ---
 
-## 10. 系统与媒体设置
+## 11. PT 订阅
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
-| GET | `/api/settings` | 获取系统设置 |
-| POST | `/api/settings` | 保存系统设置 |
-| POST | `/api/settings/telegram/test` | 测试 Telegram 配置 |
-| POST | `/api/settings/media` | 保存媒体设置 |
-| GET | `/api/settings/regex-presets` | 获取正则预设 |
-| POST | `/api/settings/regex-presets` | 保存正则预设 |
+| GET | `/api/pt/sources/presets` | 站点预设列表 |
+| GET | `/api/pt/sources/search` | 单站搜索（`preset` + `keyword`） |
+| GET | `/api/pt/sources/search-all` | 聚合搜索 |
+| GET | `/api/pt/sources/groups` | 字幕组列表 |
+| GET | `/api/pt/sources/group-items` | 字幕组资源 |
+| POST | `/api/pt/downloader/test` | 测试 qBittorrent 连接 |
+| GET | `/api/pt/subscriptions` | 订阅列表 |
+| POST | `/api/pt/subscriptions` | 创建订阅 |
+| PUT | `/api/pt/subscriptions/:id` | 更新订阅 |
+| DELETE | `/api/pt/subscriptions/:id` | 删除订阅 |
+| POST | `/api/pt/subscriptions/:id/refresh` | 刷新 RSS |
+| POST | `/api/pt/subscriptions/dedupe` | 订阅去重 |
+| GET | `/api/pt/subscriptions/:id/releases` | 某订阅的 release |
+| GET | `/api/pt/releases` | 全部 release |
+| POST | `/api/pt/releases/:id/retry` | 重试 release |
+| POST | `/api/pt/releases/:id/rebuild-strm` | 重建单个 STRM |
+| POST | `/api/pt/releases/rebuild-strm-all` | 批量重建 STRM |
+| DELETE | `/api/pt/releases/:id` | 删除 release |
+| POST | `/api/pt/process` | 手动触发 PT 处理队列 |
+
+详见 [[PT]]。
 
 ---
 
-## 11. AI 助手
+## 12. 系统与媒体设置
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| GET | `/api/settings` | 获取系统设置（敏感字段脱敏） |
+| POST | `/api/settings` | 保存系统设置（含影巢完整配置、推送、代理、任务调度等） |
+| POST | `/api/settings/telegram/test` | 测试 Telegram 配置 |
+| POST | `/api/settings/media` | 保存媒体设置（AI/STRM/Emby/CAS 等） |
+| GET | `/api/settings/regex-presets` | 获取正则预设 |
+| POST | `/api/settings/regex-presets` | 保存正则预设 |
+| GET | `/api/version` | 获取当前版本 |
+
+---
+
+## 13. AI 助手
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
@@ -217,19 +283,15 @@ GET /api/file-manager/list?accountId=1&folderId=-11
 | POST | `/api/chat/enhanced` | 根据用户消息返回可执行工具建议 |
 | POST | `/api/chat/execute-function` | 执行增强助手工具函数 |
 
-`/api/chat/enhanced` 会返回工具清单和建议动作。可用工具包括账号列表、容量聚合、刷新容量、账号 Session 保活、执行任务、清理任务缓存、搜索 TMDB 和创建任务。
-
-写操作必须在前端二次确认后再调用 `/api/chat/execute-function`。
+`/api/chat/enhanced` 可用工具包括账号列表、容量聚合、刷新容量、账号 Session 保活、执行任务、清理任务缓存、搜索 TMDB 和创建任务。写操作必须在前端二次确认后再调用 `/api/chat/execute-function`。
 
 ---
 
-## 12. CloudSaver
+## 14. CloudSaver
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
 | GET | `/api/cloudsaver/search` | 搜索 CloudSaver 资源 |
-
-示例：
 
 ```http
 GET /api/cloudsaver/search?keyword=庆余年
@@ -237,9 +299,7 @@ GET /api/cloudsaver/search?keyword=庆余年
 
 ---
 
-## 13. 影巢资源
-
-影巢接口用于状态检查、OAuth、网页登录取 Cookie、Bridge Cookie 同步、签到、积分日志、资源查询和解锁。
+## 15. 影巢资源
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
@@ -276,19 +336,46 @@ x-api-key: YOUR_SYSTEM_API_KEY
 }
 ```
 
-Bridge 部署和配置见 [[HDHiveBridge]]，Web 端使用见 [[HDHive]]。
+Bridge 部署见 [[HDHiveBridge]]，使用见 [[HDHive]]。
 
 ---
 
-## 14. 其他常用接口
+## 16. 媒体发现（海报墙数据源）
+
+| 方法 | 路径 | 说明 |
+| :--- | :--- | :--- |
+| GET | `/api/tmdb/search` | 搜索 TMDB |
+| GET | `/api/tmdb/trending/:mediaType/:timeWindow` | 趋势 |
+| GET | `/api/tmdb/discover/:mediaType` | 发现 |
+| GET | `/api/tmdb/:mediaType/top_rated` | 高分 |
+| GET | `/api/tmdb/:type/:id` | 详情 |
+| GET | `/api/douban/recent_hot/:kind` | 豆瓣近期热门 |
+| GET | `/api/douban/search` | 豆瓣搜索 |
+| GET | `/api/douban/top250` | 豆瓣 Top250 |
+| GET | `/api/bangumi/calendar` | Bangumi 放送表 |
+| GET | `/api/bangumi/today` | 今日放送 |
+| GET | `/api/bangumi/ranking` | 排行 |
+| GET | `/api/bangumi/weekday/:id` | 按星期 |
+| GET | `/api/bangumi/search` | 搜索 |
+| GET | `/api/image-proxy` | 图片代理 |
+
+---
+
+## 17. 其他常用接口
 
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
 | GET | `/api/folders/:accountId` | 获取目录树 |
-| POST | `/api/share/parse` | 解析分享链接 |
-| GET | `/api/tmdb/search` | 搜索 TMDB 信息 |
-| GET | `/api/version` | 获取当前版本 |
+| GET | `/api/share/folders/:accountId` | 分享目录 |
 | GET | `/api/folder/files` | 获取任务相关目录文件列表 |
+| POST | `/api/share/parse` | 解析分享链接 |
+| POST | `/api/files/rename` | 任务文件重命名 |
+| POST | `/api/files/ai-rename` | AI 重命名 |
+| POST | `/api/organizer/tasks/:id/run` | 执行整理器 |
+| GET | `/api/organizer/tasks` | 整理器任务列表 |
+| POST | `/api/custom-push/test` | 测试自定义推送 |
+| GET | `/api/stream/:token` | 流媒体代理播放（白名单） |
+| POST | `/emby/notify` | Emby Webhook 入库通知 |
 
 ---
 

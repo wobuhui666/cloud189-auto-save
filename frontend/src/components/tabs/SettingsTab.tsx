@@ -346,7 +346,24 @@ const SettingsTab: React.FC = () => {
               allowedChatIds: loaded.telegram?.bot?.allowedChatIds || [],
               adminChatIds: loaded.telegram?.bot?.adminChatIds || [],
             }
-          }
+          },
+          wecom: {
+            ...initialSettings.wecom,
+            ...(loaded.wecom || {}),
+          },
+          bark: {
+            ...initialSettings.bark,
+            ...(loaded.bark || {}),
+          },
+          wxpusher: {
+            ...initialSettings.wxpusher,
+            ...(loaded.wxpusher || {}),
+          },
+          pushplus: {
+            ...initialSettings.pushplus,
+            ...(loaded.pushplus || {}),
+          },
+          customPush: Array.isArray(loaded.customPush) ? loaded.customPush : initialSettings.customPush,
         };
         setSettings(prev => ({ ...initialSettings, ...normalized, regexPresets: prev.regexPresets }));
       }
@@ -1004,13 +1021,148 @@ const SettingsTab: React.FC = () => {
             {settings.wecom.enable && (
               <div className="px-4 animate-in slide-in-from-top-2 duration-200">
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Webhook URL</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={settings.wecom.webhook}
                   onChange={(e) => updateSettings('wecom.webhook', e.target.value)}
                   className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
                   placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
                 />
+              </div>
+            )}
+          </div>
+
+          {/* Bark */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-[#e8def8] text-[#6750a4] flex items-center justify-center">
+                  <Bell size={20} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-900">Bark 推送</p>
+                  <p className="text-xs text-slate-500">iOS Bark App，服务端地址 + 设备 Key</p>
+                </div>
+              </div>
+              <Switch checked={settings.bark.enable} onChange={(v) => updateSettings('bark.enable', v)} />
+            </div>
+            {settings.bark.enable && (
+              <div className="px-4 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-200">
+                <div>
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">Server URL</label>
+                  <input
+                    type="text"
+                    value={settings.bark.serverUrl}
+                    onChange={(e) => updateSettings('bark.serverUrl', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                    placeholder="https://api.day.app"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">Device Key</label>
+                  <input
+                    type="text"
+                    value={settings.bark.key}
+                    onChange={(e) => updateSettings('bark.key', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                    placeholder="Bark 设备 Key"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* WxPusher */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-[#d3e3fd] text-[#0b57d0] flex items-center justify-center">
+                  <MessageSquare size={20} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-900">WxPusher</p>
+                  <p className="text-xs text-slate-500">简单推送 SPT，微信接收通知</p>
+                </div>
+              </div>
+              <Switch checked={settings.wxpusher.enable} onChange={(v) => updateSettings('wxpusher.enable', v)} />
+            </div>
+            {settings.wxpusher.enable && (
+              <div className="px-4 animate-in slide-in-from-top-2 duration-200">
+                <label className="text-xs font-medium text-slate-500 mb-1 block">SPT</label>
+                <input
+                  type="text"
+                  value={settings.wxpusher.spt}
+                  onChange={(e) => updateSettings('wxpusher.spt', e.target.value)}
+                  className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  placeholder="WxPusher 简单推送 SPT"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* PushPlus */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-[#c4eed0] text-[#0f5223] flex items-center justify-center">
+                  <Bell size={20} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-900">PushPlus</p>
+                  <p className="text-xs text-slate-500">Token 推送，可选群组与渠道</p>
+                </div>
+              </div>
+              <Switch checked={settings.pushplus.enable} onChange={(v) => updateSettings('pushplus.enable', v)} />
+            </div>
+            {settings.pushplus.enable && (
+              <div className="px-4 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2 duration-200">
+                <div className="md:col-span-2">
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">Token</label>
+                  <input
+                    type="text"
+                    value={settings.pushplus.token}
+                    onChange={(e) => updateSettings('pushplus.token', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                    placeholder="PushPlus token"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">Topic（群组，可选）</label>
+                  <input
+                    type="text"
+                    value={settings.pushplus.topic}
+                    onChange={(e) => updateSettings('pushplus.topic', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">Channel</label>
+                  <input
+                    type="text"
+                    value={settings.pushplus.channel}
+                    onChange={(e) => updateSettings('pushplus.channel', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                    placeholder="wechat / webhook / cp / sms / mail"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">Webhook（channel=webhook 时）</label>
+                  <input
+                    type="text"
+                    value={settings.pushplus.webhook}
+                    onChange={(e) => updateSettings('pushplus.webhook', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-500 mb-1 block">To（好友令牌，可选）</label>
+                  <input
+                    type="text"
+                    value={settings.pushplus.to}
+                    onChange={(e) => updateSettings('pushplus.to', e.target.value)}
+                    className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  />
+                </div>
               </div>
             )}
           </div>

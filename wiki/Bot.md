@@ -1,6 +1,6 @@
 # Telegram 机器人
 
-Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账号、搜索 CloudSaver 资源、创建任务、追剧和查看订阅状态。
+Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账号、搜索 CloudSaver / 影巢 / PT 资源、创建任务、追剧和查看订阅状态。
 
 ---
 
@@ -21,7 +21,7 @@ Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账
 
 配置完成后可以点击 **测试配置**。
 
-如果服务器无法直接访问 Telegram，请同时配置 **系统** 页中的网络代理。
+如果服务器无法直接访问 Telegram，请同时配置 **系统** 页中的网络代理，并勾选 `TELEGRAM` 服务。
 
 ---
 
@@ -32,7 +32,7 @@ Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账
 1. `/accounts` 选择账号。
 2. `/fl` 查看常用目录。
 3. 直接发送 `cloud.189.cn` 分享链接创建任务。
-4. `/search_cs` 搜索 CloudSaver 资源。
+4. `/search_cs` 搜索 CloudSaver 资源，或 `/hdhive` / `/pt_search` 搜索其他源。
 5. `/tasks` 查看任务状态。
 
 如果未选择账号，多数需要账号上下文的命令会提示：`请先使用 /accounts 选择账号`。
@@ -52,7 +52,7 @@ Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账
 | `/stats` | 查看系统统计 |
 | `/logs` | 查看最近日志 |
 | `/logs_<ID>` | 查看指定任务日志 |
-| `/silent` | 设置静默模式 |
+| `/silent` | 切换静默模式（分享链接直接落到默认常用目录） |
 
 ### 任务相关
 
@@ -84,7 +84,7 @@ Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账
 | :--- | :--- |
 | `/search_cs` | 进入 CloudSaver 搜索模式 |
 | `/hdhive [关键字]` | 进入影巢搜索模式，或直接搜索影巢资源 |
-| `/hdhive_checkin` | 执行一次影巢签到 |
+| `/hdhive_checkin` | 执行一次影巢签到（依赖 Browser Bridge） |
 | `/series 剧名 [年份]` | 创建普通自动追剧任务 |
 | `/lazy_series 剧名 [年份]` | 创建懒转存自动追剧任务 |
 | `/tmdb 关键字 [年份]` | 搜索 TMDB 影视信息 |
@@ -93,7 +93,22 @@ Telegram Bot 可以让您在手机或桌面 Telegram 中查看任务、选择账
 
 | 命令 | 说明 |
 | :--- | :--- |
-| `/subs` | 查看订阅列表 |
+| `/subs` | 查看分享订阅列表 |
+
+### PT 相关
+
+| 命令 | 说明 |
+| :--- | :--- |
+| `/pt_search` | 进入 PT 站点聚合搜索模式 |
+| `/pt_subs` | 查看 PT 订阅列表 |
+| `/pt_detail_<ID>` | 查看指定 PT 订阅详情 |
+| `/pt_refresh_<ID>` | 立即刷新指定 PT 订阅 RSS（管理员） |
+| `/pt_toggle_<ID>` | 启用/停用指定 PT 订阅（管理员） |
+| `/pt_releases_<ID>` | 查看指定订阅的 release 列表 |
+| `/pt_retry_<ID>` | 重试指定 release（管理员） |
+| `/pt_del_<ID>` | 删除指定 release（管理员） |
+
+PT 使用前需在 Web **PT** 页配置 qBittorrent 与下载根目录，详见 [[PT]]。
 
 ---
 
@@ -114,7 +129,7 @@ Bot 支持直接接收 `cloud.189.cn` 分享链接。
 
 ## 5. 静默模式
 
-通过 `/silent` 可以开启或关闭静默模式。
+通过 `/silent` 可以开启或关闭静默模式（配置键 `telegram.bot.silentMode`）。
 
 开启后：
 
@@ -175,12 +190,13 @@ Bot 支持：
 
 ## 9. 权限说明
 
-- 只有 **允许使用的 Chat ID 列表** 中的对象可以控制 Bot。
+- 只有 **允许使用的 Chat ID 列表** 中的对象可以控制 Bot；列表为空时回退为默认 Chat ID。
 - 某些危险操作仅管理员可用，例如：
   - `/execute_all`
   - `/retry_<ID>`
   - `/dt_<ID>`
   - `/df_<ID>`
+  - 部分 PT 管理命令（刷新/开关/重试/删除）
 
 ---
 
@@ -188,4 +204,4 @@ Bot 支持：
 
 - 初次使用先配置一个默认账号和几个常用目录。
 - 高频转存用户建议开启静默模式。
-- 搜索不到资源时，优先确认 CloudSaver 配置是否正确。
+- 搜索不到资源时，优先确认 CloudSaver / 影巢 Bridge / PT 下载器配置是否正确。

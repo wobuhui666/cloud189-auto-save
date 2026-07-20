@@ -737,7 +737,7 @@ const MediaTab: React.FC = () => {
           <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3">
             <AlertCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
             <p className="text-xs text-blue-800 leading-relaxed">
-              影巢搜索通过网页内容解析可见数据；只有网页直接暴露天翼分享链接时才支持一键转存。
+              本页仅维护 Cookie 兜底。Browser Bridge、网页登录账号密码、自动签到与 OpenAPI 请到「系统」页配置。Cookie 模式下仅当网页直接暴露天翼分享链接时才支持一键转存。
             </p>
           </div>
         </div>

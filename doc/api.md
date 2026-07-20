@@ -1,98 +1,46 @@
 # REST API 文档
 
-Cloud189 Auto Save 提供标准的 REST API 接口，方便第三方程序（如脚本、其他工具）进行集成。
+精简手册。完整、与代码对齐的接口列表请以仓库 **`wiki/API.md`** 为准（含 PT、榜单订阅、CAS 导入、影巢、扫码登录、媒体发现等）。
 
 ## 1. 认证要求
 
-所有请求必须在 HTTP Header 中包含 `x-api-key`：
+推荐在 HTTP Header 中包含 `x-api-key`：
 
 ```http
 x-api-key: YOUR_SYSTEM_API_KEY
 ```
-*API Key 可在系统设置 -> 系统配置中查看或修改。*
+
+也可使用已登录 Web 的 Session Cookie。部分路径（stream / emby-proxy / 登录页等）在白名单内。
+
+*API Key 可在系统设置中查看或生成。*
 
 ---
 
-## 2. 账号管理 (Accounts)
+## 2. 常用分组（速查）
 
-### 获取账号列表
-- **GET** `/api/accounts`
-- **说明**：获取所有配置的天翼云盘账号。
-
-### 获取容量信息
-- **GET** `/api/accounts/capacity/:id`
-- **说明**：获取指定账号的可用空间。
-
----
-
-## 3. 任务管理 (Tasks)
-
-### 获取任务列表
-- **GET** `/api/tasks`
-- **参数**：
-  - `status`: 过滤状态（`all`, `running`, `completed`, `error`）
-  - `search`: 关键词搜索
-- **说明**：获取所有转存任务。
-
-### 创建任务
-- **POST** `/api/tasks`
-- **Payload**:
-```json
-{
-    "accountId": 1,
-    "shareLink": "https://cloud.189.cn/t/xxxx",
-    "accessCode": "1234",
-    "targetFolderId": "-11",
-    "resourceName": "我的电影"
-}
-```
-
-### 立即执行任务
-- **POST** `/api/tasks/:id/execute`
-- **说明**：强制立即开始转存该任务。
-
-### 批量执行所有任务
-- **POST** `/api/tasks/executeAll`
+| 分组 | 路径前缀 | 说明 |
+| :--- | :--- | :--- |
+| 账号 | `/api/accounts` | 列表、扫码、容量、保活、路径前缀 |
+| 任务 | `/api/tasks` | CRUD、执行、缓存清理、TMDB 绑定、STRM |
+| 文件 | `/api/file-manager` | 列目录、新建、重命名、移动、删除、直链 |
+| 订阅 | `/api/subscriptions` | 分享资源集合订阅 |
+| 榜单订阅 | `/api/list-subscriptions` | 海报墙周期发现 |
+| STRM | `/api/strm` | 配置与懒分享生成 |
+| CAS | `/api/cas` | 恢复、导入、监控 |
+| PT | `/api/pt` | 订阅、release、搜索、下载器 |
+| 影巢 | `/api/hdhive` | 状态、签到、资源、解锁 |
+| CloudSaver | `/api/cloudsaver/search` | 资源搜索 |
+| 设置 | `/api/settings` | 系统/媒体/正则 |
+| 媒体发现 | `/api/tmdb` `/api/douban` `/api/bangumi` | 海报墙数据源 |
 
 ---
 
-## 4. 文件管理 (File Manager)
-
-### 列出目录内容
-- **GET** `/api/file-manager/list`
-- **参数**：`accountId`, `folderId` (默认 `-11`)
-
-### 获取下载直链
-- **GET** `/api/file-manager/download-link`
-- **参数**：`accountId`, `fileId`
-- **说明**：获取天翼云盘的文件直链。
-
-### 重命名文件
-- **POST** `/api/file-manager/rename`
-- **Payload**: `{ "accountId": 1, "fileId": "xxx", "destFileName": "new_name.mkv" }`
-
----
-
-## 5. 媒体服务器相关 (Emby/STRM)
-
-### 生成 STRM 文件
-- **POST** `/api/tasks/strm`
-- **Payload**: `{ "taskIds": [1, 2, 3], "overwrite": true }`
-
-### Emby 独立反代端口
-- **默认地址**：`http://YOUR_IP:8097`
-- **说明**：提供高性能流代理，建议在 Emby/Jellyfin 中作为外部播放地址。
-
----
-
-## 6. 返回格式
-
-所有接口均返回统一的 JSON 格式：
+## 3. 返回格式
 
 ```json
 {
-    "success": true,
-    "data": { ... },
-    "error": "若失败则显示错误信息"
+  "success": true,
+  "data": {},
+  "error": "失败时的错误信息"
 }
 ```

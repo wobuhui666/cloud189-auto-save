@@ -40,6 +40,17 @@ Cloud189 Auto Save 集成了强大的 Telegram 机器人，让您可以随时随
 - `/lazy_series [剧名] [年份]` - 创建一个“懒转存”追剧任务。
 - *注意：追剧功能会使用系统预设的默认账号和默认保存目录。*
 
+### 影巢
+- `/hdhive [关键字]` - 搜索影巢资源。
+- `/hdhive_checkin` - 影巢签到（需 Browser Bridge）。
+
+### PT
+- `/pt_search` - PT 站点聚合搜索。
+- `/pt_subs` - PT 订阅列表。
+- `/pt_detail_<ID>` / `/pt_refresh_<ID>` / `/pt_toggle_<ID>` / `/pt_releases_<ID>` / `/pt_retry_<ID>` / `/pt_del_<ID>` - 订阅与 release 管理。
+
+完整命令表见 `wiki/Bot.md`。
+
 ---
 
 ## 3. 核心功能操作

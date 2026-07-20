@@ -22,20 +22,37 @@ docker run -d \
   ghcr.io/wobuhui666/cloud189-auto-save:latest
 ```
 
-#### 环境变量说明
+#### 常用环境变量
 
 | 变量 | 说明 |
 | :--- | :--- |
 | `PUID` / `PGID` | 指定运行用户 ID 和组 ID，确保映射目录的读写权限 |
-| `DNS_LOOKUP_IP_VERSION` | 双栈网络环境下，若登录失败建议固定为 `ipv4` |
+| `DNS_LOOKUP_IP_VERSION` | 双栈网络环境下，若登录失败建议固定为 `ipv4`（`auto` / `ipv4` / `ipv6`） |
 | `EMBY_PROXY_PORT` | Emby 独立流代理端口，默认 `8097` |
-| `PUBLIC_BASE_URL` | 外部访问地址，用于生成代理播放链接 |
+| `PUBLIC_BASE_URL` | 外部访问地址，用于生成代理播放链接；也可在系统设置中填写 `system.baseUrl` |
+| `PORT` | 主服务端口，默认 `3000` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 仅作为**首次初始化**默认值；若 `ADMIN_PASSWORD` 为空，首次登录需自行设置账号密码 |
+| `SESSION_SECRET` | Session 加密密钥；不设则首次启动自动生成并写入配置 |
+| `PASSWORD_ENCRYPTION_KEY` | 天翼账号密码 AES 密钥（hex），优先于配置文件 |
+| `TYPEORM_SYNCHRONIZE` | 显式覆盖 SQLite schema 自动同步开关 |
+| `JSON_BODY_LIMIT` | Express JSON body 上限，默认 `2mb` |
+| `CORS_ORIGINS` | CORS 白名单（逗号分隔） |
+| `HDHIVE_*` | 影巢相关（站点、Cookie、Bridge、OpenAPI 等），详见 [[HDHive]] / [[HDHiveBridge]] |
 
 ---
 
-## 2. 账号配置
+## 2. 首次登录
 
-系统支持通过 **账号密码** 或 **Cookie** 两种方式添加天翼云盘账号。
+- 打开 `http://服务器IP:3000`。
+- 若尚未设置系统密码（默认如此），登录页会进入**首次设置**：自行填写用户名和密码（密码至少 6 位）。
+- **没有**内置的 `admin` / `admin` 万能口令；只有你通过环境变量 `ADMIN_PASSWORD` 预先注入，或在首次设置里自己写入的密码才有效。
+- 登录后请在 **系统** 页 **访问认证** 中确认用户名，并生成 **系统 API Key**（REST / 自动化调用）。
+
+---
+
+## 3. 账号配置
+
+系统支持 **账号密码**、**Cookie**、**扫码登录** 三种方式添加天翼云盘账号。
 
 ### 账号密码登录
 
@@ -53,7 +70,15 @@ docker run -d \
 4. 在 **Cookie** 字段中找到 `SSON=xxxxxxx`，复制完整 Cookie 值。
 5. 在 **添加账号** 弹窗的 **Cookie (可选)** 中填入。
 
-密码和 Cookie 至少填写一个，如果都填写，则只有账号密码生效。
+密码和 Cookie 至少填写一个；如果都填写，则以账号密码登录路径为准。
+
+### 扫码登录
+
+1. 在 **账号** 页打开扫码登录入口。
+2. 使用天翼云盘 App 扫描页面二维码。
+3. 扫码成功后系统会自动创建/绑定账号。
+
+接口：`GET /api/accounts/qr-code`、`POST /api/accounts/qr-status`。
 
 ### 家庭云账号
 
@@ -61,15 +86,6 @@ docker run -d \
 
 - **个人云**：默认类型
 - **家庭云**：选择后需要填写 **Family ID**
-
----
-
-## 3. 初始认证
-
-- **默认用户名**：`admin`
-- **默认密码**：`admin`
-- 首次登录后请在 **系统** 页 **访问认证** 中修改密码。
-- 建议同时生成 **系统 API Key**，用于 REST API 调用。
 
 ---
 
@@ -94,6 +110,7 @@ docker run -d \
 | 任务检查定时 | `0 19-23 * * *` | 自动扫描所有任务更新 |
 | 回收站清理定时 | `0 */8 * * *` | 定期清理回收站 |
 | 懒转存清理定时 | `0 */6 * * *` | 定期清理过期懒转存文件 |
+| 账号 Session 保活 | `0 */4 * * *` | 定时刷新账号会话（可关） |
 
 ---
 
@@ -126,7 +143,7 @@ server {
 
 ## 使用建议
 
-- 首次部署后先配置一个账号，确认登录正常。
+- 首次部署后先完成登录账号设置，再添加一个天翼账号确认登录正常。
 - 如果需要使用 Emby 代理播放，确保 `8097` 端口已在 Docker 中映射。
-- 如果需要影巢资源解锁和 `/api/customer/*` 网页签名能力，请另外部署 [[HDHiveBridge]]，并在媒体设置中配置 [[HDHive]]。
+- 如果需要影巢资源解锁和 `/api/customer/*` 网页签名能力，请另外部署 [[HDHiveBridge]]，并在 **系统** 页配置影巢（完整项）/ **媒体** 页仅维护 Cookie 兜底，详见 [[HDHive]]。
 - 遇到双栈网络登录问题时，优先设置 `DNS_LOOKUP_IP_VERSION=ipv4`。
