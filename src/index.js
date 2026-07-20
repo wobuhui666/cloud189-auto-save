@@ -34,7 +34,9 @@ const { OrganizerService } = require('./services/organizer');
 const { AutoSeriesService } = require('./services/autoSeries');
 const TelegramService = require('./services/message/TelegramService');
 const { CasService } = require('./services/casService');
+const { CasImportService } = require('./services/casImportService');
 const { DoubanService } = require('./services/douban');
+const multer = require('multer');
 
 const appPort = Number(process.env.PORT || 3000);
 let embyStandaloneProxyServer = null;
@@ -880,6 +882,36 @@ AppDataSource.initialize().then(async () => {
     const strmConfigService = new StrmConfigService(strmConfigRepo, accountRepo, subscriptionRepo, subscriptionResourceRepo);
     const streamProxyService = new StreamProxyService(accountRepo);
     const lazyShareStrmService = new LazyShareStrmService(accountRepo, taskService);
+    const casImportService = new CasImportService(accountRepo);
+    await casImportService.init();
+    const casImportUpload = multer({
+        storage: multer.diskStorage({
+            destination: async (req, file, cb) => {
+                try {
+                    await require('fs').promises.mkdir(casImportService.tmpDir, { recursive: true });
+                    cb(null, casImportService.tmpDir);
+                } catch (error) {
+                    cb(error);
+                }
+            },
+            filename: (req, file, cb) => {
+                const safe = String(file.originalname || 'upload.bin').replace(/[\/\\]/g, '_');
+                cb(null, `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safe}`);
+            }
+        }),
+        limits: {
+            fileSize: 100 * 1024 * 1024,
+            files: 1
+        },
+        fileFilter: (req, file, cb) => {
+            const name = String(file.originalname || '').toLowerCase();
+            if (name.endsWith('.cas') || name.endsWith('.zip')) {
+                cb(null, true);
+                return;
+            }
+            cb(new Error('仅支持上传 .cas 或 .zip 文件'));
+        }
+    });
     const autoSeriesService = new AutoSeriesService(taskService, accountRepo, lazyShareStrmService);
     const tmdbService = new TMDBService();
     const doubanService = new DoubanService();
@@ -1528,6 +1560,38 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: false, error: error.message });
         }
     })
+
+    // 按任务重建 STRM（按当前媒体库 layout 规则重算路径；可选刷新 layout）
+    app.post('/api/tasks/strm/rebuild', async (req, res) => {
+        try {
+            const taskIds = req.body.taskIds;
+            if (!taskIds || taskIds.length == 0) {
+                throw new Error('任务ID不能为空');
+            }
+            const overwrite = req.body.overwrite !== false;
+            const refreshLayout = !!req.body.refreshLayout;
+            const deleteOld = req.body.deleteOld !== false;
+            // 后台执行，避免大批量阻塞
+            taskService.rebuildStrmFileByTask(taskIds, {
+                overwrite,
+                refreshLayout,
+                deleteOld
+            }).catch((error) => {
+                logTaskEvent(`批量重建STRM失败: ${error.message}`, 'error', 'transfer');
+            });
+            return res.json({
+                success: true,
+                data: {
+                    message: '重建任务已开始后台执行',
+                    count: taskIds.length,
+                    refreshLayout,
+                    deleteOld
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    })
      // 获取目录树
      app.get('/api/folders/:accountId', async (req, res) => {
         try {
@@ -2111,9 +2175,14 @@ AppDataSource.initialize().then(async () => {
     app.get('/api/stream/:token', async (req, res) => {
         try {
             const payload = streamProxyService.parseToken(req.params.token);
-            const latestUrl = payload.type === 'lazyShare'
-                ? await lazyShareStrmService.resolveLatestUrlByPayload(payload)
-                : await streamProxyService.resolveLatestUrlByPayload(payload);
+            let latestUrl;
+            if (payload.type === 'lazyShare') {
+                latestUrl = await lazyShareStrmService.resolveLatestUrlByPayload(payload);
+            } else if (payload.type === 'casLazy') {
+                latestUrl = await casImportService.resolveLazyPlayback(payload);
+            } else {
+                latestUrl = await streamProxyService.resolveLatestUrlByPayload(payload);
+            }
             res.set('Cache-Control', 'no-store');
             res.redirect(302, latestUrl);
         } catch (error) {
@@ -2891,6 +2960,145 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: true, data: exportData });
         } catch (error) {
             console.error('导出文件夹CAS信息失败:', error);
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // CAS 存根包导入：上传 .cas / zip → 秒传还原 → 正常/懒 STRM
+    app.post('/api/cas/import', (req, res) => {
+        casImportUpload.single('file')(req, res, async (uploadErr) => {
+            const uploadedPath = req.file?.path;
+            try {
+                if (uploadErr) {
+                    throw uploadErr;
+                }
+                if (!req.file) {
+                    throw new Error('请上传 .cas 或 .zip 文件');
+                }
+
+                const accountId = Number(req.body.accountId);
+                const folderId = String(req.body.folderId || '').trim();
+                if (!accountId) throw new Error('账号不能为空');
+                if (!folderId) throw new Error('目标目录不能为空');
+
+                const bool = (value, defaultValue = false) => {
+                    if (value === undefined || value === null || value === '') return defaultValue;
+                    if (typeof value === 'boolean') return value;
+                    const normalized = String(value).trim().toLowerCase();
+                    return ['1', 'true', 'yes', 'on'].includes(normalized);
+                };
+
+                const rawName = String(req.file.originalname || 'upload.bin');
+                let originalName = rawName;
+                try {
+                    // multer 常把非 latin1 文件名按 latin1 传入，这里尽量还原中文名
+                    const decoded = Buffer.from(rawName, 'latin1').toString('utf8');
+                    if (decoded && !decoded.includes('�')) {
+                        originalName = decoded;
+                    }
+                } catch (_) {}
+
+                const job = await casImportService.createJobFromUpload({
+                    filePath: req.file.path,
+                    originalName,
+                    accountId,
+                    folderId,
+                    folderName: String(req.body.folderName || '').trim(),
+                    mode: String(req.body.mode || 'restore').trim(),
+                    strmMode: String(req.body.strmMode || '').trim(),
+                    uploadCasStub: bool(req.body.uploadCasStub, false),
+                    overwriteStrm: bool(req.body.overwriteStrm, false),
+                    title: String(req.body.title || '').trim(),
+                    organizeMode: String(req.body.organizeMode || 'library').trim()
+                });
+                res.json({ success: true, data: job });
+            } catch (error) {
+                console.error('CAS导入失败:', error);
+                res.json({ success: false, error: error.message });
+            } finally {
+                if (uploadedPath) {
+                    require('fs').promises.unlink(uploadedPath).catch(() => {});
+                }
+            }
+        });
+    });
+
+    app.get('/api/cas/import/jobs', async (req, res) => {
+        try {
+            const jobs = await casImportService.listJobs();
+            res.json({ success: true, data: jobs });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/cas/import/jobs/:id', async (req, res) => {
+        try {
+            const full = String(req.query.full || '1') !== '0';
+            const job = await casImportService.getJob(req.params.id, { full });
+            res.json({ success: true, data: job });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.post('/api/cas/import/jobs/:id/retry', async (req, res) => {
+        try {
+            const job = await casImportService.retryJob(req.params.id);
+            res.json({ success: true, data: job });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/cas/import/jobs/:id', async (req, res) => {
+        try {
+            const deleteStrm = String(req.query.deleteStrm || '0') === '1';
+            const result = await casImportService.deleteJob(req.params.id, { deleteStrm });
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/cas/import/strm', async (req, res) => {
+        try {
+            const data = await casImportService.listImportStrm(String(req.query.path || ''));
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/cas/import/strm', async (req, res) => {
+        try {
+            const targetPath = String(req.body?.path || req.query.path || '').trim();
+            const data = await casImportService.deleteImportStrm(targetPath);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/cas/metadata/share', async (req, res) => {
+        try {
+            const data = await casImportService.listShareMetadata();
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.delete('/api/cas/metadata/share', async (req, res) => {
+        try {
+            const all = String(req.body?.all || req.query.all || '0') === '1';
+            const data = await casImportService.clearShareMetadata({
+                accountId: req.body?.accountId || req.query.accountId || '',
+                shareId: req.body?.shareId || req.query.shareId || '',
+                all
+            });
+            res.json({ success: true, data });
+        } catch (error) {
             res.json({ success: false, error: error.message });
         }
     });

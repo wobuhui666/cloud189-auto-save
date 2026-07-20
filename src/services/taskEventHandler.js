@@ -31,17 +31,19 @@ class TaskEventHandler {
     }
     async _handleAutoRename(taskCompleteEventDto) {
         try {
-            if (taskCompleteEventDto.task?.enableLazyStrm) {
-                return;
-            }
+            // 懒 STRM：只锁定 layout / 准备 STRM 命名，不移动网盘
             if (taskCompleteEventDto.task?.enableOrganizer) {
                 const organizerService = new OrganizerService(taskCompleteEventDto.taskService, taskCompleteEventDto.taskRepo);
                 const result = await organizerService.organizeTask(taskCompleteEventDto.task, {
-                    triggerStrm: false
+                    triggerStrm: false,
+                    organizeCloud: !taskCompleteEventDto.task?.enableLazyStrm
                 });
                 if (Array.isArray(result?.files) && result.files.length > 0) {
                     taskCompleteEventDto.fileList = result.files;
                 }
+                return;
+            }
+            if (taskCompleteEventDto.task?.enableLazyStrm) {
                 return;
             }
             const newFiles = await taskCompleteEventDto.taskService.autoRename(taskCompleteEventDto.cloud189, taskCompleteEventDto.task);

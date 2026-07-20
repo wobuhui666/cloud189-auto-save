@@ -290,6 +290,10 @@ export class Task {
     @Column('text', { nullable: true })
     lastOrganizeError!: string;
 
+    // 锁定的媒体库布局 JSON：{categoryName,resourceFolderName,mediaType,year,canonicalTitle,tmdbId,...}
+    @Column('text', { nullable: true })
+    libraryLayout!: string;
+
     @Column({ nullable: true })
     enableSystemProxy!: boolean; // 是否启用系统代理
     // tmdb内容 json格式

@@ -5,7 +5,7 @@ const { logTaskEvent } = require('../utils/logUtils');
 class AIService {
     constructor() {
         this.defaultConfig = {
-            temperature: 0.7,
+            temperature: 0,
             max_tokens: 4096,
             top_p: 1,
             frequency_penalty: 0,
@@ -202,7 +202,7 @@ class AIService {
         try {
             const result = await this._retryOperation('AI文件夹分析', async () => {
                 const response = await this.chat(messages, {
-                    temperature: 0.1,
+                    temperature: 0,
                     max_tokens: 3000
                 });
                 if (!response.success) {
@@ -236,6 +236,11 @@ class AIService {
         if (!this.isEnabled()) {
             return { success: false, error: 'AI服务未配置或未启用' };
         }
+
+        // 固定排序，避免分块顺序导致 base name 漂移
+        files = [...(files || [])].sort((a, b) =>
+            String(a?.name || '').localeCompare(String(b?.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' })
+        );
 
         try {
             for (let i = 0; i < files.length; i += CHUNK_SIZE) {
@@ -331,7 +336,7 @@ class AIService {
                 const chunkNumber = i / CHUNK_SIZE + 1;
                 const resultChunk = await this._retryOperation(`AI文件解析块 ${chunkNumber}`, async () => {
                     const response = await this.chat(messages, {
-                        temperature: 0.1,
+                        temperature: 0,
                         max_tokens: 3000 // 保持足够空间处理块
                     });
                     if (!response.success) {
@@ -488,7 +493,7 @@ class AIService {
                 logTaskEvent(`AI过滤：调用AI处理块 ${chunkNumber}，描述: ${filterDescription}`);
                 const resultChunk = await this._retryOperation(`AI过滤块 ${chunkNumber}`, async () => {
                     const response = await this.chat(messages, {
-                        temperature: 0.1,
+                        temperature: 0,
                         max_tokens: 2000 // 调整 max_tokens 以适应 ID 列表的输出
                     });
                     if (!response.success) {

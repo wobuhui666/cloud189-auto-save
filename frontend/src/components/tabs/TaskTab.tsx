@@ -111,6 +111,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [isBatchUpdatingStatus, setIsBatchUpdatingStatus] = useState(false);
   const [executingTaskIds, setExecutingTaskIds] = useState<number[]>([]);
   const [isExecutingAll, setIsExecutingAll] = useState(false);
+  const [isStrmBusy, setIsStrmBusy] = useState(false);
   const [deleteCloud, setDeleteCloud] = useState(false);
   const [isTopMenuOpen, setIsTopMenuOpen] = useState(false);
   const [openTaskMenuId, setOpenTaskMenuId] = useState<number | null>(null);
@@ -550,13 +551,15 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   };
 
   const handleGenerateStrm = async () => {
-    if (selectedTaskIds.length === 0) return;
+    if (selectedTaskIds.length === 0 || isStrmBusy) return;
     const overwrite = await dialog.confirm({
       title: '生成 STRM',
       message: '是否覆盖已存在的 STRM 文件？',
       confirmText: '确认',
       tone: 'warning',
     });
+    if (isStrmBusy) return;
+    setIsStrmBusy(true);
     try {
       const response = await fetch('/api/tasks/strm', {
         method: 'POST',
@@ -566,9 +569,57 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       const data = await response.json();
       if (data.success) {
         toast.info('任务后台执行中, 请稍后查看结果');
+      } else {
+        toast.error(data.error || '生成失败');
       }
     } catch (error) {
       console.error('Failed to generate STRM:', error);
+      toast.error('生成 STRM 失败');
+    } finally {
+      setIsStrmBusy(false);
+    }
+  };
+
+  const handleRebuildStrm = async () => {
+    if (selectedTaskIds.length === 0 || isStrmBusy) return;
+    const confirmed = await dialog.confirm({
+      title: '重建 STRM',
+      message: `将按当前媒体库规则重建 ${selectedTaskIds.length} 个任务的 STRM。\n路径变化时会清理旧目录。是否继续？`,
+      confirmText: '重建',
+      tone: 'warning',
+    });
+    if (!confirmed || isStrmBusy) return;
+    const refreshLayout = await dialog.confirm({
+      title: '刷新布局？',
+      message: '是否强制重新分析媒体库布局？（否=使用已锁定布局，更稳定）',
+      confirmText: '强制重分析',
+      cancelText: '使用锁定布局',
+      tone: 'warning',
+    });
+    if (isStrmBusy) return;
+    setIsStrmBusy(true);
+    try {
+      const response = await fetch('/api/tasks/strm/rebuild', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskIds: selectedTaskIds,
+          overwrite: true,
+          refreshLayout: !!refreshLayout,
+          deleteOld: true
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.info('重建任务已开始后台执行，请稍后查看结果');
+      } else {
+        toast.error(data.error || '重建失败');
+      }
+    } catch (error) {
+      console.error('Failed to rebuild STRM:', error);
+      toast.error('重建 STRM 失败');
+    } finally {
+      setIsStrmBusy(false);
     }
   };
 
@@ -610,10 +661,20 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                     setIsTopMenuOpen(false);
                     handleGenerateStrm();
                   }}
-                  disabled={selectedTaskIds.length === 0}
+                  disabled={selectedTaskIds.length === 0 || isStrmBusy}
                   className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-[#0b57d0] transition-colors disabled:opacity-50"
                 >
-                  生成 STRM
+                  {isStrmBusy ? '处理中...' : '生成 STRM'}
+                </button>
+                <button
+                  onClick={() => {
+                    setIsTopMenuOpen(false);
+                    handleRebuildStrm();
+                  }}
+                  disabled={selectedTaskIds.length === 0 || isStrmBusy}
+                  className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm text-violet-700 transition-colors disabled:opacity-50"
+                >
+                  {isStrmBusy ? '处理中...' : '重建 STRM'}
                 </button>
                 <button
                   onClick={() => {

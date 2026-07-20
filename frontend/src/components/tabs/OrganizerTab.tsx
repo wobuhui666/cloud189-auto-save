@@ -22,6 +22,7 @@ const OrganizerTab: React.FC = () => {
   const toast = useToast();
   const [tasks, setTasks] = useState<OrganizerTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const [runningTaskIds, setRunningTaskIds] = useState<number[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
 
   const fetchTasks = useCallback(async () => {
@@ -44,6 +45,8 @@ const OrganizerTab: React.FC = () => {
   }, [fetchTasks]);
 
   const handleRunTask = async (taskId: number) => {
+    if (runningTaskIds.includes(taskId)) return;
+    setRunningTaskIds((ids) => [...ids, taskId]);
     try {
       const response = await fetch(`/api/organizer/tasks/${taskId}/run`, { method: 'POST' });
       const data = await response.json();
@@ -55,6 +58,8 @@ const OrganizerTab: React.FC = () => {
       }
     } catch (error) {
       toast.error('执行整理失败');
+    } finally {
+      setRunningTaskIds((ids) => ids.filter((id) => id !== taskId));
     }
   };
 
@@ -121,7 +126,7 @@ const OrganizerTab: React.FC = () => {
                     <tr key={task.id} className="hover:bg-slate-50/50 transition-colors group">
                       <td className="px-6 py-4">
                         <button 
-                          onClick={() => handleRunTask(task.id)}
+                          onClick={() => handleRunTask(task.id)} disabled={runningTaskIds.includes(task.id)}
                           className="flex items-center gap-1.5 px-3 py-1.5 bg-[#d3e3fd] text-[#0b57d0] rounded-lg text-xs font-bold hover:bg-[#c2e7ff] transition-colors"
                         >
                           <Play size={14} fill="currentColor" /> 执行整理

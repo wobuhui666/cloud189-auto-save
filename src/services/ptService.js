@@ -9,6 +9,7 @@ const { CasService } = require('./casService');
 const { StrmService } = require('./strm');
 const { StreamProxyService } = require('./streamProxy');
 const { OrganizerService } = require('./organizer');
+const { MediaLibraryLayoutService } = require('./mediaLibraryLayout');
 const { logTaskEvent } = require('../utils/logUtils');
 const { getDownloader, resetDownloader } = require('./downloader');
 const { PtSourceService } = require('./ptSource');
@@ -47,6 +48,7 @@ const STATUS = {
 class PtService {
     constructor() {
         this.casService = new CasService();
+        this.layoutService = new MediaLibraryLayoutService();
         this.sourceService = new PtSourceService();
         this._processingLock = false;
     }
@@ -889,9 +891,25 @@ class PtService {
         // 确定目标根目录
         let targetRoot;
         if (organizeEnabled) {
-            // 整理模式：使用 {localStrmPrefix}/{categoryFolder}/{title}/Season {season}
-            // 目录结构由第一个文件的 organizedDir 决定
-            targetRoot = path.join(account.localStrmPrefix, files[0].organizedDir || '');
+            // 优先媒体库 layout：{localStrmPrefix}/{分类}/{作品}
+            // organizedDir 可能是 category/title/season，取前两段作 root，季放 relative
+            const firstOrg = String(files[0].organizedDir || '').replace(/\\/g, '/');
+            const parts = firstOrg.split('/').filter(Boolean);
+            if (parts.length >= 2) {
+                targetRoot = path.join(account.localStrmPrefix, parts[0], parts[1]);
+                // 把 season 等剩余段写回 relativeDir，避免重复嵌套
+                const rest = parts.slice(2).join('/');
+                for (const f of files) {
+                    const od = String(f.organizedDir || '').replace(/\\/g, '/').split('/').filter(Boolean);
+                    if (od.length >= 2) {
+                        f.relativeDir = od.slice(2).join('/');
+                    } else if (rest) {
+                        f.relativeDir = rest;
+                    }
+                }
+            } else {
+                targetRoot = path.join(account.localStrmPrefix, files[0].organizedDir || '');
+            }
         } else {
             // 原始模式：使用 {localStrmPrefix}/PT/{subName}/{relName}
             const subName = safeFileName(subscription.name || `sub-${subscription.id}`);

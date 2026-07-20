@@ -8,6 +8,7 @@ const { MessageUtil } = require('./message');
 const { StreamProxyService } = require('./streamProxy');
 
 const { CasService } = require('./casService');
+const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
 
 class StrmService {
     constructor() {
@@ -18,73 +19,33 @@ class StrmService {
         this.pgid = process.env.PGID || 0;
         this.messageUtil = new MessageUtil();
         this.streamProxyService = new StreamProxyService();
+        this.layoutService = new MediaLibraryLayoutService();
     }
 
-    _normalizeBaseRelativePath(targetPath = '') {
-        const normalizedBaseDir = path.normalize(this.baseDir);
-        const normalizedTargetPath = path.normalize(String(targetPath || '').trim());
-        if (!normalizedTargetPath || normalizedTargetPath === '.') {
-            return '';
+    /**
+     * 解析任务 STRM 根相对路径：优先锁定 libraryLayout，否则兼容 realFolderName 切片
+     */
+    resolveTaskStrmRoot(task) {
+        const rawPrefix = task?.account?.localStrmPrefix || '';
+        // 裸 /strm 前缀视为空，避免物理根 strm + 前缀 strm 叠成 strm/strm
+        const prefix = this.layoutService.normalizeLocalStrmPrefix(rawPrefix);
+        const layout = this.layoutService.parseTaskLibraryLayout(task);
+        if (layout?.resourceFolderName) {
+            return this.layoutService.buildStrmRoot(rawPrefix, layout);
         }
-
-        if (normalizedTargetPath === normalizedBaseDir) {
-            return '';
+        const realFolderName = String(task?.realFolderName || '');
+        if (realFolderName) {
+            return this.layoutService.fromRealFolderName(realFolderName, prefix);
         }
-
-        const baseWithSep = normalizedBaseDir.endsWith(path.sep)
-            ? normalizedBaseDir
-            : `${normalizedBaseDir}${path.sep}`;
-        if (normalizedTargetPath.startsWith(baseWithSep)) {
-            return path.relative(normalizedBaseDir, normalizedTargetPath);
-        }
-
-        const baseName = path.basename(normalizedBaseDir);
-        const marker = `${path.sep}${baseName}${path.sep}`;
-        const markerIndex = normalizedTargetPath.lastIndexOf(marker);
-        if (markerIndex >= 0) {
-            return normalizedTargetPath.substring(markerIndex + marker.length);
-        }
-        if (normalizedTargetPath.endsWith(`${path.sep}${baseName}`)) {
-            return '';
-        }
-
-        return normalizedTargetPath.replace(/^([/\\])+/, '');
-    }
-
-    _resolveBasePath(targetPath = '') {
-        return path.join(this.baseDir, this._normalizeBaseRelativePath(targetPath));
-    }
-
-    // 确保目录存在并设置权限和组，递归创建的所有目录都设置为 777 权限
-    async _ensureDirectoryExists(dirPath) {
-        // 确保使用相对路径
-        const relativePath = this._normalizeBaseRelativePath(dirPath);
-            
-        const parts = relativePath.split(path.sep);
-        let currentPath = this.baseDir;  // 从基础目录开始
-
-        for (const part of parts) {
-            if (part) {
-                currentPath = path.join(currentPath, part);
-                try {
-                    await fs.mkdir(currentPath);
-                    if (process.getuid && process.getuid() === 0) {
-                        await fs.chown(currentPath, parseInt(this.puid), parseInt(this.pgid));
-                    }
-                    await fs.chmod(currentPath, 0o777);
-                } catch (error) {
-                    if (error.code !== 'EEXIST') {
-                        throw new Error(`创建目录失败: ${error.message}`);
-                    }
-                }
-            }
-        }
+        const fallback = normalizeRelativePath(task?.resourceName || '');
+        return normalizeRelativePath(path.posix.join(prefix, fallback));
     }
 
     /**
      * 生成 STRM 文件
+     * @param {Object} task - 任务对象
      * @param {Array} files - 文件列表，每个文件对象需包含 name 属性
-     * @param {boolean} overwrite - 是否覆盖已存在的文件
+     * @param {boolean} overwrite - 是否覆盖已存在的文件 默认不覆盖
      * @param {boolean} compare - 是否比较文件名 默认比较
      * @returns {Promise<Array>} - 返回生成的文件列表
      */
@@ -101,16 +62,22 @@ class StrmService {
         try {
             // mediaSuffixs转为小写
             const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase())
-            let taskName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1)
-            // 去掉头尾/
-            taskName = taskName.replace(/^\/|\/$/g, '');
-            const targetDir = this._resolveBasePath(path.join(task.account.localStrmPrefix, taskName));
+            const taskRoot = this.resolveTaskStrmRoot(task);
+            // 兼容旧 content 路径中的 taskName（去掉 prefix 后的媒体库相对根）
+            const prefix = normalizeRelativePath(task?.account?.localStrmPrefix || '');
+            let taskName = taskRoot;
+            if (prefix && taskRoot.startsWith(prefix + '/')) {
+                taskName = taskRoot.slice(prefix.length + 1);
+            } else if (prefix && taskRoot === prefix) {
+                taskName = '';
+            }
+            const targetDir = this._resolveBasePath(taskRoot);
             const mediaFiles = files.filter(file => this._checkFileSuffix(file, mediaSuffixs));
             const expectedStrmPaths = new Set(
                 mediaFiles.map(file => this._buildRelativeStrmPath(file.relativeDir || '', file.name))
             );
             if (compare) {
-                const strmFiles = await this._listStrmFilesRecursive(this._normalizeBaseRelativePath(path.join(task.account.localStrmPrefix, taskName)));
+                const strmFiles = await this._listStrmFilesRecursive(this._normalizeBaseRelativePath(taskRoot));
                 for (const file of strmFiles) {
                     if (!expectedStrmPaths.has(file.relativePath)) {
                         await this.delete(file.path);
@@ -126,7 +93,7 @@ class StrmService {
                     skipped++
                     continue;
                 }
-                
+
                 try {
                     const fileName = file.name;
                     const strmRelativePath = this._buildRelativeStrmPath(file.relativeDir || '', fileName);
@@ -174,6 +141,68 @@ class StrmService {
         logTaskEvent(message);
         return message;
     }
+
+
+    _normalizeBaseRelativePath(targetPath = '') {
+        const normalizedBaseDir = path.normalize(this.baseDir);
+        const normalizedTargetPath = path.normalize(String(targetPath || '').trim());
+        if (!normalizedTargetPath || normalizedTargetPath === '.') {
+            return '';
+        }
+
+        if (normalizedTargetPath === normalizedBaseDir) {
+            return '';
+        }
+
+        const baseWithSep = normalizedBaseDir.endsWith(path.sep)
+            ? normalizedBaseDir
+            : `${normalizedBaseDir}${path.sep}`;
+        if (normalizedTargetPath.startsWith(baseWithSep)) {
+            return path.relative(normalizedBaseDir, normalizedTargetPath);
+        }
+
+        const baseName = path.basename(normalizedBaseDir);
+        const marker = `${path.sep}${baseName}${path.sep}`;
+        const markerIndex = normalizedTargetPath.lastIndexOf(marker);
+        if (markerIndex >= 0) {
+            return normalizedTargetPath.substring(markerIndex + marker.length);
+        }
+        if (normalizedTargetPath.endsWith(`${path.sep}${baseName}`)) {
+            return '';
+        }
+        return normalizedTargetPath.replace(/^([/\\])+/, '');
+    }
+
+    _resolveBasePath(targetPath = '') {
+        return path.join(this.baseDir, this._normalizeBaseRelativePath(targetPath));
+    }
+
+    // 确保目录存在并设置权限和组，递归创建的所有目录都设置为 777 权限
+    async _ensureDirectoryExists(dirPath) {
+        // 确保使用相对路径
+        const relativePath = this._normalizeBaseRelativePath(dirPath);
+            
+        const parts = relativePath.split(path.sep);
+        let currentPath = this.baseDir;  // 从基础目录开始
+
+        for (const part of parts) {
+            if (part) {
+                currentPath = path.join(currentPath, part);
+                try {
+                    await fs.mkdir(currentPath);
+                    if (process.getuid && process.getuid() === 0) {
+                        await fs.chown(currentPath, parseInt(this.puid), parseInt(this.pgid));
+                    }
+                    await fs.chmod(currentPath, 0o777);
+                } catch (error) {
+                    if (error.code !== 'EEXIST') {
+                        throw new Error(`创建目录失败: ${error.message}`);
+                    }
+                }
+            }
+        }
+    }
+
 
     _buildTaskStrmContent(task, taskName, file) {
         const accountId = task.accountId || task.account?.id;
@@ -773,14 +802,14 @@ class StrmService {
 
     // 根据文件名获取STRM文件路径
     getStrmPath(task) {
-        let taskName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1);
+        const taskRoot = this.resolveTaskStrmRoot(task);
         if (!this.enable){
             // 如果cloudStrmPrefix存在 且不是url地址
             if (task.account.cloudStrmPrefix && !task.account.cloudStrmPrefix.startsWith('http')) {
-                return path.join(task.account.cloudStrmPrefix, taskName);
+                return path.join(task.account.cloudStrmPrefix, taskRoot.replace(String(task.account.localStrmPrefix || '').replace(/^\/+|\/+$/g, ''), '').replace(/^\//, '') || taskRoot);
             }
         }else{
-            return path.join(this.baseDir, task.account.localStrmPrefix, taskName);
+            return path.join(this.baseDir, taskRoot);
         }
         return '';
     }

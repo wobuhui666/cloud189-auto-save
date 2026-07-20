@@ -31,6 +31,7 @@ class TaskService {
             : null);
         this.activeTaskExecutions = new Map();
         this.activeBatchExecution = null;
+        this.activeStrmJobs = new Map(); // key -> Promise 防重复生成/重建
         this.autoSeriesService = null;
         this.messageUtil = new MessageUtil();
         this.eventService = EventService.getInstance();
@@ -2864,7 +2865,20 @@ class TaskService {
     }
 
     // 根据任务创建STRM文件
-    async createStrmFileByTask(taskIds, overwrite) {
+    async createStrmFileByTask(taskIds, overwrite, options = {}) {
+        const ids = [...new Set((taskIds || []).map((id) => Number(id)).filter(Boolean))].sort((a, b) => a - b);
+        const jobKey = `create:${overwrite ? 1 : 0}:${JSON.stringify(options || {})}:${ids.join(',')}`;
+        if (this.activeStrmJobs?.has(jobKey)) {
+            logTaskEvent(`STRM生成请求重复，已合并到进行中的任务: ${ids.join(',')}`, 'info', 'transfer');
+            return this.activeStrmJobs.get(jobKey);
+        }
+        const runner = this._runCreateStrmFileByTask(ids, overwrite, options)
+            .finally(() => this.activeStrmJobs?.delete(jobKey));
+        this.activeStrmJobs.set(jobKey, runner);
+        return runner;
+    }
+
+    async _runCreateStrmFileByTask(taskIds, overwrite, options = {}) {
         const tasks = await this.taskRepo.find({
             where: {
                 id: In(taskIds)
@@ -2886,30 +2900,97 @@ class TaskService {
         }
         for (const task of tasks) {
             try {
-                await this._createStrmFileByTask(task, overwrite)   
+                await this._createStrmFileByTask(task, overwrite, options)
             }catch (error) {
                 logTaskEvent(`任务[${task.resourceName}]生成strm失败: ${error.message}`, 'error', 'transfer')
             }
         }
     }
+
+    /**
+     * 按任务重建 STRM：可选先清理旧 STRM 根目录，再按当前 layout 规则重新生成
+     */
+    async rebuildStrmFileByTask(taskIds, options = {}) {
+        const {
+            overwrite = true,
+            refreshLayout = false,
+            deleteOld = true
+        } = options;
+        const ids = [...new Set((taskIds || []).map((id) => Number(id)).filter(Boolean))].sort((a, b) => a - b);
+        const jobKey = `rebuild:${overwrite ? 1 : 0}:${refreshLayout ? 1 : 0}:${deleteOld ? 1 : 0}:${ids.join(',')}`;
+        if (this.activeStrmJobs?.has(jobKey)) {
+            logTaskEvent(`STRM重建请求重复，已合并到进行中的任务: ${ids.join(',')}`, 'info', 'transfer');
+            return this.activeStrmJobs.get(jobKey);
+        }
+        const runner = this.createStrmFileByTask(ids, overwrite, {
+            rebuild: true,
+            refreshLayout,
+            deleteOld
+        }).finally(() => this.activeStrmJobs?.delete(jobKey));
+        this.activeStrmJobs.set(jobKey, runner);
+        return runner;
+    }
+
     // 根据任务执行生成strm
-    async _createStrmFileByTask(task, overwrite) {
+    async _createStrmFileByTask(task, overwrite, options = {}) {
         if (!task) {
             throw new Error('任务不存在')
         }
+        const {
+            rebuild = false,
+            refreshLayout = false,
+            deleteOld = false
+        } = options;
         let account = await this._getAccountById(task.accountId)
         if (!account) {
             logTaskEvent(`任务[${task.resourceName}]账号不存在, 跳过`, 'warn', 'transfer')
             return
         }
         task.account = account;
+        const strmService = new StrmService();
+
+        // 重建时先记下旧 STRM 根，生成新路径后删除不再使用的旧目录
+        let oldStrmRoot = '';
+        try {
+            oldStrmRoot = strmService.resolveTaskStrmRoot(task);
+        } catch (_) {}
+
+        // 重建 + 刷新布局：重新锁定 media library layout（懒任务只锁布局不挪盘）
+        if (rebuild && (refreshLayout || task.enableOrganizer)) {
+            try {
+                const { OrganizerService } = require('./organizer');
+                const organizerService = new OrganizerService(this, this.taskRepo);
+                const result = await organizerService.organizeTask(task, {
+                    force: true,
+                    forceRefresh: !!refreshLayout,
+                    organizeCloud: !task.enableLazyStrm && !!task.enableOrganizer,
+                    triggerStrm: false
+                });
+                if (result?.libraryInfo) {
+                    const { MediaLibraryLayoutService } = require('./mediaLibraryLayout');
+                    task.libraryLayout = new MediaLibraryLayoutService().serializeLibraryLayout(result.libraryInfo);
+                    const fresh = await this.taskRepo.findOne({ where: { id: task.id } });
+                    if (fresh?.libraryLayout) task.libraryLayout = fresh.libraryLayout;
+                    if (fresh?.realFolderName) {
+                        task.realFolderName = fresh.realFolderName;
+                        task.realFolderId = fresh.realFolderId;
+                    }
+                }
+            } catch (error) {
+                logTaskEvent(`任务[${task.resourceName}]重建STRM时刷新布局失败: ${error.message}`, 'warn', 'transfer');
+            }
+        }
+
         if (task.enableLazyStrm) {
             const fileList = await this.getLazyStrmFilesByTask(task);
             if (fileList.length == 0) {
                 throw new Error('分享目录中没有可生成懒转存STRM的媒体文件');
             }
             const lazyShareStrmService = new LazyShareStrmService(this.accountRepo, this);
-            const message = await lazyShareStrmService.generateFromTask(task, fileList, overwrite);
+            const message = await lazyShareStrmService.generateFromTask(task, fileList, overwrite || rebuild);
+            if (deleteOld || rebuild) {
+                await this._cleanupOldStrmRoot(strmService, oldStrmRoot, task);
+            }
             this.messageUtil.sendMessage(message);
             return;
         }
@@ -2919,9 +3000,23 @@ class TaskService {
         if (fileList.length == 0) {
             throw new Error('文件列表为空')
         }
-        const strmService = new StrmService()
-        const message = await strmService.generate(task, fileList, overwrite);
+        const message = await strmService.generate(task, fileList, overwrite || rebuild, true);
+        if (deleteOld || rebuild) {
+            await this._cleanupOldStrmRoot(strmService, oldStrmRoot, task);
+        }
         this.messageUtil.sendMessage(message);
+    }
+
+    async _cleanupOldStrmRoot(strmService, oldStrmRoot, task) {
+        try {
+            const newRoot = strmService.resolveTaskStrmRoot(task);
+            if (oldStrmRoot && newRoot && oldStrmRoot !== newRoot) {
+                logTaskEvent(`任务[${task.resourceName}]清理旧STRM目录: ${oldStrmRoot} -> ${newRoot}`, 'info', 'transfer');
+                await strmService.deleteDir(oldStrmRoot);
+            }
+        } catch (error) {
+            logTaskEvent(`任务[${task.resourceName}]清理旧STRM目录失败: ${error.message}`, 'warn', 'transfer');
+        }
     }
     // 根据accountId获取账号
     async _getAccountById(accountId) {

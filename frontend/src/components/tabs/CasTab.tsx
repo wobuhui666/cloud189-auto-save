@@ -1,5 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { Zap, Download, Search, RefreshCw, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Zap,
+  Download,
+  Search,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  Settings,
+  Upload,
+  FolderArchive,
+  List,
+  Trash2,
+  RotateCcw,
+  FolderOpen
+} from 'lucide-react';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import type { TabType } from '../../App';
 
@@ -18,24 +32,81 @@ interface CasConfig {
   familyTransitFirst: boolean;
 }
 
+interface ImportJobSummary {
+  id: string;
+  title: string;
+  sourceName: string;
+  sourceType: string;
+  accountId: number;
+  folderId: string;
+  folderName?: string;
+  mode: 'restore' | 'lazy' | string;
+  strmMode: 'none' | 'normal' | 'lazy' | string;
+  uploadCasStub?: boolean;
+  status: string;
+  total: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  strmRoot?: string;
+  message?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  finishedAt?: string | null;
+}
+
+interface ImportJobDetail extends ImportJobSummary {
+  entries?: Array<{
+    relativePath: string;
+    restoreName: string;
+    status: string;
+    error?: string;
+  }>;
+}
+
+interface ShareMetadataItem {
+  accountId: string;
+  shareId: string;
+  fileCount: number;
+  updatedAt?: string;
+}
+
+interface StrmListItem {
+  id: string;
+  name: string;
+  path: string;
+  type: 'directory' | 'file' | string;
+}
+
 interface CasTabProps {
   onShowToast?: (message: string, type: 'success' | 'error' | 'info') => void;
   onNavigate?: (tab: TabType) => void;
 }
 
+const statusLabel = (status: string) => {
+  switch (status) {
+    case 'pending': return '排队中';
+    case 'running': return '执行中';
+    case 'completed': return '已完成';
+    case 'partial': return '部分成功';
+    case 'failed': return '失败';
+    default: return status || '-';
+  }
+};
+
+const statusClass = (status: string) => {
+  switch (status) {
+    case 'completed': return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+    case 'partial': return 'bg-amber-50 text-amber-700 border-amber-100';
+    case 'failed': return 'bg-rose-50 text-rose-700 border-rose-100';
+    case 'running': return 'bg-blue-50 text-blue-700 border-blue-100';
+    default: return 'bg-slate-50 text-slate-600 border-slate-200';
+  }
+};
+
 const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  // 恢复相关
-  const [casContent, setCasContent] = useState('');
-  const [restoreName, setRestoreName] = useState('');
-  const [targetFolder, setTargetFolder] = useState<SelectedFolder | null>(null);
-  const [isFolderSelectorOpen, setIsFolderSelectorOpen] = useState(false);
-  const [isRestoring, setIsRestoring] = useState(false);
-
-  // 配置相关
   const [config, setConfig] = useState<CasConfig>({
     enableAutoRestore: false,
     deleteCasAfterRestore: true,
@@ -44,23 +115,79 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
     familyTransitFirst: false
   });
 
+  // paste restore
+  const [casContent, setCasContent] = useState('');
+  const [restoreName, setRestoreName] = useState('');
+  const [targetFolder, setTargetFolder] = useState<SelectedFolder | null>(null);
+  const [isFolderSelectorOpen, setIsFolderSelectorOpen] = useState(false);
+  const [folderSelectorMode, setFolderSelectorMode] = useState<'restore' | 'import'>('restore');
+  const [isRestoring, setIsRestoring] = useState(false);
+
+  // import
+  const [importFolder, setImportFolder] = useState<SelectedFolder | null>(null);
+  const [importMode, setImportMode] = useState<'restore' | 'lazy'>('restore');
+  const [importStrmMode, setImportStrmMode] = useState<'none' | 'normal' | 'lazy'>('normal');
+  const [organizeMode, setOrganizeMode] = useState<'library' | 'mirror'>('library');
+  const [uploadCasStub, setUploadCasStub] = useState(false);
+  const [overwriteStrm, setOverwriteStrm] = useState(false);
+  const [importTitle, setImportTitle] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [retryingJobIds, setRetryingJobIds] = useState<string[]>([]);
+  const [jobs, setJobs] = useState<ImportJobSummary[]>([]);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJob, setActiveJob] = useState<ImportJobDetail | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // management
+  const [shareCaches, setShareCaches] = useState<ShareMetadataItem[]>([]);
+  const [strmPath, setStrmPath] = useState('');
+  const [strmItems, setStrmItems] = useState<StrmListItem[]>([]);
+  const [mgmtLoading, setMgmtLoading] = useState(false);
+
   useEffect(() => {
     fetchAccounts();
     fetchConfig();
+    fetchJobs();
+    fetchShareCaches();
+    fetchStrmList('');
   }, []);
 
-  // 每次 tab 切换到秒传时刷新配置
+  // mode linkage defaults
   useEffect(() => {
-    fetchConfig();
-  }, []);
+    if (importMode === 'lazy') {
+      setImportStrmMode((prev) => (prev === 'normal' ? 'lazy' : prev));
+    } else {
+      setImportStrmMode((prev) => (prev === 'lazy' ? 'normal' : prev));
+    }
+  }, [importMode]);
+
+  // poll running jobs
+  useEffect(() => {
+    const hasRunning = jobs.some((job) => job.status === 'running' || job.status === 'pending');
+    if (!hasRunning && !activeJobId) return;
+    const timer = setInterval(() => {
+      fetchJobs();
+      if (activeJobId) {
+        fetchJobDetail(activeJobId);
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [jobs, activeJobId]);
+
+  const selectedAccountLabel = useMemo(() => {
+    const acc = accounts.find((a) => a.id === selectedAccountId);
+    return acc ? (acc.alias || acc.username) : '';
+  }, [accounts, selectedAccountId]);
 
   const fetchAccounts = async () => {
     try {
       const res = await fetch('/api/accounts');
       const data = await res.json();
       if (data.success) {
-        setAccounts(data.data);
-        if (data.data.length > 0) {
+        setAccounts(data.data || []);
+        if ((data.data || []).length > 0) {
           setSelectedAccountId(data.data[0].id);
         }
       }
@@ -81,7 +208,66 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
     }
   };
 
+  const fetchJobs = async () => {
+    setJobsLoading(true);
+    try {
+      const res = await fetch('/api/cas/import/jobs');
+      const data = await res.json();
+      if (data.success) {
+        setJobs(data.data || []);
+      }
+    } catch (e) {
+      console.error('获取导入任务失败:', e);
+    } finally {
+      setJobsLoading(false);
+    }
+  };
+
+  const fetchJobDetail = async (jobId: string) => {
+    try {
+      const res = await fetch(`/api/cas/import/jobs/${encodeURIComponent(jobId)}`);
+      const data = await res.json();
+      if (data.success) {
+        setActiveJob(data.data);
+      }
+    } catch (e) {
+      console.error('获取任务详情失败:', e);
+    }
+  };
+
+  const fetchShareCaches = async () => {
+    try {
+      const res = await fetch('/api/cas/metadata/share');
+      const data = await res.json();
+      if (data.success) {
+        setShareCaches(data.data || []);
+      }
+    } catch (e) {
+      console.error('获取分享缓存失败:', e);
+    }
+  };
+
+  const fetchStrmList = async (pathValue: string) => {
+    setMgmtLoading(true);
+    try {
+      const res = await fetch(`/api/cas/import/strm?path=${encodeURIComponent(pathValue || '')}`);
+      const data = await res.json();
+      if (data.success) {
+        setStrmPath(data.data?.path || pathValue || '');
+        // 根路径时优先展示 CAS导入 子树提示
+        const items = data.data?.items || [];
+        const casImportItems = data.data?.casImportItems || [];
+        setStrmItems(pathValue ? items : (casImportItems.length ? casImportItems : items));
+      }
+    } catch (e) {
+      console.error('获取 STRM 列表失败:', e);
+    } finally {
+      setMgmtLoading(false);
+    }
+  };
+
   const handleRestore = async () => {
+    if (isRestoring) return;
     if (!selectedAccountId || !casContent || !targetFolder) {
       onShowToast?.('请选择账号、填写存根内容并选择目标目录', 'error');
       return;
@@ -115,6 +301,157 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
     }
   };
 
+  const handleImport = async () => {
+    if (isImporting) return;
+    if (!selectedAccountId || !importFolder || !selectedFile) {
+      onShowToast?.('请选择账号、目标目录并选择 .cas/.zip 文件', 'error');
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const form = new FormData();
+      form.append('file', selectedFile);
+      form.append('accountId', String(selectedAccountId));
+      form.append('folderId', importFolder.id);
+      form.append('folderName', importFolder.name || '');
+      form.append('mode', importMode);
+      form.append('strmMode', importStrmMode);
+      form.append('organizeMode', organizeMode);
+      form.append('uploadCasStub', uploadCasStub ? '1' : '0');
+      form.append('overwriteStrm', overwriteStrm ? '1' : '0');
+      if (importTitle.trim()) {
+        form.append('title', importTitle.trim());
+      }
+
+      const res = await fetch('/api/cas/import', {
+        method: 'POST',
+        body: form
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast?.(`导入任务已创建: ${data.data.title}`, 'success');
+        setSelectedFile(null);
+        setImportTitle('');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        setActiveJobId(data.data.id);
+        await fetchJobs();
+        await fetchJobDetail(data.data.id);
+      } else {
+        onShowToast?.('导入失败: ' + (data.error || '未知错误'), 'error');
+      }
+    } catch (e) {
+      onShowToast?.('上传过程中发生错误', 'error');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleRetryJob = async (jobId: string) => {
+    if (retryingJobIds.includes(jobId)) return;
+    setRetryingJobIds((ids) => [...ids, jobId]);
+    try {
+      const res = await fetch(`/api/cas/import/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast?.('已开始重试失败项', 'success');
+        setActiveJobId(jobId);
+        fetchJobs();
+        fetchJobDetail(jobId);
+      } else {
+        onShowToast?.(data.error || '重试失败', 'error');
+      }
+    } catch (e) {
+      onShowToast?.('重试失败', 'error');
+    } finally {
+      setRetryingJobIds((ids) => ids.filter((id) => id !== jobId));
+    }
+  };
+
+  const handleDeleteJob = async (job: ImportJobSummary) => {
+    if (!window.confirm(`确认删除导入任务「${job.title}」？`)) {
+      return;
+    }
+    const alsoDeleteStrm = !!job.strmRoot && window.confirm('是否同时删除该任务生成的 STRM 目录？');
+    try {
+      const res = await fetch(
+        `/api/cas/import/jobs/${encodeURIComponent(job.id)}?deleteStrm=${alsoDeleteStrm ? '1' : '0'}`,
+        { method: 'DELETE' }
+      );
+      const data = await res.json();
+      if (data.success) {
+        onShowToast?.('任务已删除', 'success');
+        if (activeJobId === job.id) {
+          setActiveJobId(null);
+          setActiveJob(null);
+        }
+        fetchJobs();
+        fetchStrmList(strmPath);
+      } else {
+        onShowToast?.(data.error || '删除失败', 'error');
+      }
+    } catch (e) {
+      onShowToast?.('删除失败', 'error');
+    }
+  };
+
+  const handleClearShareCache = async (item?: ShareMetadataItem, all = false) => {
+    try {
+      const res = await fetch('/api/cas/metadata/share', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(all ? { all: true } : {
+          accountId: item?.accountId,
+          shareId: item?.shareId
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast?.(all ? '已清理全部分享缓存' : '已清理缓存', 'success');
+        fetchShareCaches();
+      } else {
+        onShowToast?.(data.error || '清理失败', 'error');
+      }
+    } catch (e) {
+      onShowToast?.('清理失败', 'error');
+    }
+  };
+
+  const handleDeleteStrm = async (item: StrmListItem) => {
+    if (item.type !== 'directory') {
+      onShowToast?.('当前仅支持删除目录', 'info');
+      return;
+    }
+    if (!window.confirm(`确认删除 STRM 目录：${item.path}？`)) return;
+    try {
+      const res = await fetch('/api/cas/import/strm', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: item.path })
+      });
+      const data = await res.json();
+      if (data.success) {
+        onShowToast?.('STRM 目录已删除', 'success');
+        fetchStrmList(strmPath);
+      } else {
+        onShowToast?.(data.error || '删除失败', 'error');
+      }
+    } catch (e) {
+      onShowToast?.('删除失败', 'error');
+    }
+  };
+
+  const openFolderSelector = (mode: 'restore' | 'import') => {
+    if (!selectedAccountId) {
+      onShowToast?.('请先选择账号', 'error');
+      return;
+    }
+    setFolderSelectorMode(mode);
+    setIsFolderSelectorOpen(true);
+  };
+
+  const failedEntries = (activeJob?.entries || []).filter((e) => e.status === 'failed').slice(0, 20);
+
   return (
     <div className="space-y-6">
       {/* 标题栏 */}
@@ -144,15 +481,15 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 恢复区域 */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        {/* 粘贴恢复 */}
         <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
           <div className="p-6 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Download className="text-blue-500" size={20} />
               <h3 className="font-bold text-slate-900">秒传恢复</h3>
             </div>
-            <p className="text-sm text-slate-500 mt-1">粘贴 .cas 存根内容，恢复原始文件</p>
+            <p className="text-sm text-slate-500 mt-1">粘贴单个 .cas 存根内容，立即恢复到网盘</p>
           </div>
 
           <div className="p-6 space-y-4">
@@ -163,7 +500,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                 onChange={(e) => setSelectedAccountId(Number(e.target.value))}
                 className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               >
-                {accounts.map(acc => (
+                {accounts.map((acc) => (
                   <option key={acc.id} value={acc.id}>{acc.alias || acc.username}</option>
                 ))}
               </select>
@@ -193,7 +530,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">存入目录</label>
               <button
-                onClick={() => setIsFolderSelectorOpen(true)}
+                onClick={() => openFolderSelector('restore')}
                 className="w-full flex items-center justify-between px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm hover:border-[#0b57d0] transition-all"
               >
                 <span className={targetFolder ? 'text-slate-900' : 'text-slate-400'}>
@@ -208,90 +545,396 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
               disabled={isRestoring || !casContent || !targetFolder}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[#0b57d0] text-white rounded-xl font-bold text-sm hover:bg-[#0948ad] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isRestoring ? (
-                <RefreshCw size={18} className="animate-spin" />
-              ) : (
-                <Zap size={18} />
-              )}
+              {isRestoring ? <RefreshCw size={18} className="animate-spin" /> : <Zap size={18} />}
               立即恢复
             </button>
           </div>
         </div>
 
-        {/* 说明区域 */}
-        <div className="space-y-6">
-          <div className="bg-blue-50 rounded-3xl border border-blue-100 p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <AlertCircle className="text-blue-500" size={20} />
-              <h3 className="font-bold text-blue-900">什么是 CAS 秒传？</h3>
+        {/* 存根导入 */}
+        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+          <div className="p-6 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <Upload className="text-violet-500" size={20} />
+              <h3 className="font-bold text-slate-900">存根导入</h3>
             </div>
-            <div className="space-y-3 text-sm text-blue-800">
-              <p><strong>.cas 文件</strong>是秒传存根，包含文件名、大小、MD5 与分片 MD5。</p>
-              <p>只要天翼云服务端命中相同 Hash，即可直接恢复，不需要重新上传原文件。</p>
-              <p className="text-blue-600 text-xs mt-2">提示：如果 Hash 未命中，秒传恢复会失败。</p>
-            </div>
+            <p className="text-sm text-slate-500 mt-1">上传 .cas 或 zip 包（含 .cas 目录树），批量秒传并生成 STRM</p>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
-            <div className="p-6 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Zap className="text-amber-500" size={20} />
-                <h3 className="font-bold text-slate-900">家庭中转说明</h3>
-              </div>
+          <div className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">选择文件</label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".cas,.zip,application/zip"
+                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                className="w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+              />
+              {selectedFile && (
+                <p className="text-xs text-slate-500 mt-2">
+                  已选：{selectedFile.name}（{(selectedFile.size / 1024).toFixed(1)} KB）
+                </p>
+              )}
             </div>
-            <div className="p-6 space-y-3 text-sm text-slate-600">
-              <p>启用家庭中转后，秒传恢复流程：</p>
-              <ol className="list-decimal list-inside space-y-2 ml-2">
-                <li>先尝试家庭云秒传</li>
-                <li>将文件复制到个人云</li>
-                <li>清理家庭云临时文件</li>
-              </ol>
-              <p className="text-xs text-slate-500 mt-3">适用于个人云被风控或黑名单的情况。</p>
-            </div>
-          </div>
 
-          <div className="bg-emerald-50 rounded-3xl border border-emerald-100 p-6">
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="text-emerald-500" size={20} />
-              <h3 className="font-bold text-emerald-900">当前配置</h3>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">任务标题（可选）</label>
+              <input
+                type="text"
+                value={importTitle}
+                onChange={(e) => setImportTitle(e.target.value)}
+                placeholder="默认使用 zip 名 / 作品名"
+                className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+              />
             </div>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="flex items-center gap-2">
-                <span className={config.enableFamilyTransit ? 'text-emerald-600' : 'text-slate-400'}>
-                  {config.enableFamilyTransit ? '✓' : '✗'} 家庭中转
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">存入目录</label>
+              <button
+                onClick={() => openFolderSelector('import')}
+                className="w-full flex items-center justify-between px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm hover:border-[#0b57d0] transition-all"
+              >
+                <span className={importFolder ? 'text-slate-900' : 'text-slate-400'}>
+                  {importFolder ? importFolder.name : '点击选择目标目录'}
                 </span>
+                <FolderOpen size={16} className="text-slate-400" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">还原模式</label>
+                <select
+                  value={importMode}
+                  onChange={(e) => setImportMode(e.target.value as 'restore' | 'lazy')}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                >
+                  <option value="restore">立即秒传还原</option>
+                  <option value="lazy">懒还原（播放时再秒传）</option>
+                </select>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={config.familyTransitFirst ? 'text-emerald-600' : 'text-slate-400'}>
-                  {config.familyTransitFirst ? '✓' : '✗'} 优先中转
-                </span>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">目录整理</label>
+                <select
+                  value={organizeMode}
+                  onChange={(e) => setOrganizeMode(e.target.value as 'library' | 'mirror')}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                >
+                  <option value="library">媒体库归档</option>
+                  <option value="mirror">镜像 zip 目录</option>
+                </select>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={config.deleteCasAfterRestore ? 'text-emerald-600' : 'text-slate-400'}>
-                  {config.deleteCasAfterRestore ? '✓' : '✗'} 恢复后删除CAS
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className={config.deleteSourceAfterGenerate ? 'text-emerald-600' : 'text-slate-400'}>
-                  {config.deleteSourceAfterGenerate ? '✓' : '✗'} 生成后删除源
-                </span>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">STRM</label>
+                <select
+                  value={importStrmMode}
+                  onChange={(e) => setImportStrmMode(e.target.value as 'none' | 'normal' | 'lazy')}
+                  className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                >
+                  <option value="none">不生成</option>
+                  <option value="normal">正常 STRM</option>
+                  <option value="lazy">懒 STRM</option>
+                </select>
               </div>
             </div>
+
+            <div className="flex flex-col gap-2 text-sm text-slate-600">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={uploadCasStub} onChange={(e) => setUploadCasStub(e.target.checked)} />
+                同时把 .cas 存根上传到网盘同目录
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={overwriteStrm} onChange={(e) => setOverwriteStrm(e.target.checked)} />
+                覆盖已存在的 STRM
+              </label>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3 text-xs text-slate-500 space-y-1">
+              <p>账号：{selectedAccountLabel || '未选择'}</p>
+              <p>
+                {organizeMode === 'library'
+                  ? '媒体库归档：STRM/网盘落到 {分类}/{作品名 (年)}/Season XX/...'
+                  : '镜像模式：按 zip 内相对路径写入，并加 CAS导入/ 前缀。'}
+              </p>
+              <p>懒模式不会立刻占网盘实体空间，播放时再秒传恢复。</p>
+            </div>
+
+            <button
+              onClick={handleImport}
+              disabled={isImporting || !selectedFile || !importFolder || !selectedAccountId}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-violet-600 text-white rounded-xl font-bold text-sm hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isImporting ? <RefreshCw size={18} className="animate-spin" /> : <FolderArchive size={18} />}
+              开始导入
+            </button>
           </div>
         </div>
       </div>
 
-      {/* 目录选择器 */}
+      {/* 导入任务 */}
+      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+        <div className="p-6 border-b border-slate-100 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <List className="text-slate-700" size={20} />
+            <h3 className="font-bold text-slate-900">导入任务</h3>
+          </div>
+          <button
+            onClick={() => { fetchJobs(); if (activeJobId) fetchJobDetail(activeJobId); }}
+            className="px-3 py-1.5 text-sm rounded-xl border border-slate-200 hover:bg-slate-50 flex items-center gap-1"
+          >
+            <RefreshCw size={14} className={jobsLoading ? 'animate-spin' : ''} /> 刷新
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {jobs.length === 0 ? (
+            <p className="text-sm text-slate-400">暂无导入任务</p>
+          ) : (
+            <div className="space-y-3">
+              {jobs.map((job) => (
+                <div key={job.id} className="border border-slate-200 rounded-2xl p-4 hover:border-slate-300 transition-all">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-slate-900">{job.title}</span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full border ${statusClass(job.status)}`}>
+                          {statusLabel(job.status)}
+                        </span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500 border border-slate-200">
+                          {job.mode === 'lazy' ? '懒还原' : '立即还原'} / STRM:{job.strmMode}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 truncate">
+                        源：{job.sourceName} · 成功 {job.success}/{job.total} · 失败 {job.failed} · 跳过 {job.skipped}
+                      </p>
+                      {job.message && <p className="text-xs text-slate-400">{job.message}</p>}
+                      {job.strmRoot && <p className="text-[11px] text-slate-400 font-mono">STRM: {job.strmRoot}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => { setActiveJobId(job.id); fetchJobDetail(job.id); }}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-slate-200 hover:bg-slate-50"
+                      >
+                        详情
+                      </button>
+                      <button
+                        onClick={() => handleRetryJob(job.id)}
+                        disabled={job.failed <= 0 || job.status === 'running' || retryingJobIds.includes(job.id)}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-40 flex items-center gap-1"
+                      >
+                        <RotateCcw size={12} /> 重试失败
+                      </button>
+                      <button
+                        onClick={() => handleDeleteJob(job)}
+                        className="px-3 py-1.5 text-xs rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 flex items-center gap-1"
+                      >
+                        <Trash2 size={12} /> 删除
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeJob && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-slate-800">任务详情：{activeJob.title}</h4>
+                <button onClick={() => { setActiveJob(null); setActiveJobId(null); }} className="text-xs text-slate-500">关闭</button>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">
+                {statusLabel(activeJob.status)} · 成功 {activeJob.success} / 失败 {activeJob.failed} / 跳过 {activeJob.skipped} / 共 {activeJob.total}
+              </p>
+              {failedEntries.length > 0 ? (
+                <div className="space-y-2 max-h-56 overflow-auto">
+                  {failedEntries.map((entry) => (
+                    <div key={entry.relativePath} className="text-xs bg-white border border-rose-100 rounded-xl px-3 py-2">
+                      <div className="font-medium text-rose-700">{entry.restoreName || entry.relativePath}</div>
+                      <div className="text-rose-500 mt-0.5">{entry.error || '未知错误'}</div>
+                    </div>
+                  ))}
+                  {(activeJob.entries || []).filter((e) => e.status === 'failed').length > 20 && (
+                    <p className="text-[11px] text-slate-400">仅显示前 20 条失败记录</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">暂无失败条目</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 管理区 */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FolderArchive className="text-sky-500" size={20} />
+              <h3 className="font-bold text-slate-900">导入 STRM</h3>
+            </div>
+            <button
+              onClick={() => fetchStrmList(strmPath)}
+              className="px-3 py-1.5 text-sm rounded-xl border border-slate-200 hover:bg-slate-50"
+            >
+              刷新
+            </button>
+          </div>
+          <div className="p-6 space-y-3">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>当前路径：</span>
+              <code className="bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">{strmPath || '(根/CAS导入)'}</code>
+              {!!strmPath && (
+                <button
+                  className="text-[#0b57d0]"
+                  onClick={() => {
+                    const parent = strmPath.split('/').slice(0, -1).join('/');
+                    fetchStrmList(parent);
+                  }}
+                >
+                  上级
+                </button>
+              )}
+            </div>
+            {mgmtLoading ? (
+              <p className="text-sm text-slate-400">加载中...</p>
+            ) : strmItems.length === 0 ? (
+              <p className="text-sm text-slate-400">暂无内容。导入并生成 STRM 后会出现在这里。</p>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-auto">
+                {strmItems.map((item) => (
+                  <div key={item.id || item.path} className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl px-3 py-2">
+                    <button
+                      className="text-left text-sm text-slate-700 truncate hover:text-[#0b57d0]"
+                      onClick={() => {
+                        if (item.type === 'directory') fetchStrmList(item.path);
+                      }}
+                    >
+                      {item.type === 'directory' ? '📁' : '📄'} {item.name}
+                    </button>
+                    {item.type === 'directory' && (
+                      <button
+                        onClick={() => handleDeleteStrm(item)}
+                        className="text-xs text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-lg"
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="text-amber-500" size={20} />
+              <h3 className="font-bold text-slate-900">分享懒 STRM 缓存</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={fetchShareCaches}
+                className="px-3 py-1.5 text-sm rounded-xl border border-slate-200 hover:bg-slate-50"
+              >
+                刷新
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm('确认清理全部分享 CAS 元数据缓存？')) {
+                    handleClearShareCache(undefined, true);
+                  }
+                }}
+                className="px-3 py-1.5 text-sm rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50"
+              >
+                全部清理
+              </button>
+            </div>
+          </div>
+          <div className="p-6 space-y-2 max-h-80 overflow-auto">
+            {shareCaches.length === 0 ? (
+              <p className="text-sm text-slate-400">暂无分享链接 CAS 元数据缓存</p>
+            ) : (
+              shareCaches.map((item) => (
+                <div key={`${item.accountId}-${item.shareId}`} className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-sm text-slate-800 truncate">账号 {item.accountId} / 分享 {item.shareId}</div>
+                    <div className="text-[11px] text-slate-400">{item.fileCount} 个文件 · {item.updatedAt || '-'}</div>
+                  </div>
+                  <button
+                    onClick={() => handleClearShareCache(item)}
+                    className="text-xs text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-lg shrink-0"
+                  >
+                    清理
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 说明 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="bg-blue-50 rounded-3xl border border-blue-100 p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertCircle className="text-blue-500" size={18} />
+            <h3 className="font-bold text-blue-900">什么是 CAS 秒传？</h3>
+          </div>
+          <div className="space-y-2 text-sm text-blue-800">
+            <p><strong>.cas</strong> 存根包含文件名、大小、MD5 与分片 MD5。</p>
+            <p>Hash 命中即可恢复，无需上传原片；未命中会失败。</p>
+          </div>
+        </div>
+        <div className="bg-white rounded-3xl border border-slate-200/60 p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="text-amber-500" size={18} />
+            <h3 className="font-bold text-slate-900">导入包说明</h3>
+          </div>
+          <div className="space-y-2 text-sm text-slate-600">
+            <p>支持单个 `.cas`，或 zip 内整树 `.cas`（如剧集 Season 目录）。</p>
+            <p>立即还原会占用网盘实体；懒还原只写元数据与懒 STRM。</p>
+          </div>
+        </div>
+        <div className="bg-emerald-50 rounded-3xl border border-emerald-100 p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <CheckCircle2 className="text-emerald-500" size={18} />
+            <h3 className="font-bold text-emerald-900">当前配置</h3>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <span className={config.enableFamilyTransit ? 'text-emerald-700' : 'text-slate-400'}>
+              {config.enableFamilyTransit ? '✓' : '✗'} 家庭中转
+            </span>
+            <span className={config.familyTransitFirst ? 'text-emerald-700' : 'text-slate-400'}>
+              {config.familyTransitFirst ? '✓' : '✗'} 优先中转
+            </span>
+            <span className={config.deleteCasAfterRestore ? 'text-emerald-700' : 'text-slate-400'}>
+              {config.deleteCasAfterRestore ? '✓' : '✗'} 恢复后删CAS
+            </span>
+            <span className={config.deleteSourceAfterGenerate ? 'text-emerald-700' : 'text-slate-400'}>
+              {config.deleteSourceAfterGenerate ? '✓' : '✗'} 生成后删源
+            </span>
+          </div>
+        </div>
+      </div>
+
       <FolderSelector
         isOpen={isFolderSelectorOpen}
         onClose={() => setIsFolderSelectorOpen(false)}
         accountId={selectedAccountId || 0}
-        accountName={accounts.find(a => a.id === selectedAccountId)?.username || ''}
+        accountName={accounts.find((a) => a.id === selectedAccountId)?.username || ''}
         onSelect={(folder) => {
-          setTargetFolder(folder);
+          if (folderSelectorMode === 'import') {
+            setImportFolder(folder);
+          } else {
+            setTargetFolder(folder);
+          }
           setIsFolderSelectorOpen(false);
         }}
-        title="选择存入目录"
+        title={folderSelectorMode === 'import' ? '选择导入目录' : '选择存入目录'}
       />
     </div>
   );

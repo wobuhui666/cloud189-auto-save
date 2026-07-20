@@ -10,6 +10,8 @@ const AIService = require('./ai');
 const { OrganizerService } = require('./organizer');
 const { CasService } = require('./casService');
 const { CasMetadataCacheService } = require('./casMetadataCache');
+const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
+const { TMDBService } = require('./tmdb');
 
 class LazyShareStrmService {
     constructor(accountRepo, taskService) {
@@ -20,6 +22,10 @@ class LazyShareStrmService {
         this.organizerService = new OrganizerService(taskService);
         this.casService = new CasService();
         this.casMetadataCache = new CasMetadataCacheService();
+        this.layoutService = new MediaLibraryLayoutService({
+            taskService,
+            tmdbService: new TMDBService()
+        });
         this.cache = new Map();
         this.inflight = new Map();
         this.transferInflight = new Map();
@@ -139,11 +145,39 @@ class LazyShareStrmService {
             (files || []).map((file) => ({
                 id: String(file.id),
                 name: file.name,
-                relativeDir: ''
+                // 保留真实 relativeDir，不再强制清空
+                relativeDir: file.relativeDir || ''
             }))
         );
         if (!mediaEntries.length) {
             throw new Error('任务当前没有可生成懒转存STRM的媒体文件');
+        }
+
+        // 启用整理时：锁定媒体库布局（不移动网盘），并回填 name/relativeDir
+        if (task.enableOrganizer) {
+            try {
+                const organizer = new OrganizerService(this.taskService, this.taskService?.taskRepo);
+                const organizedTask = await organizer.organizeTask(task, {
+                    organizeCloud: false,
+                    force: true
+                });
+                if (Array.isArray(organizedTask?.files) && organizedTask.files.length) {
+                    const byId = new Map(organizedTask.files.map((f) => [String(f.id), f]));
+                    for (const entry of mediaEntries) {
+                        const hit = byId.get(String(entry.id));
+                        if (hit) {
+                            entry.name = hit.name || entry.name;
+                            entry.relativeDir = hit.relativeDir || entry.relativeDir || '';
+                            entry.originalFileName = hit.originalFileName || hit.name || entry.name;
+                        }
+                    }
+                    if (organizedTask.libraryInfo) {
+                        task.libraryLayout = this.layoutService.serializeLibraryLayout(organizedTask.libraryInfo);
+                    }
+                }
+            } catch (error) {
+                logTaskEvent(`懒转存整理布局失败，回退基础路径: ${error.message}`);
+            }
         }
 
         const organized = await this._buildStrmLayout({
@@ -167,7 +201,7 @@ class LazyShareStrmService {
                 fileName: file.sourceFileName || file.name,
                 targetFolderId,
                 rootName: '',
-                relativeDir: file.sourceRelativeDir || '',
+                relativeDir: file.sourceRelativeDir || file.relativeDir || '',
                 isCas: !!file.isCas,
                 originalFileName: file.originalFileName || ''
             }),
@@ -389,7 +423,7 @@ class LazyShareStrmService {
         const preparedFiles = files.map(file => ({
             ...file,
             relativeDir: this._normalizeRelativePath(file.relativeDir || ''),
-            sourceRelativeDir: this._normalizeRelativePath(file.relativeDir || ''),
+            sourceRelativeDir: this._normalizeRelativePath(file.sourceRelativeDir || file.relativeDir || ''),
             sourceFileName: file.sourceFileName || file.name,
             originalFileName: file.originalFileName || (CasService.isCasFile(file.name) ? CasService.getOriginalFileName(file.name) : file.name)
         }));
@@ -401,74 +435,38 @@ class LazyShareStrmService {
             };
         }
 
-        let resourceInfo = null;
-        if (AIService.isEnabled()) {
-            try {
-                resourceInfo = await this.taskService._analyzeResourceInfo(
-                    normalizedResourceName,
-                    preparedFiles.map(file => ({ id: file.id, name: file.name })),
-                    'file'
-                );
-            } catch (error) {
-                logTaskEvent(`懒转存整理分析失败，已回退基础分类: ${error.message}`);
-            }
-        }
-
-        let resolvedTmdbInfo = tmdbInfo || this._parseTaskTmdbContent(task?.tmdbContent);
-        if (!resolvedTmdbInfo && task?.tmdbId) {
-            try {
-                resolvedTmdbInfo = await this.organizerService._resolveTmdbInfo(task, resourceInfo || {
-                    name: normalizedResourceName,
-                    type: 'tv',
-                    year: ''
-                });
-            } catch (error) {
-                logTaskEvent(`懒转存整理获取TMDB失败，已回退基础分类: ${error.message}`);
-            }
-        }
-
-        if (!resourceInfo && !resolvedTmdbInfo) {
-            logTaskEvent(`懒转存整理回退到安全目录: ${fallbackTargetRoot || '(根目录)'}`);
+        // 优先使用已锁定 layout，避免 AI 漂移
+        try {
+            this.layoutService.taskService = this.taskService;
+            const libraryInfo = await this.layoutService.resolveLibraryInfo({
+                resourceName: normalizedResourceName,
+                files: preparedFiles,
+                tmdbInfo,
+                task,
+                forceRefresh: false,
+                useAi: true
+            });
+            const applied = this.layoutService.applyLayoutToFiles({
+                localStrmPrefix: normalizedLocalPathPrefix,
+                libraryInfo,
+                resourceInfo: libraryInfo.resourceInfo,
+                files: preparedFiles,
+                renameFiles: true
+            });
+            // 保留 sourceRelativeDir 供播放/转存使用
+            applied.files = applied.files.map((file, idx) => ({
+                ...file,
+                sourceRelativeDir: preparedFiles[idx]?.sourceRelativeDir || preparedFiles[idx]?.relativeDir || '',
+                sourceFileName: preparedFiles[idx]?.sourceFileName || preparedFiles[idx]?.name
+            }));
+            return applied;
+        } catch (error) {
+            logTaskEvent(`懒转存 layout 构建失败，回退安全目录: ${error.message}`);
             return {
                 targetRoot: fallbackTargetRoot,
                 files: preparedFiles
             };
         }
-
-        const taskLike = {
-            resourceName: normalizedResourceName || fallbackRootName || task?.resourceName || ''
-        };
-        const libraryInfo = this.organizerService._resolveLibraryInfo(taskLike, resourceInfo || null, resolvedTmdbInfo || null);
-        const template = resourceInfo?.type === 'movie'
-            ? ConfigService.getConfigValue('openai.rename.movieTemplate') || '{name} ({year}){ext}'
-            : ConfigService.getConfigValue('openai.rename.template') || '{name} - {se}{ext}';
-        const episodeMap = new Map((resourceInfo?.episode || []).map(item => [String(item.id), item]));
-
-        const organizedFiles = preparedFiles.map(file => {
-            const aiFile = episodeMap.get(String(file.id));
-            const baseFile = file.isCas
-                ? { ...file, name: file.originalFileName || file.name }
-                : file;
-            const targetName = aiFile
-                ? this.taskService._generateFileName(baseFile, aiFile, resourceInfo, template)
-                : (file.originalFileName || file.name);
-            const targetRelativeDir = this.organizerService._buildTargetRelativeDir(
-                { ...file, name: targetName },
-                aiFile,
-                resourceInfo || { type: libraryInfo.mediaType || 'tv' },
-                libraryInfo
-            );
-            return {
-                ...file,
-                name: targetName,
-                relativeDir: this._normalizeRelativePath(targetRelativeDir)
-            };
-        });
-
-        return {
-            targetRoot: this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, libraryInfo.categoryName, libraryInfo.resourceFolderName)),
-            files: organizedFiles
-        };
     }
 
     _parseTaskTmdbContent(tmdbContent) {
@@ -485,10 +483,17 @@ class LazyShareStrmService {
 
     _resolveFallbackTargetRoot({ localPathPrefix = '', rootName = '', resourceName = '', enableOrganizer = false, task = null }) {
         const normalizedLocalPathPrefix = this._normalizeRelativePath(localPathPrefix);
-        if (enableOrganizer && task?.realFolderName) {
-            const taskRelativeRoot = this._getTaskRelativeRootPath(task.realFolderName);
-            if (taskRelativeRoot) {
-                return this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, taskRelativeRoot));
+        // 已锁定 layout 时优先媒体库路径
+        if (enableOrganizer || task?.libraryLayout) {
+            const locked = this.layoutService.parseTaskLibraryLayout(task);
+            if (locked?.resourceFolderName) {
+                return this.layoutService.buildStrmRoot(normalizedLocalPathPrefix, locked);
+            }
+            if (task?.realFolderName) {
+                const taskRelativeRoot = this._getTaskRelativeRootPath(task.realFolderName);
+                if (taskRelativeRoot) {
+                    return this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, taskRelativeRoot));
+                }
             }
         }
 

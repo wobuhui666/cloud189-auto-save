@@ -44,14 +44,16 @@ class StreamProxyService {
             v: 1,
             type: payload.type || 'subscription',
             accountId: Number(payload.accountId),
-            fileId: String(payload.fileId),
+            fileId: String(payload.fileId || ''),
             shareId: payload.shareId ? String(payload.shareId) : '',
             fileName: payload.fileName ? String(payload.fileName) : '',
             targetFolderId: payload.targetFolderId ? String(payload.targetFolderId) : '',
             rootName: payload.rootName ? String(payload.rootName) : '',
             relativeDir: payload.relativeDir ? String(payload.relativeDir) : '',
             isCas: !!payload.isCas,
-            originalFileName: payload.originalFileName ? String(payload.originalFileName) : ''
+            originalFileName: payload.originalFileName ? String(payload.originalFileName) : '',
+            importId: payload.importId ? String(payload.importId) : '',
+            entryKey: payload.entryKey ? String(payload.entryKey) : ''
         };
         const encodedPayload = this._encodePayload(normalizedPayload);
         return `${encodedPayload}.${this._sign(encodedPayload)}`;
@@ -88,6 +90,9 @@ class StreamProxyService {
     }
 
     _getCacheKey(payload) {
+        if (payload?.type === 'casLazy') {
+            return `casLazy:${payload.accountId}:${payload.importId || ''}:${payload.entryKey || payload.fileId || ''}`;
+        }
         return `${payload.accountId}:${payload.shareId || 'direct'}:${payload.fileId}`;
     }
 

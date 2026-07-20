@@ -4,12 +4,17 @@ const { Cloud189Service } = require('./cloud189');
 const { StrmService } = require('./strm');
 const { TMDBService } = require('./tmdb');
 const { logTaskEvent } = require('../utils/logUtils');
+const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
 
 class OrganizerService {
     constructor(taskService, taskRepo = null) {
         this.taskService = taskService || null;
         this.taskRepo = taskRepo || (taskService && taskService.taskRepo) || null;
         this.tmdbService = new TMDBService();
+        this.layoutService = new MediaLibraryLayoutService({
+            taskService: this.taskService,
+            tmdbService: this.tmdbService
+        });
     }
 
     async organizeTaskById(taskId, options = {}) {
@@ -22,7 +27,9 @@ class OrganizerService {
 
     async organizeTask(task, options = {}) {
         const {
-            triggerStrm = false
+            triggerStrm = false,
+            organizeCloud = true,
+            forceRefresh = false
         } = options;
 
         if (!task.account) {
@@ -38,28 +45,65 @@ class OrganizerService {
                 files: await this.taskService.getFilesByTask(task)
             };
         }
-        if (!ConfigService.getConfigValue('openai.enable')) {
-            throw new Error('整理器依赖AI功能，请先在媒体设置中启用AI');
-        }
-        if (task.enableLazyStrm) {
-            throw new Error('懒转存STRM任务暂不支持整理器');
+
+        // 懒任务：默认只解析/锁定 layout，不移动网盘实体
+        const isLazy = !!task.enableLazyStrm;
+        const shouldOrganizeCloud = organizeCloud && !isLazy;
+        if (isLazy && organizeCloud && !options.forceCloud) {
+            logTaskEvent(`任务[${task.resourceName}]为懒STRM，仅锁定媒体库布局（不移动网盘文件）`);
         }
 
-        const cloud189 = Cloud189Service.getInstance(task.account);
         const allFiles = (await this.taskService.getFilesByTask(task)).filter(file => !file.isFolder);
         if (!allFiles.length) {
             throw new Error('当前任务目录没有可整理的文件');
         }
 
         logTaskEvent(`任务[${task.resourceName}]开始执行整理器`);
-        const resourceInfo = await this.taskService._analyzeResourceInfo(
-            task.resourceName,
-            allFiles.map(file => ({ id: file.id, name: file.name })),
-            'file'
-        );
+        this.layoutService.taskService = this.taskService;
+        const libraryInfo = await this.layoutService.resolveLibraryInfo({
+            resourceName: task.resourceName,
+            files: allFiles.map(file => ({ id: file.id, name: file.name })),
+            task,
+            forceRefresh: !!forceRefresh,
+            useAi: true
+        });
+        const resourceInfo = libraryInfo.resourceInfo || {
+            name: libraryInfo.canonicalTitle,
+            year: libraryInfo.year,
+            type: libraryInfo.mediaType,
+            episode: []
+        };
 
-        const tmdbInfo = await this._resolveTmdbInfo(task, resourceInfo);
-        const libraryInfo = this._resolveLibraryInfo(task, resourceInfo, tmdbInfo);
+        // 锁定 layout（防 AI 漂移）
+        const layoutJson = this.layoutService.serializeLibraryLayout(libraryInfo);
+        task.libraryLayout = layoutJson;
+
+        if (!shouldOrganizeCloud) {
+            if (this.taskRepo) {
+                await this.taskRepo.update(task.id, {
+                    libraryLayout: layoutJson,
+                    lastOrganizedAt: new Date(),
+                    lastOrganizeError: '',
+                    ...(libraryInfo.tmdbId ? { tmdbId: String(libraryInfo.tmdbId) } : {})
+                });
+            }
+            // 为 STRM 侧准备 relativeDir/name（不改网盘）
+            const applied = this.layoutService.applyLayoutToFiles({
+                localStrmPrefix: task.account?.localStrmPrefix || '',
+                libraryInfo,
+                resourceInfo,
+                files: allFiles,
+                renameFiles: true
+            });
+            return {
+                message: `${task.resourceName}已锁定媒体库布局 ${libraryInfo.categoryName}/${libraryInfo.resourceFolderName}（懒模式未移动网盘）`,
+                files: applied.files,
+                operations: [],
+                libraryInfo
+            };
+        }
+
+        const cloud189 = Cloud189Service.getInstance(task.account);
         const baseFolderPath = this._resolveBaseFolderPath(task);
         const categoryCache = new Map();
         const resourceFolderPath = this._joinPosix(baseFolderPath, libraryInfo.categoryName, libraryInfo.resourceFolderName);
@@ -79,15 +123,8 @@ class OrganizerService {
 
         for (const file of allFiles) {
             const aiFile = fileMap.get(String(file.id));
-            if (!aiFile) {
-                continue;
-            }
-
-            const template = resourceInfo.type === 'movie'
-                ? ConfigService.getConfigValue('openai.rename.movieTemplate') || '{name} ({year}){ext}'
-                : ConfigService.getConfigValue('openai.rename.template') || '{name} - {se}{ext}';
-            const targetFileName = this.taskService._generateFileName(file, aiFile, resourceInfo, template);
-            const targetRelativeDir = this._buildTargetRelativeDir(file, aiFile, resourceInfo, libraryInfo);
+            const targetFileName = this.layoutService.buildFileName(file, aiFile, resourceInfo, libraryInfo);
+            const targetRelativeDir = this.layoutService.buildRelativeDir(file, aiFile, libraryInfo);
             const targetFolderId = await this._ensureDirectoryPath(cloud189, resourceFolderId, targetRelativeDir, nestedFolderCache);
 
             if (file.name !== targetFileName) {
@@ -109,12 +146,16 @@ class OrganizerService {
                 file.parentFolderId = String(targetFolderId);
                 file.relativeDir = targetRelativeDir;
                 file.relativePath = targetRelativeDir ? `${targetRelativeDir}/${file.name}` : file.name;
+            } else {
+                file.relativeDir = targetRelativeDir;
+                file.relativePath = targetRelativeDir ? `${targetRelativeDir}/${file.name}` : file.name;
             }
         }
 
         const taskUpdates = {
             lastOrganizedAt: new Date(),
-            lastOrganizeError: ''
+            lastOrganizeError: '',
+            libraryLayout: layoutJson
         };
 
         if (String(originalFolderId) !== String(resourceFolderId) || originalFolderName !== resourceFolderPath) {
@@ -126,25 +167,34 @@ class OrganizerService {
             task.realFolderName = resourceFolderPath;
 
             if (ConfigService.getConfigValue('strm.enable') && originalFolderName && originalFolderName !== resourceFolderPath) {
-                const oldStrmPath = this._getTaskRelativeRootPath(originalFolderName);
-                if (oldStrmPath) {
-                    await new StrmService().deleteDir(path.join(task.account.localStrmPrefix, oldStrmPath));
+                const strmService = new StrmService();
+                const oldRoot = strmService.resolveTaskStrmRoot({
+                    ...task,
+                    realFolderName: originalFolderName,
+                    libraryLayout: null,
+                    account: task.account
+                });
+                // 仅当旧路径不是新媒体库路径时清理
+                const newRoot = strmService.resolveTaskStrmRoot(task);
+                if (oldRoot && oldRoot !== newRoot) {
+                    await strmService.deleteDir(oldRoot);
                 }
             }
         }
 
-        if (tmdbInfo?.id && (!task.tmdbId || String(task.tmdbId) !== String(tmdbInfo.id))) {
-            taskUpdates.tmdbId = String(tmdbInfo.id);
-            task.tmdbId = String(tmdbInfo.id);
-        }
-        if (tmdbInfo) {
-            taskUpdates.tmdbContent = JSON.stringify(tmdbInfo);
-            task.tmdbContent = taskUpdates.tmdbContent;
+        if (libraryInfo.tmdbId && (!task.tmdbId || String(task.tmdbId) !== String(libraryInfo.tmdbId))) {
+            taskUpdates.tmdbId = String(libraryInfo.tmdbId);
+            task.tmdbId = String(libraryInfo.tmdbId);
         }
 
         await this.taskRepo.update(task.id, taskUpdates);
 
         const refreshedFiles = await this.taskService.getFilesByTask(task);
+        // 补 relativeDir
+        for (const file of refreshedFiles) {
+            const aiFile = fileMap.get(String(file.id));
+            file.relativeDir = this.layoutService.buildRelativeDir(file, aiFile, libraryInfo);
+        }
 
         let strmMessage = '';
         if (triggerStrm && ConfigService.getConfigValue('strm.enable')) {

@@ -36,6 +36,7 @@ const sqliteIndexes = [
 ];
 
 const sqliteColumns = [
+    { table: 'task', name: 'libraryLayout', sql: 'ALTER TABLE "task" ADD COLUMN "libraryLayout" text' },
     { table: 'pt_subscription', name: 'episodeDedup', sql: 'ALTER TABLE "pt_subscription" ADD COLUMN "episodeDedup" boolean NOT NULL DEFAULT 0' },
     { table: 'pt_subscription', name: 'standbyRssJson', sql: 'ALTER TABLE "pt_subscription" ADD COLUMN "standbyRssJson" text DEFAULT \'\'' },
     { table: 'pt_subscription', name: 'coexist', sql: 'ALTER TABLE "pt_subscription" ADD COLUMN "coexist" boolean NOT NULL DEFAULT 0' },

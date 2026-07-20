@@ -813,6 +813,11 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
               label="自动整理"
               labelClassName="text-sm font-medium text-slate-600"
             />
+            {formData.enableLazyStrm && formData.enableOrganizer && (
+              <p className="text-[11px] text-slate-500 col-span-full -mt-1">
+                懒 STRM + 自动整理：只锁定媒体库路径并生成 STRM，不提前移动网盘实体文件。
+              </p>
+            )}
 
             <Checkbox
               checked={formData.keepCasAfterRestore}
