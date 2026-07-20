@@ -182,7 +182,9 @@ const readLastTaskTogglePrefs = () => {
 
 const createInitialFormData = (initialData?: TaskInitialData | null): TaskFormData => {
   const savedTarget = readLastTargetFolder();
-  const savedToggles = readLastTaskTogglePrefs();
+  const isEditing = Boolean(initialData?.id);
+  // 新建才合并本地开关记忆；编辑避免 localStorage 污染任务真实值
+  const savedToggles = isEditing ? null : readLastTaskTogglePrefs();
   const baseData: TaskFormData = {
     ...EMPTY_FORM_DATA,
     ...(savedTarget || {}),
@@ -192,6 +194,9 @@ const createInitialFormData = (initialData?: TaskInitialData | null): TaskFormDa
   if (!initialData) {
     return baseData;
   }
+
+  const pickBool = (value: boolean | undefined, fallback: boolean) =>
+    value !== undefined ? Boolean(value) : fallback;
 
   return {
     ...baseData,
@@ -210,15 +215,15 @@ const createInitialFormData = (initialData?: TaskInitialData | null): TaskFormDa
     matchPattern: initialData.matchPattern || '',
     matchOperator: normalizeMatchOperator(initialData.matchOperator),
     matchValue: initialData.matchValue || '',
-    enableCron: Boolean(initialData.enableCron),
+    enableCron: pickBool(initialData.enableCron, isEditing ? false : baseData.enableCron),
     cronExpression: initialData.cronExpression || '',
     sourceRegex: initialData.sourceRegex || '',
     targetRegex: initialData.targetRegex || '',
     tmdbId: initialData.tmdbId !== undefined && initialData.tmdbId !== null ? String(initialData.tmdbId) : '',
-    enableTaskScraper: Boolean(initialData.enableTaskScraper),
-    enableLazyStrm: Boolean(initialData.enableLazyStrm),
-    enableOrganizer: Boolean(initialData.enableOrganizer),
-    keepCasAfterRestore: Boolean(initialData.keepCasAfterRestore),
+    enableTaskScraper: pickBool(initialData.enableTaskScraper, isEditing ? false : baseData.enableTaskScraper),
+    enableLazyStrm: pickBool(initialData.enableLazyStrm, isEditing ? false : baseData.enableLazyStrm),
+    enableOrganizer: pickBool(initialData.enableOrganizer, isEditing ? false : baseData.enableOrganizer),
+    keepCasAfterRestore: pickBool(initialData.keepCasAfterRestore, isEditing ? false : baseData.keepCasAfterRestore),
     status: initialData.status || 'pending'
   };
 };
@@ -237,7 +242,8 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
   const toast = useToast();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [regexPresets, setRegexPresets] = useState<RegexPreset[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [tmdbLoading, setTmdbLoading] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [shareFolders, setShareFolders] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
@@ -389,9 +395,16 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
             taskName: folders[0].name
           }));
         }
+      } else {
+        setShareFolders([]);
+        setSelectedFolders([]);
+        toast.error(data.error || '解析分享链接失败');
       }
     } catch (error) {
       console.error('Failed to parse share link:', error);
+      setShareFolders([]);
+      setSelectedFolders([]);
+      toast.error('解析分享链接失败，请检查链接或账号');
     } finally {
       setParsing(false);
     }
@@ -402,22 +415,26 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
       return;
     }
 
-    setLoading(true);
+    setTmdbLoading(true);
     try {
       const response = await fetch(`/api/tmdb/search?keyword=${encodeURIComponent(formData.taskName)}`);
       const data = await response.json();
       if (data.success) {
         setTmdbResults(data.data || []);
+      } else {
+        setTmdbResults([]);
+        toast.error(data.error || 'TMDB 搜索失败');
       }
     } catch (error) {
       console.error('Failed to search TMDB:', error);
+      toast.error('TMDB 搜索失败');
     } finally {
-      setLoading(false);
+      setTmdbLoading(false);
     }
   };
 
   const handleSelectTmdb = async (result: { id: number; title: string; type?: string }) => {
-    setLoading(true);
+    setTmdbLoading(true);
     try {
       let totalEpisodes = '';
       if (result.type === 'tv') {
@@ -444,13 +461,16 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
       }));
       setTmdbResults([]);
     } finally {
-      setLoading(false);
+      setTmdbLoading(false);
     }
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoading(true);
+    if (submitting) {
+      return;
+    }
+    setSubmitting(true);
 
     try {
       const normalizedMatchOperator = normalizeMatchOperator(formData.matchOperator);
@@ -501,14 +521,25 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
         const blocks = formData.batchShareLinks
           .split('\n')
           .map(line => line.trim())
-          .filter(Boolean);
+          .filter(Boolean)
+          .map((line) => {
+            // 简单拆分：一行内带「提取码/访问码」时拆出 accessCode
+            const codeMatch = line.match(/(?:提取码|访问码|码)\s*[:：]\s*([a-zA-Z0-9]{2,8})/i);
+            const accessCode = codeMatch?.[1] || formData.accessCode || '';
+            const shareLink = line
+              .replace(/(?:提取码|访问码|码)\s*[:：]\s*[a-zA-Z0-9]{2,8}/ig, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            return {
+              ...formData,
+              shareLink: shareLink || line,
+              accessCode,
+              taskName: '',
+              selectedFolders: []
+            };
+          });
         body = {
-          tasks: blocks.map(link => ({
-            ...formData,
-            shareLink: link,
-            taskName: '',
-            selectedFolders: []
-          }))
+          tasks: blocks
         };
       } else {
         body = {
@@ -540,7 +571,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
       console.error('Failed to submit task:', error);
       toast.error('提交失败');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
@@ -683,9 +714,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
                 <button
                   type="button"
                   onClick={handleSearchTmdb}
-                  className="px-4 py-3 bg-white border border-slate-300 rounded-2xl text-slate-600 hover:bg-slate-50 transition-colors"
+                  disabled={tmdbLoading || !formData.taskName}
+                  className="px-4 py-3 bg-white border border-slate-300 rounded-2xl text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <Search size={20} />
+                  {tmdbLoading ? <RefreshCw size={20} className="animate-spin" /> : <Search size={20} />}
                 </button>
               </div>
             </div>
@@ -715,7 +747,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
                     className="w-full text-left px-3 py-2 hover:bg-white rounded-xl text-sm text-slate-700 transition-colors flex justify-between items-center group"
                   >
                     <span className="truncate">{result.title} ({result.releaseDate?.substring(0, 4)})</span>
-                    <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">选择</span>
+                    <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">选择</span>
                   </button>
                 ))}
               </div>
@@ -945,10 +977,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
           </button>
           <button
             type="submit"
-            disabled={loading}
+            disabled={submitting}
             className="px-10 py-3 bg-[#0b57d0] text-white rounded-full font-medium shadow-lg hover:bg-[#0b57d0]/90 transition-all flex items-center gap-2 disabled:opacity-70"
           >
-            {loading ? <RefreshCw size={20} className="animate-spin" /> : <Check size={20} />}
+            {submitting ? <RefreshCw size={20} className="animate-spin" /> : <Check size={20} />}
             {isEditing ? '保存修改' : (isBatchMode ? '开始批量创建' : '创建任务')}
           </button>
         </div>

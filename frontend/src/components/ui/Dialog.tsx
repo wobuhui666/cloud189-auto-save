@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useMemo, useRef, useStat
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { AlertTriangle, HelpCircle, Info, AlertOctagon } from 'lucide-react';
+import { lockBodyScroll, unlockBodyScroll } from '../../lib/bodyScrollLock';
+import { pushOverlay, popOverlay, updateOverlay } from '../../lib/overlayStack';
 
 export type DialogTone = 'info' | 'danger' | 'warning' | 'success';
 
@@ -135,6 +137,34 @@ const DialogRenderer: React.FC<RendererProps> = ({ dialog, onClose }) => {
   const [value, setValue] = useState(options.defaultValue ?? '');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const handleCancel = useCallback(() => {
+    if (type === 'confirm') onClose(false);
+    else if (type === 'prompt') onClose(null);
+    else onClose(undefined);
+  }, [type, onClose]);
+
+  const handleConfirm = useCallback(() => {
+    if (type === 'confirm') {
+      onClose(true);
+      return;
+    }
+    if (type === 'prompt') {
+      const current = valueRef.current;
+      if (options.validate) {
+        const err = options.validate(current);
+        if (err) {
+          setError(err);
+          return;
+        }
+      }
+      onClose(current);
+      return;
+    }
+    onClose(undefined);
+  }, [type, onClose, options.validate]);
 
   useEffect(() => {
     if (type === 'prompt' && inputRef.current) {
@@ -143,41 +173,25 @@ const DialogRenderer: React.FC<RendererProps> = ({ dialog, onClose }) => {
     }
   }, [type]);
 
-  const handleCancel = () => {
-    if (type === 'confirm') onClose(false);
-    else if (type === 'prompt') onClose(null);
-    else onClose(undefined);
-  };
+  useEffect(() => {
+    lockBodyScroll();
+    const overlayId = pushOverlay({
+      kind: 'dialog',
+      onEscape: handleCancel,
+      onEnter: type === 'prompt' && options.multiline ? undefined : handleConfirm,
+    });
 
-  const handleConfirm = () => {
-    if (type === 'confirm') onClose(true);
-    else if (type === 'prompt') {
-      if (options.validate) {
-        const err = options.validate(value);
-        if (err) {
-          setError(err);
-          return;
-        }
-      }
-      onClose(value);
-    } else {
-      onClose(undefined);
-    }
-  };
+    return () => {
+      popOverlay(overlayId);
+      unlockBodyScroll();
+    };
+  }, [handleCancel, handleConfirm, type, options.multiline]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleCancel();
-      else if (e.key === 'Enter' && type !== 'prompt') handleConfirm();
-      else if (e.key === 'Enter' && type === 'prompt' && !options.multiline && !e.shiftKey) {
-        e.preventDefault();
-        handleConfirm();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+    // keep handlers fresh for stack top without re-register churn beyond deps above
+  }, []);
+
+  void updateOverlay;
 
   const confirmText = options.confirmText ?? (type === 'prompt' ? '确定' : type === 'alert' ? '知道了' : '确认');
   const cancelText = options.cancelText ?? '取消';

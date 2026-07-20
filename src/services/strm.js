@@ -6,6 +6,7 @@ const CryptoUtils = require('../utils/cryptoUtils');
 const alistService = require('./alistService');
 const { MessageUtil } = require('./message');
 const { StreamProxyService } = require('./streamProxy');
+const { Cloud189Service } = require('./cloud189');
 
 const { CasService } = require('./casService');
 const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
@@ -327,6 +328,9 @@ class StrmService {
     }
 
     async generateSelectedDirectories(account, directories, options = {}) {
+        if (options.useStreamProxy) {
+            return this.generateSelectedDirectoriesViaCloud(account, directories, options);
+        }
         if (!alistService.Enable()) {
             throw new Error('Alist功能未启用');
         }
@@ -377,6 +381,128 @@ class StrmService {
             `跳过数: ${stats.skipped}`;
         logTaskEvent(message);
         return message;
+    }
+
+    /**
+     * 按云盘原生目录扫描并生成系统中转 STRM（不依赖 Alist）
+     * 需要 directory.folderId；内容写入 /api/stream 代理地址
+     */
+    async generateSelectedDirectoriesViaCloud(account, directories, options = {}) {
+        if (!account?.id) {
+            throw new Error('账号无效');
+        }
+        if (!Array.isArray(directories) || !directories.length) {
+            throw new Error('系统中转模式请指定至少一个目录（需要云盘 folderId）');
+        }
+        const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
+        const excludeRegex = this._buildRegex(options.excludePattern);
+        const cloud189 = Cloud189Service.getInstance(account);
+        const messages = [];
+        let totalFiles = 0;
+        let processedDirs = 0;
+
+        for (const directory of directories) {
+            const folderId = directory.folderId ? String(directory.folderId) : '';
+            if (!folderId) {
+                logTaskEvent(`跳过无 folderId 的目录: ${directory.path || directory.name || '?'}`);
+                continue;
+            }
+            const relativeSourcePath = this._normalizeRelativePath(directory.path || directory.name);
+            const targetRoot = this._normalizeRelativePath(
+                path.join(options.localPathPrefix || account.localStrmPrefix || '', relativeSourcePath || directory.name || folderId)
+            );
+            if (options.overwriteExisting) {
+                await this.deleteDir(targetRoot);
+            }
+            logTaskEvent(`系统中转扫描云盘目录: account=${account.id}, folderId=${folderId}, target=${targetRoot || '/'}`);
+            const files = await this._collectCloudMediaFiles(cloud189, folderId, '', mediaSuffixs, excludeRegex);
+            totalFiles += files.length;
+            processedDirs++;
+            if (!files.length) {
+                logTaskEvent(`云盘目录无媒体文件，跳过: ${relativeSourcePath || folderId}`);
+                continue;
+            }
+            const resultMessage = await this.generateCustom(
+                targetRoot,
+                files,
+                async (file) => this.streamProxyService.buildStreamUrl({
+                    type: 'task',
+                    accountId: account.id,
+                    fileId: file.id,
+                    fileName: file.name
+                }),
+                !!options.overwriteExisting,
+                false
+            );
+            // generateCustom 返回汇总字符串，这里从日志已有 success；额外粗解析可选，保持简单
+            messages.push(resultMessage);
+        }
+
+        if (!processedDirs) {
+            throw new Error('系统中转模式未找到带 folderId 的可用目录');
+        }
+
+        const username = String(account.username || '').replace(/(.{3}).*(.{4})/, '$1****$2');
+        const message = `🎉账号: ${username} 系统中转STRM生成完成\n` +
+            `处理目录数: ${processedDirs}\n` +
+            `扫描媒体文件数: ${totalFiles}\n` +
+            (messages.length ? messages.join('\n') : '');
+        logTaskEvent(message);
+        return message;
+    }
+
+    /**
+     * 递归列出云盘目录下的媒体文件（含 fileId）
+     * @returns {Promise<Array<{id:string,name:string,relativeDir:string}>>}
+     */
+    async _collectCloudMediaFiles(cloud189, folderId, relativeDir, mediaSuffixs, excludeRegex) {
+        const result = [];
+        const listing = await cloud189.listFiles(folderId);
+        const fileListAO = listing?.fileListAO || {};
+        const folders = fileListAO.folderList || [];
+        const files = fileListAO.fileList || [];
+        const normalizedRelativeDir = this._normalizeRelativePath(relativeDir || '');
+
+        for (const folder of folders) {
+            const name = folder.name || '';
+            const id = folder.id || folder.fileId;
+            if (!id) {
+                continue;
+            }
+            if (excludeRegex && excludeRegex.test(name)) {
+                continue;
+            }
+            const nextRelativeDir = this._normalizeRelativePath(path.join(normalizedRelativeDir, name));
+            const children = await this._collectCloudMediaFiles(
+                cloud189,
+                String(id),
+                nextRelativeDir,
+                mediaSuffixs,
+                excludeRegex
+            );
+            result.push(...children);
+        }
+
+        for (const file of files) {
+            const name = file.name || '';
+            const id = file.id || file.fileId;
+            if (!id || !name) {
+                continue;
+            }
+            if (excludeRegex && excludeRegex.test(name)) {
+                continue;
+            }
+            if (!this._checkFileSuffix({ name }, mediaSuffixs)) {
+                continue;
+            }
+            result.push({
+                id: String(id),
+                name,
+                relativeDir: normalizedRelativeDir
+            });
+        }
+
+        return result;
     }
 
     /**

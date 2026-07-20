@@ -9,9 +9,10 @@ interface LogConsoleProps {
 }
 
 type LogLevel = 'error' | 'warn' | 'success' | 'info';
-type ConnectionState = 'connecting' | 'connected' | 'disconnected';
+type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 
 interface ParsedLog {
+  id: number;
   level: LogLevel;
   timestamp: string;
   message: string;
@@ -50,7 +51,7 @@ const LOG_LEVEL_META = {
   }
 } as const;
 
-const parseLog = (log: string): ParsedLog => {
+const parseLogLevel = (log: string): Omit<ParsedLog, 'id'> => {
   const timestampMatch = log.match(LOG_TIMESTAMP_PATTERN);
   const message = (timestampMatch?.[2] || log).trim();
   const normalizedMessage = message.toLowerCase();
@@ -92,22 +93,73 @@ const parseLog = (log: string): ParsedLog => {
 };
 
 const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<ParsedLog[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const scrollRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const parsedLogs = useMemo(() => logs.map(parseLog), [logs]);
-  const errorCount = parsedLogs.filter(log => log.level === 'error').length;
-  const warnCount = parsedLogs.filter(log => log.level === 'warn').length;
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const logSeqRef = useRef(0);
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+
+  const errorCount = useMemo(() => logs.filter(log => log.level === 'error').length, [logs]);
+  const warnCount = useMemo(() => logs.filter(log => log.level === 'warn').length, [logs]);
 
   useEffect(() => {
-    if (isOpen) {
-      setConnectionState('connecting');
+    if (!isOpen) {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      reconnectAttemptRef.current = 0;
+      setConnectionState('disconnected');
+      return;
+    }
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
+
+    const appendLogs = (messages: string[], replace = false) => {
+      const parsed = messages.map((message) => {
+        logSeqRef.current += 1;
+        return {
+          id: logSeqRef.current,
+          ...parseLogLevel(message)
+        };
+      });
+
+      setLogs((prev) => {
+        const next = replace ? parsed : [...prev, ...parsed];
+        return next.slice(-500);
+      });
+    };
+
+    const connect = () => {
+      if (!isOpenRef.current) {
+        return;
+      }
+
+      clearReconnectTimer();
+      eventSourceRef.current?.close();
+
+      setConnectionState(reconnectAttemptRef.current > 0 ? 'reconnecting' : 'connecting');
       const eventSource = new EventSource('/api/logs/events');
       eventSourceRef.current = eventSource;
 
       eventSource.onopen = () => {
+        if (!isOpenRef.current) {
+          eventSource.close();
+          return;
+        }
+        reconnectAttemptRef.current = 0;
         setConnectionState('connected');
       };
 
@@ -115,11 +167,11 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'history') {
-            setLogs(Array.isArray(data.logs) ? data.logs.slice(-500) : []);
+            appendLogs(Array.isArray(data.logs) ? data.logs.slice(-500).map(String) : [], true);
             return;
           }
           if (data.type === 'log' && data.message) {
-            setLogs(prev => [...prev, String(data.message)].slice(-500));
+            appendLogs([String(data.message)]);
           }
         } catch (error) {
           console.error('解析日志 SSE 消息失败:', error);
@@ -127,16 +179,33 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
       };
 
       eventSource.onerror = () => {
-        setConnectionState('disconnected');
         eventSource.close();
-      };
+        if (eventSourceRef.current === eventSource) {
+          eventSourceRef.current = null;
+        }
+        if (!isOpenRef.current) {
+          setConnectionState('disconnected');
+          return;
+        }
 
-      return () => {
-        eventSource.close();
-        eventSourceRef.current = null;
-        setConnectionState('disconnected');
+        setConnectionState('reconnecting');
+        const attempt = reconnectAttemptRef.current;
+        const delay = Math.min(10000, 1000 * Math.pow(2, Math.min(attempt, 3)));
+        reconnectAttemptRef.current = attempt + 1;
+        clearReconnectTimer();
+        reconnectTimerRef.current = setTimeout(connect, delay);
       };
-    }
+    };
+
+    connect();
+
+    return () => {
+      clearReconnectTimer();
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      reconnectAttemptRef.current = 0;
+      setConnectionState('disconnected');
+    };
   }, [isOpen]);
 
   useEffect(() => {
@@ -148,10 +217,19 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
   const clearLogs = () => setLogs([]);
   const isConnected = connectionState === 'connected';
 
+  const connectionLabel =
+    connectionState === 'connecting'
+      ? '连接中'
+      : connectionState === 'reconnecting'
+        ? '重连中'
+        : isConnected
+          ? '实时同步'
+          : '已断开';
+
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onClose={onClose} 
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
       title="系统实时日志"
       maxWidthClass="max-w-5xl"
       contentClassName="px-5 md:px-8 pb-6 max-h-[70vh] overflow-y-auto custom-scrollbar"
@@ -165,7 +243,7 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
             labelClassName="text-sm text-[var(--text-secondary)]"
           />
           <div className="flex items-center justify-end gap-3">
-            <button 
+            <button
               onClick={clearLogs}
               className="p-2.5 hover:bg-red-50 text-red-500 rounded-full transition-colors dark:hover:bg-red-500/10"
               title="清空显示"
@@ -173,7 +251,7 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
             >
               <Trash2 size={20} />
             </button>
-            <button 
+            <button
               onClick={onClose}
               className="px-6 py-2 bg-[#0b57d0] text-white rounded-full text-sm font-medium hover:bg-[#0b57d0]/90 transition-all"
             >
@@ -189,7 +267,7 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
             <div className="text-xs text-[var(--text-secondary)]">连接状态</div>
             <div className="mt-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
               {isConnected ? <Wifi size={18} className="text-[#146c2e]" /> : <WifiOff size={18} className="text-slate-400" />}
-              {connectionState === 'connecting' ? '连接中' : isConnected ? '实时同步' : '已断开'}
+              {connectionLabel}
             </div>
           </div>
           <div className="rounded-2xl border border-[var(--modal-border)] bg-white px-4 py-3 dark:bg-slate-900/60">
@@ -206,11 +284,11 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
           </div>
         </div>
 
-        <div 
+        <div
           ref={scrollRef}
           className="h-[430px] overflow-y-auto rounded-2xl border border-[var(--modal-border)] bg-white p-3 custom-scrollbar dark:bg-slate-950/40"
         >
-          {parsedLogs.length === 0 ? (
+          {logs.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-center text-[var(--text-secondary)]">
               <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#d3e3fd] text-[#0b57d0] dark:bg-[#0b57d0]/20 dark:text-blue-300">
                 <Terminal size={28} />
@@ -220,13 +298,13 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
             </div>
           ) : (
             <div className="space-y-2">
-              {parsedLogs.map((log, index) => {
+              {logs.map((log) => {
                 const meta = LOG_LEVEL_META[log.level];
                 const LogIcon = meta.icon;
 
                 return (
                   <div
-                    key={`${index}-${log.timestamp}-${log.message}`}
+                    key={log.id}
                     className={`grid gap-3 rounded-xl border border-slate-100 border-l-4 bg-slate-50/70 px-3 py-2.5 transition-colors hover:bg-slate-100/80 dark:border-slate-800 dark:bg-slate-900/70 dark:hover:bg-slate-900 ${meta.rowClass}`}
                   >
                     <div className="flex flex-wrap items-center gap-2">

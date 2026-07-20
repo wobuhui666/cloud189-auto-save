@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Folder, ChevronLeft, RefreshCw, Star, Trash2, Check } from 'lucide-react';
 import Modal from './Modal';
+import { useToast } from './ui/Toast';
 
 interface FolderEntry {
   id: string;
@@ -34,14 +35,15 @@ interface FolderSelectorProps {
   title?: string;
 }
 
-const FolderSelector: React.FC<FolderSelectorProps> = ({ 
-  isOpen, 
-  onClose, 
-  onSelect, 
-  accountId, 
+const FolderSelector: React.FC<FolderSelectorProps> = ({
+  isOpen,
+  onClose,
+  onSelect,
+  accountId,
   accountName,
   title = "选择目录"
 }) => {
+  const toast = useToast();
   const [folderStack, setFolderStack] = useState<{ id: string, name: string }[]>([]);
   const [folderEntries, setFolderEntries] = useState<FolderEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -213,13 +215,15 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
               {favorites.length === 0 ? (
                 <div className="py-12 text-center text-slate-400 italic text-sm">暂无收藏的目录</div>
               ) : (
-                favorites.map((fav, i) => (
-                  <div 
-                    key={i} 
-                    className="flex items-center justify-between p-4 hover:bg-slate-50 transition-colors group cursor-pointer"
+                favorites.map((fav) => (
+                  <div
+                    key={`${fav.accountId}-${fav.id}`}
+                    className={`flex items-center justify-between p-4 hover:bg-slate-50 transition-colors group ${
+                      fav.accountId === accountId ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+                    }`}
+                    title={fav.accountId === accountId ? fav.path : '该收藏属于其他账号'}
                     onClick={() => {
                       if (fav.accountId === accountId) {
-                        // If same account, we could try to navigate there, but for now just select
                         onSelect({
                           id: fav.id,
                           name: fav.name,
@@ -228,6 +232,8 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                           accountName: fav.accountName
                         });
                         onClose();
+                      } else {
+                        toast.warning('该收藏属于其他账号');
                       }
                     }}
                   >
@@ -235,9 +241,9 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                       <span className="text-sm font-medium text-slate-900 truncate">{fav.name}</span>
                       <span className="text-[10px] text-slate-500 truncate">{fav.accountName} : {fav.path}</span>
                     </div>
-                    <button 
+                    <button
                       onClick={(e) => removeFavorite(e, fav.id, fav.accountId)}
-                      className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all opacity-0 group-hover:opacity-100"
+                      className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -324,7 +330,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                         <span className="truncate flex-1">{entry.name}</span>
                         <button 
                           onClick={(e) => toggleFavorite(e, entry)}
-                          className="p-1.5 hover:bg-white rounded-full transition-all opacity-0 group-hover:opacity-100"
+                          className="p-1.5 hover:bg-white rounded-full transition-all opacity-100 md:opacity-0 md:group-hover:opacity-100"
                         >
                           <Star 
                             size={16} 
@@ -339,7 +345,7 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
                             e.stopPropagation();
                             handleConfirmSelect(entry);
                           }}
-                          className="px-3 py-1.5 bg-[#0b57d0]/10 text-[#0b57d0] hover:bg-[#0b57d0]/20 rounded-xl text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="px-3 py-1.5 bg-[#0b57d0]/10 text-[#0b57d0] hover:bg-[#0b57d0]/20 rounded-xl text-xs font-medium opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                         >
                           选择
                         </button>

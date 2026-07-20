@@ -688,6 +688,29 @@ const getSessionSecret = () => {
     return newSecret;
 };
 
+// cookie.secure：
+// - COOKIE_SECURE=true/false 显式覆盖
+// - 否则若 PUBLIC_BASE_URL 为 http(s) 则跟随协议
+// - 再否则用 'auto'（按请求是否 HTTPS / x-forwarded-proto 判断）
+// 避免 NODE_ENV=production + 纯 HTTP 访问时，浏览器拒绝 Secure Cookie 导致“登录成功却进不去”
+const resolveCookieSecure = () => {
+    const explicit = String(process.env.COOKIE_SECURE || '').trim().toLowerCase();
+    if (explicit === 'true' || explicit === '1' || explicit === 'yes') {
+        return true;
+    }
+    if (explicit === 'false' || explicit === '0' || explicit === 'no') {
+        return false;
+    }
+    const publicBaseUrl = String(process.env.PUBLIC_BASE_URL || ConfigService.getConfigValue('system.baseUrl') || '').trim();
+    if (/^https:\/\//i.test(publicBaseUrl)) {
+        return true;
+    }
+    if (/^http:\/\//i.test(publicBaseUrl)) {
+        return false;
+    }
+    return 'auto';
+};
+
 app.use(session({
     store: new FileStore({
         path: './data/sessions',  // session文件存储路径
@@ -703,8 +726,8 @@ app.use(session({
     cookie: {
         maxAge: 24 * 60 * 60 * 1000 * 30, // 30天
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict'
+        secure: resolveCookieSecure(),
+        sameSite: 'lax'
     }
 }));
 

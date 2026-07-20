@@ -12,7 +12,11 @@ import {
   List,
   Trash2,
   RotateCcw,
-  FolderOpen
+  FolderOpen,
+  Folder,
+  File,
+  FileArchive,
+  X
 } from 'lucide-react';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import type { TabType } from '../../App';
@@ -564,17 +568,66 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
           <div className="p-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">选择文件</label>
+              {/* 隐藏原生 input：避免系统文件图标显示成灰色方块，且 accept 用扩展名兼容 .cas */}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".cas,.zip,application/zip"
+                accept=".cas,.zip"
                 onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                className="w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                className="hidden"
               />
-              {selectedFile && (
-                <p className="text-xs text-slate-500 mt-2">
-                  已选：{selectedFile.name}（{(selectedFile.size / 1024).toFixed(1)} KB）
-                </p>
+              {!selectedFile ? (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 hover:border-[#0b57d0] hover:bg-[#0b57d0]/5 transition-all text-left"
+                >
+                  <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-500 shrink-0">
+                    <Upload size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-800">点击选择 .cas / .zip</div>
+                    <div className="text-xs text-slate-500 mt-0.5">支持单个存根或含 .cas 的 zip 包</div>
+                  </div>
+                </button>
+              ) : (
+                <div className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-200 bg-white">
+                  <div className="w-10 h-10 rounded-xl bg-[#d3e3fd] text-[#0b57d0] flex items-center justify-center shrink-0">
+                    {selectedFile.name.toLowerCase().endsWith('.zip') ? (
+                      <FileArchive size={18} />
+                    ) : (
+                      <File size={18} />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-900 truncate" title={selectedFile.name}>
+                      {selectedFile.name}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {(selectedFile.size / 1024).toFixed(1)} KB
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 shrink-0"
+                  >
+                    更换
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFile(null);
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 shrink-0"
+                    aria-label="清除已选文件"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               )}
             </div>
 
@@ -812,7 +865,14 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                         if (item.type === 'directory') fetchStrmList(item.path);
                       }}
                     >
-                      {item.type === 'directory' ? '📁' : '📄'} {item.name}
+                      <span className="inline-flex items-center gap-2 min-w-0">
+                        {item.type === 'directory' ? (
+                          <Folder size={16} className="text-[#0b57d0] shrink-0" />
+                        ) : (
+                          <File size={16} className="text-slate-400 shrink-0" />
+                        )}
+                        <span className="truncate">{item.name}</span>
+                      </span>
                     </button>
                     {item.type === 'directory' && (
                       <button

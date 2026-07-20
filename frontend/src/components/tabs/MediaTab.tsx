@@ -895,7 +895,7 @@ const MediaTab: React.FC = () => {
                   <h4 className="font-bold text-slate-900 text-sm">{preset.name}</h4>
                   <p className="text-xs text-slate-500 mt-0.5">{preset.description || '无描述'}</p>
                 </div>
-                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button 
                     onClick={() => {
                       setRegexForm(preset);

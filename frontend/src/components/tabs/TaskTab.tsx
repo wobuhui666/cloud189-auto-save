@@ -241,7 +241,9 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
     return activeTagFilters.every((filterKey) => taskFilterKeys.has(filterKey));
   });
 
-  const allVisibleSelected = filteredTasks.length > 0 && selectedTaskIds.length === filteredTasks.length;
+  const allVisibleSelected =
+    filteredTasks.length > 0 &&
+    filteredTasks.every((task) => selectedTaskIds.includes(task.id));
   const pageStart = totalTasks === 0 ? 0 : (page - 1) * TASK_PAGE_SIZE + 1;
   const pageEnd = Math.min(page * TASK_PAGE_SIZE, totalTasks);
 
@@ -839,16 +841,19 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                 isSelected ? 'border-[#0b57d0] ring-1 ring-[#0b57d0]/20' : 'border-slate-200/60'
               } ${task.status === 'completed' ? 'opacity-80' : ''}`}
             >
-              <div 
-                className="absolute top-0 left-0 w-8 h-8 cursor-pointer z-10"
+              <button
+                type="button"
+                className="absolute top-0 left-0 z-10 flex h-12 w-12 items-center justify-center"
                 onClick={() => toggleTaskSelection(task.id)}
+                aria-label={isSelected ? '取消选择任务' : '选择任务'}
+                aria-pressed={isSelected}
               >
-                <div className={`m-3 w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${
                   isSelected ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white/80'
                 }`}>
                   {isSelected && <div className="w-1.5 h-1.5 bg-white rounded-sm" />}
                 </div>
-              </div>
+              </button>
 
               <div
                 className={`absolute left-0 top-4 bottom-4 w-1.5 rounded-r-full ${getStatusColorClass(task.status)} pointer-events-none`}

@@ -10,7 +10,7 @@ import {
   Settings,
   Monitor,
   Search,
-  Bell,
+  FileText,
   Menu,
   LogOut,
   MessageSquare,
@@ -333,7 +333,7 @@ export default function App() {
             onClick={handleLogout}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            className="w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium text-[var(--text-secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200"
+            className="w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all duration-200"
           >
             <LogOut size={22} />
             退出登录
@@ -429,19 +429,22 @@ export default function App() {
               <MessageSquare size={22} />
             </motion.button>
             <motion.button
+              onClick={() => setIsLogsOpen(true)}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 text-[var(--text-primary)]"
+              title="实时日志"
+              aria-label="打开实时日志"
             >
-              <Bell size={22} />
+              <FileText size={22} />
             </motion.button>
-            <motion.div
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="w-9 h-9 rounded-full bg-[#0b57d0] text-white flex items-center justify-center font-medium text-sm ml-2 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200"
+            <div
+              className="w-9 h-9 rounded-full bg-[#0b57d0] text-white flex items-center justify-center font-medium text-sm ml-2 shadow-md select-none"
+              title={username || '用户'}
+              aria-hidden={!username}
             >
               {username ? username.charAt(0).toUpperCase() : 'U'}
-            </motion.div>
+            </div>
           </div>
         </header>
 

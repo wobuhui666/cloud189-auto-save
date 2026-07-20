@@ -102,8 +102,17 @@ class StrmConfigService {
         const service = new StrmService();
         const accountMap = new Map(accounts.map(account => [account.id, account]));
         const directoriesByAccount = this._groupDirectoriesByAccount(config.directories);
+        const useStreamProxy = config.useStreamProxy !== false;
+
+        if (useStreamProxy && !ConfigService.getConfigValue('system.baseUrl')) {
+            const streamBaseUrl = this.streamProxyService.getBaseUrl();
+            logTaskEvent(`普通STRM配置[${config.name}]未配置系统基础地址，当前将使用 ${streamBaseUrl} 生成代理链接`);
+        }
 
         if (!config.directories.length) {
+            if (useStreamProxy) {
+                throw new Error('系统中转模式请指定至少一个目录（需要云盘 folderId）');
+            }
             await service.generateAll(accounts, config.overwriteExisting);
         } else {
             const messages = [];
@@ -115,7 +124,8 @@ class StrmConfigService {
                 const message = await service.generateSelectedDirectories(account, directoriesByAccount[accountId], {
                     overwriteExisting: config.overwriteExisting,
                     localPathPrefix: config.localPathPrefix,
-                    excludePattern: config.excludePattern
+                    excludePattern: config.excludePattern,
+                    useStreamProxy
                 });
                 messages.push(message);
             }
@@ -273,6 +283,7 @@ class StrmConfigService {
         const accountIds = Array.isArray(data.accountIds) ? data.accountIds.map(Number).filter(Boolean) : this._parseJsonArray(data.accountIds).map(Number).filter(Boolean);
         const finalAccountIds = Array.from(new Set([...accountIds, ...directories.map(item => Number(item.accountId)).filter(Boolean)]));
         const resourceIds = Array.isArray(data.resourceIds) ? data.resourceIds.map(Number).filter(Boolean) : this._parseJsonArray(data.resourceIds).map(Number).filter(Boolean);
+        const useStreamProxy = data.useStreamProxy !== false;
         const payload = {
             name: data.name?.trim(),
             type,
@@ -283,6 +294,7 @@ class StrmConfigService {
             localPathPrefix: data.localPathPrefix?.trim() || '',
             excludePattern: data.excludePattern?.trim() || '',
             overwriteExisting: !!data.overwriteExisting,
+            useStreamProxy,
             enableCron: !!data.enableCron,
             cronExpression: data.cronExpression?.trim() || '',
             enabled: data.enabled !== false
@@ -297,6 +309,9 @@ class StrmConfigService {
         if (type === 'normal' && !finalAccountIds.length) {
             throw new Error('普通配置至少需要选择一个账号');
         }
+        if (type === 'normal' && useStreamProxy && !directories.length) {
+            throw new Error('系统中转模式请指定至少一个目录（需要云盘 folderId）');
+        }
         if (type === 'subscription' && !payload.subscriptionId) {
             throw new Error('订阅配置必须选择订阅');
         }
@@ -308,7 +323,9 @@ class StrmConfigService {
             ...config,
             accountIds: this._parseJsonArray(config.accountIds).map(Number).filter(Boolean),
             directories: this._parseDirectories(config.directories),
-            resourceIds: this._parseJsonArray(config.resourceIds).map(Number).filter(Boolean)
+            resourceIds: this._parseJsonArray(config.resourceIds).map(Number).filter(Boolean),
+            // 旧行无该列时视为 true，与 entity default 一致
+            useStreamProxy: config.useStreamProxy !== false
         };
     }
 

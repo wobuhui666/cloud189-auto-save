@@ -541,6 +541,10 @@ export class StrmConfig {
     @Column('boolean', { default: false })
     overwriteExisting!: boolean;
 
+    // 普通配置：是否用系统中转写 /api/stream 代理地址（订阅固定中转，此字段仅对 normal 生效）
+    @Column('boolean', { default: true })
+    useStreamProxy!: boolean;
+
     @Column('boolean', { default: false })
     enableCron!: boolean;
 

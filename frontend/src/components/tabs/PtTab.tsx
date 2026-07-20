@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Plus, RefreshCw, RotateCcw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, ChevronDown, Loader2, Wand2, Filter, HardDrive, Users } from 'lucide-react';
 import Modal from '../Modal';
 import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
@@ -364,9 +364,15 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   }, []);
 
   // 当外部传入预填数据（如海报墙跳转过来），自动打开创建对话框并填充
+  const prefillAppliedRef = useRef<PtPrefillData | null>(null);
   useEffect(() => {
-    if (!prefill) return;
+    if (!prefill) {
+      prefillAppliedRef.current = null;
+      return;
+    }
     if (accounts.length === 0) return; // 等账号加载完再打开
+    if (prefillAppliedRef.current === prefill) return;
+
     setEditing(null);
     const lastDir = getLastUsedDir();
     setFormData({
@@ -380,7 +386,12 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
     });
     setShowAdvanced(false);
     setIsModalOpen(true);
-    onPrefillConsumed?.();
+    prefillAppliedRef.current = prefill;
+    // 等弹窗状态提交后再清理父级 prefill，避免重复触发
+    const timer = window.setTimeout(() => {
+      onPrefillConsumed?.();
+    }, 0);
+    return () => window.clearTimeout(timer);
     // 仅在 prefill 引用变化或账号到位时触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill, accounts.length]);

@@ -35,6 +35,8 @@ interface StrmConfig {
   localPathPrefix: string | null;
   excludePattern: string | null;
   overwriteExisting: boolean;
+  /** 普通配置：是否写入系统中转 /api/stream 地址；订阅固定中转 */
+  useStreamProxy: boolean;
   enabled: boolean;
   enableCron: boolean;
   cronExpression: string | null;
@@ -87,6 +89,7 @@ const StrmConfigTab: React.FC = () => {
     localPathPrefix: '',
     excludePattern: '',
     overwriteExisting: false,
+    useStreamProxy: true,
     enabled: true,
     enableCron: false,
     cronExpression: ''
@@ -189,6 +192,7 @@ const StrmConfigTab: React.FC = () => {
       localPathPrefix: '',
       excludePattern: '',
       overwriteExisting: false,
+      useStreamProxy: true,
       enabled: true,
       enableCron: false,
       cronExpression: ''
@@ -198,7 +202,10 @@ const StrmConfigTab: React.FC = () => {
 
   const handleEditConfig = (config: StrmConfig) => {
     setEditingConfig(config);
-    setFormData({ ...config });
+    setFormData({
+      ...config,
+      useStreamProxy: config.useStreamProxy !== false
+    });
     setIsModalOpen(true);
   };
 
@@ -274,12 +281,22 @@ const StrmConfigTab: React.FC = () => {
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    const isNormal = formData.type === 'normal';
+    const useProxy = formData.useStreamProxy !== false;
+    if (isNormal && useProxy && !(formData.directories?.length)) {
+      toast.warning('系统中转模式请至少指定一个目录（需要云盘 folderId）');
+      return;
+    }
     try {
       const url = editingConfig ? `/api/strm/configs/${editingConfig.id}` : '/api/strm/configs';
       const response = await fetch(url, {
         method: editingConfig ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          // 订阅固定中转；普通配置按表单
+          useStreamProxy: formData.type === 'subscription' ? true : useProxy
+        })
       });
       const data = await response.json();
       if (data.success) {
@@ -464,7 +481,14 @@ const StrmConfigTab: React.FC = () => {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600">
-                    {config.type === 'normal' ? '普通' : '订阅'}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span>{config.type === 'normal' ? '普通' : '订阅'}</span>
+                      {(config.type === 'subscription' || config.useStreamProxy !== false) ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#c2e7ff] text-[#001d35]">中转</span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-500">Alist</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-6 py-4 text-slate-500 text-xs">
                     {config.type === 'normal' ? (
@@ -700,11 +724,11 @@ const StrmConfigTab: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">排除模式 (正则, 可选)</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={formData.excludePattern || ''}
                 onChange={e => setFormData({...formData, excludePattern: e.target.value})}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
                 placeholder="\.(txt|pdf)$"
               />
             </div>
@@ -716,6 +740,26 @@ const StrmConfigTab: React.FC = () => {
               />
             </div>
           </div>
+
+          {formData.type === 'normal' ? (
+            <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 space-y-2">
+              <Checkbox
+                checked={formData.useStreamProxy !== false}
+                onChange={(v) => setFormData({ ...formData, useStreamProxy: v })}
+                label="使用系统中转生成 .strm"
+              />
+              <p className="text-[11px] text-slate-500 leading-relaxed pl-7">
+                写入本系统 <code className="bg-slate-200/80 px-1 rounded">/api/stream</code> 代理地址，播放时实时换取直链，不依赖 Alist。
+                中转模式必须指定云盘目录；请在系统设置中配置可被媒体服务器访问的基础地址（baseUrl）。
+              </p>
+            </div>
+          ) : (
+            <div className="p-4 rounded-2xl border border-blue-100 bg-blue-50/60">
+              <p className="text-[11px] text-blue-800 leading-relaxed">
+                订阅配置固定使用系统中转生成 .strm（播放时由服务端换取直链）。
+              </p>
+            </div>
+          )}
 
           <div className="pt-4 border-t border-slate-100">
             <div className="flex items-center gap-6">
@@ -770,6 +814,11 @@ const StrmConfigTab: React.FC = () => {
         footer={null}
       >
         <form onSubmit={handleLazySubmit} className="space-y-6">
+          <div className="p-4 rounded-2xl border border-blue-100 bg-blue-50/60">
+            <p className="text-[11px] text-blue-800 leading-relaxed">
+              懒转存 STRM 固定使用系统中转：先写代理地址，播放时再触发转存并返回直链。
+            </p>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">选择账号</label>
             <select

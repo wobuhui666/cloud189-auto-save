@@ -27,19 +27,19 @@ class ErrorBoundary extends React.Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-          <div className="max-w-md w-full bg-white rounded-3xl border border-red-100 p-8 shadow-xl text-center">
-            <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+          <div className="max-w-md w-full bg-white dark:bg-slate-900 rounded-3xl border border-red-100 dark:border-red-900/40 p-8 shadow-xl text-center">
+            <div className="w-16 h-16 bg-red-50 dark:bg-red-500/15 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900 mb-2">出错了</h1>
-            <p className="text-slate-500 mb-6">
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">出错了</h1>
+            <p className="text-slate-500 dark:text-slate-400 mb-6">
               应用程序发生了一个错误。请尝试刷新页面。
             </p>
-            <div className="bg-slate-50 rounded-xl p-4 text-left mb-6 overflow-auto max-h-40">
-              <code className="text-xs text-red-600 font-mono break-all">
+            <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 text-left mb-6 overflow-auto max-h-40">
+              <code className="text-xs text-red-600 dark:text-red-400 font-mono break-all">
                 {this.state.error?.toString()}
               </code>
             </div>
