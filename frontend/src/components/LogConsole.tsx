@@ -55,12 +55,32 @@ const parseLog = (log: string): ParsedLog => {
   const message = (timestampMatch?.[2] || log).trim();
   const normalizedMessage = message.toLowerCase();
 
+  // 统计字段里的「失败数: 0 / 成功数: 1」不能当错误；先剥离后再判定
+  const messageForLevel = normalizedMessage
+    .replace(/失败数\s*[：:]\s*\d+/g, ' ')
+    .replace(/成功数\s*[：:]\s*\d+/g, ' ')
+    .replace(/跳过数\s*[：:]\s*\d+/g, ' ')
+    .replace(/总文件数\s*[：:]\s*\d+/g, ' ')
+    .replace(/failed\s*[:=]\s*\d+/gi, ' ')
+    .replace(/success(?:es)?\s*[:=]\s*\d+/gi, ' ')
+    .replace(/skipped\s*[:=]\s*\d+/gi, ' ');
+
   let level: LogLevel = 'info';
-  if (/error|failed|fail|exception|错误|失败|异常/.test(normalizedMessage)) {
-    level = 'error';
-  } else if (/warn|warning|警告|告警/.test(normalizedMessage)) {
+  // 明确成功完成优先（避免 “完成, 失败数: 0” 被失败关键字误伤）
+  if (/success|completed|complete|成功|完成|已完结/.test(messageForLevel) && !/(失败|错误|异常|error|failed|fail|exception)/.test(messageForLevel)) {
+    level = 'success';
+  } else if (/(error|failed|fail|exception|错误|失败|异常)/.test(messageForLevel)) {
+    // 若同时有成功完成语义且失败计数为 0，仍算成功
+    const failedCountMatch = normalizedMessage.match(/失败数\s*[：:]\s*(\d+)/);
+    const failedCount = failedCountMatch ? Number(failedCountMatch[1]) : null;
+    if (failedCount === 0 && /(成功|完成|completed|success)/.test(normalizedMessage)) {
+      level = 'success';
+    } else {
+      level = 'error';
+    }
+  } else if (/warn|warning|警告|告警/.test(messageForLevel)) {
     level = 'warn';
-  } else if (/success|completed|complete|成功|完成|已完结/.test(normalizedMessage)) {
+  } else if (/success|completed|complete|成功|完成|已完结/.test(messageForLevel)) {
     level = 'success';
   }
 
