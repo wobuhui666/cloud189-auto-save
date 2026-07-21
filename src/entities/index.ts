@@ -16,6 +16,34 @@ const getEncryptionKey = (): Buffer => {
     return Buffer.from(configKey, 'hex');
 };
 
+// password / cookies 共用：读时解密，写时加密；已是 iv:hex 则跳过防双重加密
+const credentialTransformer = {
+    from: (value: string | null) => {
+        if (!value) return value;
+        if (!PasswordCrypto.isEncrypted(value)) {
+            return value;
+        }
+        try {
+            const key = getEncryptionKey();
+            return PasswordCrypto.decrypt(value, key);
+        } catch {
+            return value;
+        }
+    },
+    to: (value: string | null) => {
+        if (!value) return value;
+        if (PasswordCrypto.isEncrypted(value)) {
+            return value;
+        }
+        try {
+            const key = getEncryptionKey();
+            return PasswordCrypto.encrypt(value, key);
+        } catch {
+            return value;
+        }
+    }
+};
+
 @Entity()
 export class Account {
     @PrimaryGeneratedColumn()
@@ -26,32 +54,14 @@ export class Account {
 
     @Column('text', {
         nullable: true,
-        transformer: {
-            from: (value: string | null) => {
-                if (!value) return value;
-                // 自动解密存储的密码
-                try {
-                    const key = getEncryptionKey();
-                    return PasswordCrypto.decrypt(value, key);
-                } catch {
-                    return value;
-                }
-            },
-            to: (value: string | null) => {
-                if (!value) return value;
-                // 自动加密明文密码
-                try {
-                    const key = getEncryptionKey();
-                    return PasswordCrypto.encrypt(value, key);
-                } catch {
-                    return value;
-                }
-            }
-        }
+        transformer: credentialTransformer
     })
     password!: string;
 
-    @Column('text', { nullable: true})
+    @Column('text', {
+        nullable: true,
+        transformer: credentialTransformer
+    })
     cookies!: string;
 
     @Column('boolean', { default: true })

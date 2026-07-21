@@ -61,6 +61,7 @@ interface SettingsData {
   wecom: {
     enable: boolean;
     webhook: string;
+    hasWebhook?: boolean;
   };
   telegram: {
     enable: boolean;
@@ -73,6 +74,7 @@ interface SettingsData {
     bot: {
       enable: boolean;
       botToken: string;
+      hasBotToken?: boolean;
       chatId: string;
       allowedChatIds: string[];
       adminChatIds: string[];
@@ -81,12 +83,14 @@ interface SettingsData {
   wxpusher: {
     enable: boolean;
     spt: string;
+    hasSpt?: boolean;
   };
   proxy: {
     host: string;
     port: number;
     username: string;
     password: string;
+    hasPassword?: boolean;
     services: {
       telegram: boolean;
       tmdb: boolean;
@@ -100,16 +104,19 @@ interface SettingsData {
     enable: boolean;
     serverUrl: string;
     key: string;
+    hasKey?: boolean;
   };
   system: {
     username: string;
     password: string;
     baseUrl: string;
     apiKey: string;
+    hasApiKey?: boolean;
   };
   pushplus: {
     enable: boolean;
     token: string;
+    hasToken?: boolean;
     topic: string;
     channel: string;
     webhook: string;
@@ -307,14 +314,6 @@ const SettingsTab: React.FC = () => {
               ...(loaded.task?.autoCreate || {})
             }
           },
-          proxy: {
-            ...initialSettings.proxy,
-            ...(loaded.proxy || {}),
-            services: {
-              ...initialSettings.proxy.services,
-              ...(loaded.proxy?.services || {})
-            }
-          },
           hdhive: {
             ...initialSettings.hdhive,
             ...(loaded.hdhive || {}),
@@ -334,34 +333,60 @@ const SettingsTab: React.FC = () => {
           telegram: {
             enable: loaded.telegram?.enable ?? loaded.telegram?.bot?.enable ?? false,
             proxyDomain: loaded.telegram?.proxyDomain || '',
-            botToken: loaded.telegram?.botToken || loaded.telegram?.bot?.botToken || '',
+            botToken: '',
             chatId: loaded.telegram?.chatId || loaded.telegram?.bot?.chatId || '',
             notifyOnSuccess: loaded.telegram?.notifyOnSuccess ?? true,
             notifyOnFailure: loaded.telegram?.notifyOnFailure ?? true,
             notifyOnScrape: loaded.telegram?.notifyOnScrape ?? false,
             bot: {
               enable: loaded.telegram?.bot?.enable ?? loaded.telegram?.enable ?? false,
-              botToken: loaded.telegram?.bot?.botToken || loaded.telegram?.botToken || '',
+              botToken: '',
+              hasBotToken: !!(loaded.telegram?.bot?.hasBotToken || loaded.telegram?.hasBotToken),
               chatId: loaded.telegram?.bot?.chatId || loaded.telegram?.chatId || '',
               allowedChatIds: loaded.telegram?.bot?.allowedChatIds || [],
               adminChatIds: loaded.telegram?.bot?.adminChatIds || [],
             }
           },
+          system: {
+            ...initialSettings.system,
+            ...(loaded.system || {}),
+            password: '',
+            apiKey: '',
+            hasApiKey: !!loaded.system?.hasApiKey,
+          },
           wecom: {
             ...initialSettings.wecom,
             ...(loaded.wecom || {}),
+            webhook: '',
+            hasWebhook: !!loaded.wecom?.hasWebhook,
           },
           bark: {
             ...initialSettings.bark,
             ...(loaded.bark || {}),
+            key: '',
+            hasKey: !!loaded.bark?.hasKey,
           },
           wxpusher: {
             ...initialSettings.wxpusher,
             ...(loaded.wxpusher || {}),
+            spt: '',
+            hasSpt: !!loaded.wxpusher?.hasSpt,
           },
           pushplus: {
             ...initialSettings.pushplus,
             ...(loaded.pushplus || {}),
+            token: '',
+            hasToken: !!loaded.pushplus?.hasToken,
+          },
+          proxy: {
+            ...initialSettings.proxy,
+            ...(loaded.proxy || {}),
+            password: '',
+            hasPassword: !!loaded.proxy?.hasPassword,
+            services: {
+              ...initialSettings.proxy.services,
+              ...(loaded.proxy?.services || {})
+            }
           },
           customPush: Array.isArray(loaded.customPush) ? loaded.customPush : initialSettings.customPush,
         };
@@ -602,11 +627,11 @@ const SettingsTab: React.FC = () => {
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">系统 API Key</label>
             <div className="flex gap-3">
-              <input 
-                type="text" 
+              <input
+                type="password"
                 value={settings.system.apiKey}
                 onChange={(e) => updateSettings('system.apiKey', e.target.value)}
-                placeholder="系统 API Key" 
+                placeholder={settings.system.hasApiKey ? '已保存 API Key；留空不覆盖' : '系统 API Key'}
                 className="flex-1 px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
               <button 
@@ -900,7 +925,7 @@ const SettingsTab: React.FC = () => {
                   updateSettings('telegram.botToken', e.target.value);
                 }}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                placeholder="123456789:ABCDefgh..."
+                placeholder={settings.telegram.bot.hasBotToken ? '已保存 Bot Token；留空不覆盖' : '123456789:ABCDefgh...'}
               />
             </div>
             <div className="space-y-2">
@@ -1024,11 +1049,11 @@ const SettingsTab: React.FC = () => {
               <div className="px-4 animate-in slide-in-from-top-2 duration-200">
                 <label className="text-xs font-medium text-slate-500 mb-1 block">Webhook URL</label>
                 <input
-                  type="text"
+                  type="password"
                   value={settings.wecom.webhook}
                   onChange={(e) => updateSettings('wecom.webhook', e.target.value)}
                   className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                  placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+                  placeholder={settings.wecom.hasWebhook ? '已保存 Webhook；留空不覆盖' : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...'}
                 />
               </div>
             )}
@@ -1063,11 +1088,11 @@ const SettingsTab: React.FC = () => {
                 <div>
                   <label className="text-xs font-medium text-slate-500 mb-1 block">Device Key</label>
                   <input
-                    type="text"
+                    type="password"
                     value={settings.bark.key}
                     onChange={(e) => updateSettings('bark.key', e.target.value)}
                     className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                    placeholder="Bark 设备 Key"
+                    placeholder={settings.bark.hasKey ? '已保存设备 Key；留空不覆盖' : 'Bark 设备 Key'}
                   />
                 </div>
               </div>
@@ -1092,11 +1117,11 @@ const SettingsTab: React.FC = () => {
               <div className="px-4 animate-in slide-in-from-top-2 duration-200">
                 <label className="text-xs font-medium text-slate-500 mb-1 block">SPT</label>
                 <input
-                  type="text"
+                  type="password"
                   value={settings.wxpusher.spt}
                   onChange={(e) => updateSettings('wxpusher.spt', e.target.value)}
                   className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                  placeholder="WxPusher 简单推送 SPT"
+                  placeholder={settings.wxpusher.hasSpt ? '已保存 SPT；留空不覆盖' : 'WxPusher 简单推送 SPT'}
                 />
               </div>
             )}
@@ -1121,11 +1146,11 @@ const SettingsTab: React.FC = () => {
                 <div className="md:col-span-2">
                   <label className="text-xs font-medium text-slate-500 mb-1 block">Token</label>
                   <input
-                    type="text"
+                    type="password"
                     value={settings.pushplus.token}
                     onChange={(e) => updateSettings('pushplus.token', e.target.value)}
                     className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                    placeholder="PushPlus token"
+                    placeholder={settings.pushplus.hasToken ? '已保存 Token；留空不覆盖' : 'PushPlus token'}
                   />
                 </div>
                 <div>
@@ -1211,10 +1236,11 @@ const SettingsTab: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">代理密码</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={settings.proxy.password}
                 onChange={(e) => updateSettings('proxy.password', e.target.value)}
+                placeholder={settings.proxy.hasPassword ? '已保存密码；留空不覆盖' : '代理密码'}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>

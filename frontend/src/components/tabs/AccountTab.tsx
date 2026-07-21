@@ -27,8 +27,8 @@ interface Account {
   cloudStrmPrefix: string | null;
   localStrmPrefix: string | null;
   embyPathReplace: string | null;
-  password?: string;
-  cookies?: string;
+  hasPassword?: boolean;
+  hasCookies?: boolean;
 }
 
 interface StorageSummary {
@@ -183,8 +183,8 @@ const AccountTab: React.FC = () => {
     setEditingAccount(account);
     setFormData({
       username: account.username,
-      password: '', // Don't fill password for security
-      cookies: account.cookies || '',
+      password: '', // 留空表示不覆盖已保存密码
+      cookies: '', // 留空表示不覆盖已保存 Cookie
       alias: account.alias || '',
       accountType: account.accountType || 'personal',
       familyId: account.familyId || '',
@@ -344,7 +344,8 @@ const AccountTab: React.FC = () => {
       toast.warning('用户名不能为空');
       return;
     }
-    if (!formData.password && !formData.cookies) {
+    // 新建必须有凭据；编辑允许都空（后端保留旧值）
+    if (!editingAccount && !formData.password && !formData.cookies) {
       toast.warning('密码和Cookie不能同时为空');
       return;
     }
@@ -683,23 +684,29 @@ const AccountTab: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">密码</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={formData.password}
                 onChange={e => setFormData({...formData, password: e.target.value})}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
+                placeholder={editingAccount?.hasPassword ? '已保存密码；留空不覆盖' : '账号密码'}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">Cookie (可选)</label>
-            <textarea 
-              rows={3} 
+            <textarea
+              rows={3}
               value={formData.cookies}
               onChange={e => setFormData({...formData, cookies: e.target.value})}
-              className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
+              placeholder={editingAccount?.hasCookies ? '已保存 Cookie；留空不覆盖' : '可选 Cookie'}
+              className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
             />
-            <p className="text-xs text-slate-500">密码和 Cookie 至少填写一个，如果都填写，则只有账号密码生效。</p>
+            <p className="text-xs text-slate-500">
+              {editingAccount
+                ? '编辑时密码/Cookie 留空表示不修改；若都填写则优先使用密码。'
+                : '密码和 Cookie 至少填写一个，如果都填写，则只有账号密码生效。'}
+            </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">

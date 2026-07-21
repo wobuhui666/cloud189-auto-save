@@ -2,7 +2,6 @@ const fs = require('fs').promises;
 const path = require('path');
 const ConfigService = require('./ConfigService');
 const { logTaskEvent } = require('../utils/logUtils');
-const CryptoUtils = require('../utils/cryptoUtils');
 const alistService = require('./alistService');
 const { MessageUtil } = require('./message');
 const { StreamProxyService } = require('./streamProxy');
@@ -124,7 +123,7 @@ class StrmService {
                     if (process.getuid && process.getuid() === 0) {
                         await fs.chown(strmPath, parseInt(this.puid), parseInt(this.pgid));
                     }
-                    await fs.chmod(strmPath, 0o777);
+                    await fs.chmod(strmPath, 0o644);
                     results.push({
                         originalFile: fileName,
                         strmFile: path.basename(strmPath),
@@ -211,7 +210,7 @@ class StrmService {
                     if (process.getuid && process.getuid() === 0) {
                         await fs.chown(currentPath, parseInt(this.puid), parseInt(this.pgid));
                     }
-                    await fs.chmod(currentPath, 0o777);
+                    await fs.chmod(currentPath, 0o755);
                 } catch (error) {
                     if (error.code !== 'EEXIST') {
                         throw new Error(`创建目录失败: ${error.message}`);
@@ -330,7 +329,7 @@ class StrmService {
                 if (process.getuid && process.getuid() === 0) {
                     await fs.chown(strmPath, parseInt(this.puid), parseInt(this.pgid));
                 }
-                await fs.chmod(strmPath, 0o777);
+                await fs.chmod(strmPath, 0o644);
                 success++;
                 logTaskEvent(`生成STRM文件成功: ${strmPath}`);
             } catch (error) {
@@ -638,7 +637,7 @@ class StrmService {
                     if (process.getuid && process.getuid() === 0) {
                         await fs.chown(strmPath, parseInt(this.puid), parseInt(this.pgid));
                     }
-                    await fs.chmod(strmPath, 0o777);
+                    await fs.chmod(strmPath, 0o644);
 
                     stats.success++;
                     logTaskEvent(`生成STRM文件成功: ${strmPath}`);
@@ -710,7 +709,7 @@ class StrmService {
                 if (process.getuid && process.getuid() === 0) {
                     await fs.chown(strmPath, parseInt(this.puid), parseInt(this.pgid));
                 }
-                await fs.chmod(strmPath, 0o777);
+                await fs.chmod(strmPath, 0o644);
                 stats.success++;
                 logTaskEvent(`生成STRM文件成功: ${strmPath}`);
             } catch (error) {
