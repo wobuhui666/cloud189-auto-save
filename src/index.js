@@ -1177,6 +1177,90 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    // 从已有个人账号复制一份家庭云账号（共享登录凭据与 token）
+    app.post('/api/accounts/:id/clone-family', async (req, res) => {
+        try {
+            const accountId = parseInt(req.params.id);
+            const source = await accountRepo.findOneBy({ id: accountId });
+            if (!source) throw new Error('账号不存在');
+
+            const sourceType = source.accountType || 'personal';
+            if (sourceType === 'family') {
+                throw new Error('该账号已是家庭云，无需再复制');
+            }
+
+            const requestedFamilyId = req.body?.familyId != null ? String(req.body.familyId).trim() : '';
+            const requestedFamilyFolderId = req.body?.familyFolderId != null
+                ? String(req.body.familyFolderId).trim()
+                : (source.familyFolderId || '');
+            const requestedAlias = req.body?.alias != null
+                ? String(req.body.alias).trim()
+                : '';
+
+            // 同用户名 + family 已存在则拒绝，避免重复
+            const existingFamily = await accountRepo.findOne({
+                where: {
+                    username: source.username,
+                    accountType: 'family'
+                }
+            });
+            if (existingFamily) {
+                const sameFamily = !requestedFamilyId
+                    || !existingFamily.familyId
+                    || String(existingFamily.familyId) === requestedFamilyId;
+                if (sameFamily) {
+                    throw new Error('该账号已存在家庭云副本，请直接编辑现有家庭账号');
+                }
+            }
+
+            let familyId = requestedFamilyId || source.familyId || '';
+            if (!source.username.startsWith('n_')) {
+                const cloud189 = Cloud189Service.getInstance(source);
+                familyId = await cloud189.resolveFamilyId(familyId || null);
+            }
+            if (!familyId) {
+                throw new Error('未获取到家庭ID，请确认该账号已开通家庭云，或手动填写 Family ID');
+            }
+
+            const defaultAlias = requestedAlias
+                || (source.alias ? `${source.alias}-家庭` : `${maskUsername(source.username)}-家庭`);
+
+            const cloned = accountRepo.create({
+                username: source.username,
+                password: source.password || '',
+                cookies: source.cookies || '',
+                isActive: source.isActive !== false,
+                clearRecycle: source.clearRecycle || false,
+                localStrmPrefix: source.localStrmPrefix || '',
+                cloudStrmPrefix: source.cloudStrmPrefix || '',
+                embyPathReplace: source.embyPathReplace || '',
+                tgBotActive: false,
+                alias: defaultAlias,
+                accountType: 'family',
+                familyId: String(familyId),
+                familyFolderId: requestedFamilyFolderId || '',
+                isDefault: false
+            });
+
+            Cloud189Service.invalidateByUsername(source.username);
+            await accountRepo.save(cloned);
+
+            res.json({
+                success: true,
+                data: {
+                    id: cloned.id,
+                    username: maskUsername(cloned.username),
+                    alias: cloned.alias,
+                    accountType: 'family',
+                    familyId: cloned.familyId,
+                    familyFolderId: cloned.familyFolderId || ''
+                }
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
      // 清空回收站
      app.delete('/api/accounts/recycle', async (req, res) => {
         try {

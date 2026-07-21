@@ -87,6 +87,10 @@ docker run -d \
 - **个人云**：默认类型
 - **家庭云**：选择后需要填写 **Family ID**
 
+也可以在已有 **个人云** 账号的操作栏点击 **复制家庭**：系统会复用同一套登录凭据与 token，自动解析 Family ID，再新增一条 `accountType=family` 的账号记录（别名默认追加 `-家庭`）。同一用户名若已存在家庭云副本会拒绝重复创建。
+
+接口：`POST /api/accounts/:id/clone-family`（可选 body：`familyId` / `familyFolderId` / `alias`）。
+
 ---
 
 ## 4. 基础设置

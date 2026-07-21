@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
+import { Copy, Database, Plus, QrCode, RefreshCw, Trash2 } from 'lucide-react';
 import Modal from '../Modal';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
@@ -265,6 +265,40 @@ const AccountTab: React.FC = () => {
     }
   };
 
+  const handleCloneFamilyAccount = async (account: Account) => {
+    if ((account.accountType || 'personal') === 'family') {
+      toast.warning('该账号已是家庭云');
+      return;
+    }
+    const ok = await dialog.confirm({
+      title: '复制家庭账号',
+      message: `将基于「${account.alias || account.username}」复制一份家庭云账号（共享登录凭据与 token，不重复登录）。是否继续？`,
+      confirmText: '复制',
+    });
+    if (!ok) return;
+    try {
+      const response = await fetch(`/api/accounts/${account.id}/clone-family`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          familyId: account.familyId || '',
+          familyFolderId: account.familyFolderId || ''
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        const familyId = data.data?.familyId || '';
+        toast.success(`已复制家庭账号${familyId ? `（Family ID: ${familyId}）` : ''}`);
+        await fetchAccounts();
+        await fetchStorageSummary();
+      } else {
+        toast.error('复制失败: ' + data.error);
+      }
+    } catch (error) {
+      toast.error('复制失败');
+    }
+  };
+
   const handleSetDefaultAccount = async (id: number) => {
     try {
       const response = await fetch(`/api/accounts/${id}/default`, {
@@ -500,19 +534,28 @@ const AccountTab: React.FC = () => {
                       >
                         {account.isDefault ? '★' : '☆'}
                       </span>
-                      <button 
+                      <button
                         onClick={() => handleEditAccount(account)}
                         className="text-[#0b57d0] hover:text-[#0b57d0]/80 font-medium transition-colors"
                       >
                         编辑
                       </button>
+                      {(account.accountType || 'personal') !== 'family' && (
+                        <button
+                          onClick={() => handleCloneFamilyAccount(account)}
+                          className="text-emerald-700 hover:text-emerald-800 font-medium transition-colors inline-flex items-center gap-1"
+                          title="复制一份家庭云账号"
+                        >
+                          <Copy size={14} /> 复制家庭
+                        </button>
+                      )}
                       <button
                         onClick={() => handleRefreshCapacity(account.id)}
                         className="text-slate-600 hover:text-[#0b57d0] font-medium transition-colors"
                       >
                         刷新
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDeleteAccount(account.id)}
                         className="text-red-600 hover:text-red-800 font-medium transition-colors"
                       >

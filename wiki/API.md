@@ -58,12 +58,31 @@ x-api-key: YOUR_SYSTEM_API_KEY
 | PUT | `/api/accounts/:id/default` | 设置默认账号 |
 | PUT | `/api/accounts/:id/family-folder` | 设置家庭云文件夹 |
 | GET | `/api/accounts/:id/family/folders` | 获取家庭云目录 |
+| POST | `/api/accounts/:id/clone-family` | 从个人账号复制一份家庭云账号 |
 | DELETE | `/api/accounts/recycle` | 清空回收站 |
 | GET | `/api/accounts/storage-summary` | 获取个人容量和家庭容量聚合 |
 | POST | `/api/accounts/refresh-capacity` | 刷新账号容量缓存 |
 | POST | `/api/accounts/keep-alive` | 手动执行账号 Session 保活 |
 | GET | `/api/accounts/qr-code` | 获取天翼扫码登录二维码 |
 | POST | `/api/accounts/qr-status` | 轮询扫码登录状态并落库账号 |
+
+### `POST /api/accounts/:id/clone-family`
+
+基于已有 **个人云** 账号复制一条家庭云账号记录。复用同一 `username` / 密码 / Cookie 与 `data/{username}.json` token，不重复登录。
+
+可选请求体：
+
+```json
+{
+  "familyId": "123456789",
+  "familyFolderId": "",
+  "alias": "主号-家庭"
+}
+```
+
+- 未传 `familyId` 时会通过 SDK 自动解析家庭组 ID。
+- 同一用户名若已存在家庭云副本（且 Family ID 相同或未指定），返回错误。
+- 新账号 `isDefault=false`，别名默认在原别名后追加 `-家庭`。
 
 ### `PUT /api/accounts/:id/strm-prefix`
 
