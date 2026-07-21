@@ -161,13 +161,13 @@ POST /api/cas/create
 | `POST /api/cas/trigger-scan` | 手动触发 CAS 扫描 |
 | `GET /api/cas/monitor-status` | 查看 CAS 监控状态 |
 
-### 6.6 存根包导入（.cas / zip）
+### 6.6 存根包导入（.cas / zip / rar）
 
-在 **秒传** 页的 **存根导入** 区域，可上传单个 `.cas` 或包含 `.cas` 目录树的 zip 包（例如整季剧集）。系统会解析存根、按相对路径镜像到目标网盘目录，并可选生成正常 / 懒 STRM。
+在 **秒传** 页的 **存根导入** 区域，可上传单个 `.cas` 或包含 `.cas` 目录树的 zip / rar 包（例如整季剧集）。系统会解析存根、按相对路径镜像到目标网盘目录，并可选生成正常 / 懒 STRM。
 
 | 接口 | 说明 |
 | :--- | :--- |
-| `POST /api/cas/import` | multipart 上传 `.cas`/`.zip`，创建导入任务（异步执行） |
+| `POST /api/cas/import` | multipart 上传 `.cas`/`.zip`/`.rar`，创建导入任务（异步执行） |
 | `GET /api/cas/import/jobs` | 导入任务列表 |
 | `GET /api/cas/import/jobs/:id` | 任务详情（含每文件结果） |
 | `POST /api/cas/import/jobs/:id/retry` | 重试失败项 |
@@ -181,7 +181,7 @@ POST /api/cas/create
 
 | 字段 | 说明 |
 | :--- | :--- |
-| `file` | `.cas` 或 `.zip` 文件 |
+| `file` | `.cas` / `.zip` / `.rar` 文件 |
 | `accountId` | 执行账号 |
 | `folderId` | 网盘目标目录 |
 | `mode` | `restore`（立即秒传）或 `lazy`（播放时再秒传） |

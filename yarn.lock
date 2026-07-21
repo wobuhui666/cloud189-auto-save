@@ -2173,6 +2173,11 @@ node-telegram-bot-api@^0.66.0:
     mime "^1.6.0"
     pump "^2.0.0"
 
+node-unrar-js@2.0.2:
+  version "2.0.2"
+  resolved "https://registry.npmmirror.com/node-unrar-js/-/node-unrar-js-2.0.2.tgz#03ef602052497263b9aed8ff1e7afb315024f9ec"
+  integrity sha512-hLNmoJzqaKJnod8yiTVGe9hnlNRHotUi0CreSv/8HtfRi/3JnRC8DvsmKfeGGguRjTEulhZK6zXX5PXoVuDZ2w==
+
 nopt@^5.0.0:
   version "5.0.0"
   resolved "https://registry.npmmirror.com/nopt/-/nopt-5.0.0.tgz"

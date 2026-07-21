@@ -308,7 +308,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
   const handleImport = async () => {
     if (isImporting) return;
     if (!selectedAccountId || !importFolder || !selectedFile) {
-      onShowToast?.('请选择账号、目标目录并选择 .cas/.zip 文件', 'error');
+      onShowToast?.('请选择账号、目标目录并选择 .cas/.zip/.rar 文件', 'error');
       return;
     }
 
@@ -562,18 +562,31 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
               <Upload className="text-violet-500" size={20} />
               <h3 className="font-bold text-slate-900">存根导入</h3>
             </div>
-            <p className="text-sm text-slate-500 mt-1">上传 .cas 或 zip 包（含 .cas 目录树），批量秒传并生成 STRM</p>
+            <p className="text-sm text-slate-500 mt-1">上传 .cas / zip / rar 包（含 .cas 目录树），批量秒传并生成 STRM</p>
           </div>
 
           <div className="p-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">选择文件</label>
-              {/* 隐藏原生 input：避免系统文件图标显示成灰色方块，且 accept 用扩展名兼容 .cas */}
+              {/* 不限制 accept：部分浏览器对未知 MIME 的 .cas 会整项灰掉，无法点选 */}
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".cas,.zip"
-                onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null;
+                  if (!file) {
+                    setSelectedFile(null);
+                    return;
+                  }
+                  const lower = file.name.toLowerCase();
+                  if (!(lower.endsWith('.cas') || lower.endsWith('.zip') || lower.endsWith('.rar'))) {
+                    onShowToast?.('仅支持 .cas / .zip / .rar 文件', 'error');
+                    e.target.value = '';
+                    setSelectedFile(null);
+                    return;
+                  }
+                  setSelectedFile(file);
+                }}
                 className="hidden"
               />
               {!selectedFile ? (
@@ -586,14 +599,14 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                     <Upload size={18} />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-sm font-medium text-slate-800">点击选择 .cas / .zip</div>
-                    <div className="text-xs text-slate-500 mt-0.5">支持单个存根或含 .cas 的 zip 包</div>
+                    <div className="text-sm font-medium text-slate-800">点击选择 .cas / .zip / .rar</div>
+                    <div className="text-xs text-slate-500 mt-0.5">支持单个存根或含 .cas 的压缩包</div>
                   </div>
                 </button>
               ) : (
                 <div className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-slate-200 bg-white">
                   <div className="w-10 h-10 rounded-xl bg-[#d3e3fd] text-[#0b57d0] flex items-center justify-center shrink-0">
-                    {selectedFile.name.toLowerCase().endsWith('.zip') ? (
+                    {selectedFile.name.toLowerCase().endsWith('.zip') || selectedFile.name.toLowerCase().endsWith('.rar') ? (
                       <FileArchive size={18} />
                     ) : (
                       <File size={18} />
@@ -955,7 +968,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             <h3 className="font-bold text-slate-900">导入包说明</h3>
           </div>
           <div className="space-y-2 text-sm text-slate-600">
-            <p>支持单个 `.cas`，或 zip 内整树 `.cas`（如剧集 Season 目录）。</p>
+            <p>支持单个 `.cas`，或 zip / rar 内整树 `.cas`（如剧集 Season 目录）。</p>
             <p>立即还原会占用网盘实体；懒还原只写元数据与懒 STRM。</p>
           </div>
         </div>

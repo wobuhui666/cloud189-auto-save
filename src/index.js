@@ -928,11 +928,11 @@ AppDataSource.initialize().then(async () => {
         },
         fileFilter: (req, file, cb) => {
             const name = String(file.originalname || '').toLowerCase();
-            if (name.endsWith('.cas') || name.endsWith('.zip')) {
+            if (name.endsWith('.cas') || name.endsWith('.zip') || name.endsWith('.rar')) {
                 cb(null, true);
                 return;
             }
-            cb(new Error('仅支持上传 .cas 或 .zip 文件'));
+            cb(new Error('仅支持上传 .cas / .zip / .rar 文件'));
         }
     });
     const autoSeriesService = new AutoSeriesService(taskService, accountRepo, lazyShareStrmService);
@@ -3071,7 +3071,7 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
-    // CAS 存根包导入：上传 .cas / zip → 秒传还原 → 正常/懒 STRM
+    // CAS 存根包导入：上传 .cas / zip / rar → 秒传还原 → 正常/懒 STRM
     app.post('/api/cas/import', (req, res) => {
         casImportUpload.single('file')(req, res, async (uploadErr) => {
             const uploadedPath = req.file?.path;
@@ -3080,7 +3080,7 @@ AppDataSource.initialize().then(async () => {
                     throw uploadErr;
                 }
                 if (!req.file) {
-                    throw new Error('请上传 .cas 或 .zip 文件');
+                    throw new Error('请上传 .cas / .zip / .rar 文件');
                 }
 
                 const accountId = Number(req.body.accountId);

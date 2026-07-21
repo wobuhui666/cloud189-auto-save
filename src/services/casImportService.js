@@ -1,6 +1,6 @@
 /**
  * CAS 存根导入服务
- * - 上传 .cas / zip(含 .cas 树)
+ * - 上传 .cas / zip / rar(含 .cas 树)
  * - 秒传还原到网盘
  * - 生成正常 / 懒 STRM
  * - 导入任务与缓存管理
@@ -11,6 +11,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const yauzl = require('yauzl');
+const { createExtractorFromData } = require('node-unrar-js');
 
 const { logTaskEvent } = require('../utils/logUtils');
 const { CasFileService } = require('./casFileService');
@@ -75,6 +76,31 @@ function stripExtension(fileName = '') {
     return ext ? base.slice(0, -ext.length) : base;
 }
 
+function buildCasEntryFromContent(relativePath, content) {
+    const casInfo = CasFileService.parse(content);
+    const casFileName = path.basename(relativePath);
+    const restoreName = CasFileService.getOriginalFileName(casFileName, casInfo);
+    const relativeDir = normalizeRelativePath(path.posix.dirname(relativePath));
+    return {
+        relativePath,
+        relativeDir: relativeDir === '.' ? '' : relativeDir,
+        casFileName,
+        restoreName,
+        casInfo: {
+            name: casInfo.name,
+            size: casInfo.size,
+            md5: String(casInfo.md5).toLowerCase(),
+            sliceMd5: String(casInfo.sliceMd5).toLowerCase()
+        },
+        casContent: CasFileService.marshalBase64(casInfo),
+        entryKey: buildEntryKey(relativePath, casInfo)
+    };
+}
+
+function isArchiveNoisePath(rawName = '') {
+    return rawName.includes('__MACOSX/') || path.basename(rawName).startsWith('._');
+}
+
 function readZipEntries(filePath, options = {}) {
     const maxEntries = Number(options.maxEntries || DEFAULT_MAX_ENTRIES);
     const maxTotalBytes = Number(options.maxTotalBytes || DEFAULT_MAX_TOTAL_BYTES);
@@ -110,7 +136,7 @@ function readZipEntries(filePath, options = {}) {
                     zipfile.readEntry();
                     return;
                 }
-                if (rawName.includes('__MACOSX/') || path.basename(rawName).startsWith('._')) {
+                if (isArchiveNoisePath(rawName)) {
                     zipfile.readEntry();
                     return;
                 }
@@ -149,25 +175,7 @@ function readZipEntries(filePath, options = {}) {
                     readStream.on('error', fail);
                     readStream.on('end', () => {
                         try {
-                            const content = Buffer.concat(chunks).toString('utf8');
-                            const casInfo = CasFileService.parse(content);
-                            const casFileName = path.basename(relativePath);
-                            const restoreName = CasFileService.getOriginalFileName(casFileName, casInfo);
-                            const relativeDir = normalizeRelativePath(path.posix.dirname(relativePath));
-                            entries.push({
-                                relativePath,
-                                relativeDir: relativeDir === '.' ? '' : relativeDir,
-                                casFileName,
-                                restoreName,
-                                casInfo: {
-                                    name: casInfo.name,
-                                    size: casInfo.size,
-                                    md5: String(casInfo.md5).toLowerCase(),
-                                    sliceMd5: String(casInfo.sliceMd5).toLowerCase()
-                                },
-                                casContent: CasFileService.marshalBase64(casInfo),
-                                entryKey: buildEntryKey(relativePath, casInfo)
-                            });
+                            entries.push(buildCasEntryFromContent(relativePath, Buffer.concat(chunks).toString('utf8')));
                             zipfile.readEntry();
                         } catch (error) {
                             fail(new Error(`解析 ${relativePath} 失败: ${error.message}`));
@@ -180,6 +188,109 @@ function readZipEntries(filePath, options = {}) {
             zipfile.on('error', fail);
         });
     });
+}
+
+async function readRarEntries(filePath, options = {}) {
+    const maxEntries = Number(options.maxEntries || DEFAULT_MAX_ENTRIES);
+    const maxTotalBytes = Number(options.maxTotalBytes || DEFAULT_MAX_TOTAL_BYTES);
+
+    let extractor;
+    try {
+        const data = await fsp.readFile(filePath);
+        // node-unrar-js 需要 ArrayBuffer（不能是 SharedArrayBuffer 视图）
+        const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+        extractor = await createExtractorFromData({ data: arrayBuffer });
+    } catch (error) {
+        throw new Error(`读取 rar 失败: ${error.message || error}`);
+    }
+
+    let fileHeaders;
+    try {
+        const list = extractor.getFileList();
+        fileHeaders = [...(list.fileHeaders || [])];
+    } catch (error) {
+        throw new Error(`读取 rar 列表失败: ${error.message || error}`);
+    }
+
+    const casHeaders = fileHeaders.filter((header) => {
+        const name = String(header.name || '').replace(/\\/g, '/');
+        const isDir = !!(header.flags && header.flags.directory) || /\/$/.test(name);
+        return !isDir && CasFileService.isCasFile(name) && !isArchiveNoisePath(name);
+    });
+
+    if (!casHeaders.length) {
+        return [];
+    }
+    if (casHeaders.length > maxEntries) {
+        throw new Error(`CAS 条目超过上限 ${maxEntries}`);
+    }
+
+    let totalBytes = 0;
+    for (const header of casHeaders) {
+        totalBytes += Number(header.unpSize || header.packSize || 0);
+        if (totalBytes > maxTotalBytes) {
+            throw new Error(`CAS 包解压体积超过上限 ${Math.round(maxTotalBytes / 1024 / 1024)}MB`);
+        }
+    }
+
+    const wanted = new Set(
+        casHeaders.map((header) => String(header.name || '').replace(/\\/g, '/'))
+    );
+
+    let extractedFiles;
+    try {
+        // files 过滤器比路径数组更稳：兼容 rar 内反斜杠路径
+        const extracted = extractor.extract({
+            files: (header) => wanted.has(String(header.name || '').replace(/\\/g, '/'))
+        });
+        extractedFiles = [...(extracted.files || [])];
+    } catch (error) {
+        throw new Error(`解压 rar 失败: ${error.message || error}`);
+    }
+
+    const entries = [];
+    for (const file of extractedFiles) {
+        const fileHeader = file.fileHeader || {};
+        const rawName = String(fileHeader.name || '').replace(/\\/g, '/');
+        if (!wanted.has(rawName)) continue;
+        if (fileHeader.flags && fileHeader.flags.directory) continue;
+
+        let relativePath;
+        try {
+            relativePath = assertSafeRelativePath(rawName);
+        } catch (error) {
+            throw error;
+        }
+
+        const extraction = file.extraction;
+        if (!extraction) {
+            throw new Error(`解压 rar 条目失败 ${relativePath}: 无文件内容`);
+        }
+        const content = Buffer.from(extraction).toString('utf8');
+        try {
+            entries.push(buildCasEntryFromContent(relativePath, content));
+        } catch (error) {
+            throw new Error(`解析 ${relativePath} 失败: ${error.message}`);
+        }
+    }
+    return entries;
+}
+
+async function parseArchiveEntries(filePath, originalName = '') {
+    const lower = String(originalName || filePath || '').toLowerCase();
+    if (lower.endsWith('.zip')) {
+        return {
+            sourceType: 'zip',
+            entries: await readZipEntries(filePath)
+        };
+    }
+    if (lower.endsWith('.rar')) {
+        return {
+            sourceType: 'rar',
+            entries: await readRarEntries(filePath)
+        };
+    }
+    throw new Error('仅支持 .cas / .zip / .rar 文件');
 }
 
 async function parseSingleCasFile(filePath, originalName = '') {
@@ -256,10 +367,11 @@ class CasImportService {
 
     async parseUpload(filePath, originalName = '') {
         const lower = String(originalName || filePath || '').toLowerCase();
-        if (lower.endsWith('.zip')) {
-            let entries = await readZipEntries(filePath);
+        if (lower.endsWith('.zip') || lower.endsWith('.rar')) {
+            const archive = await parseArchiveEntries(filePath, originalName);
+            let entries = archive.entries || [];
             if (!entries.length) {
-                throw new Error('zip 中未找到有效的 .cas 文件');
+                throw new Error(`${archive.sourceType} 中未找到有效的 .cas 文件`);
             }
             const stripped = this._stripCommonRoot(entries);
             entries = stripped.entries;
@@ -269,14 +381,14 @@ class CasImportService {
                 'cas-import'
             );
             return {
-                sourceType: 'zip',
+                sourceType: archive.sourceType,
                 title,
                 entries
             };
         }
 
         if (!lower.endsWith('.cas')) {
-            throw new Error('仅支持 .cas 或 .zip 文件');
+            throw new Error('仅支持 .cas / .zip / .rar 文件');
         }
         const entries = await parseSingleCasFile(filePath, originalName);
         return {
