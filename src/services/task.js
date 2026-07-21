@@ -21,6 +21,7 @@ const { CasService } = require('./casService');
 const { AppDataSource } = require('../database');
 const { TaskProcessedFile } = require('../entities');
 const { parseMediaTitle } = require('../utils/mediaTitleParser');
+const { joinLocalStrmPath } = require('./mediaLibraryLayout');
 
 class TaskService {
     constructor(taskRepo, accountRepo, taskProcessedFileRepo) {
@@ -1074,20 +1075,26 @@ class TaskService {
         const task = await this.getTaskById(taskId);
         if (!task) throw new Error('任务不存在');
         await logTaskEvent(`开始删除任务: taskId=${taskId}, deleteCloud=${!!deleteCloud}, resourceName=${task.resourceName || ''}`, 'info', 'task');
-        const folderName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1);
+        const strmService = new StrmService();
+        // 与生成路径一致：优先 libraryLayout / resolveTaskStrmRoot
+        const strmRoot = strmService.resolveTaskStrmRoot(task);
         if (!task.enableSystemProxy && deleteCloud) {
             const account = await this.accountRepo.findOneBy({ id: task.accountId });
             if (!account) throw new Error('账号不存在');
             const cloud189 = Cloud189Service.getInstance(account);
             await this.deleteCloudFile(cloud189,await this.getRootFolder(task), 1);
             // 删除strm
-            new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
+            if (strmRoot) {
+                await strmService.deleteDir(strmRoot);
+            }
             // 刷新Alist缓存
             await this.refreshAlistCache(task, true)
         }
         if (task.enableSystemProxy) {
             // 删除strm
-            new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
+            if (strmRoot) {
+                await strmService.deleteDir(strmRoot);
+            }
         }
         // 删除定时任务
         if (task.enableCron) {
@@ -1869,10 +1876,17 @@ class TaskService {
 
         // 如果原realFolderName和现realFolderName不一致 则需要删除原strm
         if (updates.realFolderName && updates.realFolderName !== task.realFolderName && ConfigService.getConfigValue('strm.enable')) {
-            // 删除原strm
-            // 从realFolderName中获取文件夹名称
-            const folderName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1);
-            new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
+            // 按旧 task 快照解析 STRM 根（与 organizer 清理逻辑一致）
+            const strmService = new StrmService();
+            const oldRoot = strmService.resolveTaskStrmRoot({
+                ...task,
+                realFolderName: task.realFolderName,
+                libraryLayout: null,
+                account: task.account
+            });
+            if (oldRoot) {
+                await strmService.deleteDir(oldRoot);
+            }
         }
         // 只允许更新特定字段
         const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'manualTmdbBound', 'manualSeason', 'tmdbTitle', 'videoType', 'tmdbContent', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer', 'keepCasAfterRestore'];
@@ -2130,18 +2144,31 @@ class TaskService {
         );
         const title = this._sanitizeMediaTitle(task.resourceName || '');
         const year = this._extractYear(task.resourceName || '');
-        const parsedEpisodes = sortedFiles.map((file, index) => ({
-            id: String(file.id),
-            name: title,
-            season: '01',
-            episode: String(index + 1).padStart(2, '0'),
-            extension: path.extname(file.name) || ''
-        }));
+        const resourceParsed = parseMediaTitle(task.resourceName || '');
+        let hasSeasonEpisodeHint = resourceParsed.season != null || resourceParsed.episode != null;
+        const parsedEpisodes = sortedFiles.map((file, index) => {
+            const parsed = parseMediaTitle(file.name || '');
+            if (parsed.season != null || parsed.episode != null) {
+                hasSeasonEpisodeHint = true;
+            }
+            const season = parsed.season != null ? String(parsed.season).padStart(2, '0') : '01';
+            const episode = parsed.episode != null
+                ? (parsed.episode >= 100 ? String(parsed.episode) : String(parsed.episode).padStart(2, '0'))
+                : String(index + 1).padStart(2, '0');
+            return {
+                id: String(file.id),
+                name: title,
+                season,
+                episode,
+                extension: path.extname(file.name) || ''
+            };
+        });
         return {
             name: title,
             year,
-            type: sortedFiles.length > 1 ? 'tv' : 'movie',
-            season: '01',
+            // 单文件也可能是剧集（文件名带 SxxExx）；有季集线索时优先 tv
+            type: (sortedFiles.length > 1 || hasSeasonEpisodeHint) ? 'tv' : 'movie',
+            season: parsedEpisodes[0]?.season || '01',
             episode: parsedEpisodes
         };
     }
@@ -3164,9 +3191,7 @@ class TaskService {
             throw new Error('任务不存在')
         }
         const strmService = new StrmService()
-        const folderName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1);
-        let strmList = []
-        strmList = files.map(file => path.join(folderName, file.relativeDir || '', file.name));
+        const taskRoot = strmService.resolveTaskStrmRoot(task);
         // 判断是否启用了系统代理
         if (task.enableSystemProxy) {
             // 代理文件
@@ -3176,9 +3201,16 @@ class TaskService {
             await this.deleteCloudFile(cloud189,files, 0);
             await this.refreshAlistCache(task)
         }
-        for (const strm of strmList) {
-            // 删除strm文件
-            await strmService.delete(path.join(task.account.localStrmPrefix, strm));
+        for (const file of files) {
+            // 删除strm：任务根 + 相对目录 + 文件名（剥裸 strm 前缀）
+            const relative = path.posix.join(
+                String(file.relativeDir || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''),
+                file.name || ''
+            );
+            const strmRelative = taskRoot
+                ? path.posix.join(taskRoot, relative)
+                : joinLocalStrmPath(task.account?.localStrmPrefix || '', relative);
+            await strmService.delete(strmRelative);
         }
     }
 

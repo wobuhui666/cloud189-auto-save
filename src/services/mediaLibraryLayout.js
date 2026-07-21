@@ -56,6 +56,30 @@ function joinPosix(...parts) {
     return normalizeRelativePath(parts.filter(Boolean).join('/'));
 }
 
+/**
+ * 账号 localStrmPrefix 规范化（模块级，供 joinLocalStrmPath 等复用）：
+ * - 去掉首尾斜杠
+ * - 忽略裸挂载名 "strm"（物理根已是 strm 目录，再拼会变成 strm/strm）
+ */
+function normalizeLocalStrmPrefix(localStrmPrefix = '') {
+    const prefix = normalizeRelativePath(localStrmPrefix || '');
+    if (!prefix || prefix === 'strm' || prefix === '.') {
+        return '';
+    }
+    if (prefix.startsWith('strm/')) {
+        // 若用户把前缀写成 strm/emby，则保留 emby 段
+        return prefix.replace(/^strm\//, '');
+    }
+    return prefix;
+}
+
+/**
+ * 规范化 localStrmPrefix 后与业务相对段拼接（避免裸 path.join 叠出 strm/...）
+ */
+function joinLocalStrmPath(localStrmPrefix = '', ...parts) {
+    return joinPosix(normalizeLocalStrmPrefix(localStrmPrefix), ...parts.map((p) => normalizeRelativePath(p)));
+}
+
 class MediaLibraryLayoutService {
     constructor(options = {}) {
         this.taskService = options.taskService || null;
@@ -134,16 +158,14 @@ class MediaLibraryLayoutService {
      * - 忽略裸挂载名 "strm"（物理根已是 strm 目录，再拼会变成 strm/strm）
      */
     normalizeLocalStrmPrefix(localStrmPrefix = '') {
-        const prefix = normalizeRelativePath(localStrmPrefix || '');
-        if (!prefix || prefix === 'strm' || prefix === '.' ) {
-            return '';
-        }
-        // 兼容 "/strm"、"strm/" 已在 normalizeRelativePath 处理
-        if (prefix === 'strm' || prefix.startsWith('strm/')) {
-            // 若用户把前缀写成 strm/emby，则保留 emby 段
-            return prefix === 'strm' ? '' : prefix.replace(/^strm\//, '');
-        }
-        return prefix;
+        return normalizeLocalStrmPrefix(localStrmPrefix);
+    }
+
+    /**
+     * 规范化 localStrmPrefix 后拼接业务相对段
+     */
+    joinLocalStrmPath(localStrmPrefix = '', ...parts) {
+        return joinLocalStrmPath(localStrmPrefix, ...parts);
     }
 
     buildStrmRoot(localStrmPrefix, libraryInfo) {
@@ -274,8 +296,12 @@ class MediaLibraryLayoutService {
                 logTaskEvent(`[Layout] AI 分析失败，使用确定性回退: ${error.message}`);
             }
         } else if (sortedFiles.length) {
+            let hasSeasonEpisodeHint = parsedResource.season != null || parsedResource.episode != null;
             resourceInfo.episode = sortedFiles.map((file, index) => {
                 const parsed = parseMediaTitle(file.name || file.restoreName || '');
+                if (parsed.season != null || parsed.episode != null) {
+                    hasSeasonEpisodeHint = true;
+                }
                 return {
                     id: String(file.id || file.entryKey || index),
                     name: resourceInfo.name,
@@ -286,7 +312,8 @@ class MediaLibraryLayoutService {
                     extension: path.extname(file.name || file.restoreName || '') || ''
                 };
             });
-            resourceInfo.type = sortedFiles.length > 1 ? 'tv' : 'movie';
+            // 单文件也可能是剧集（如 光阴之外.S01E31.mp4）；有 SxxExx/第x集 等线索时优先 tv
+            resourceInfo.type = (sortedFiles.length > 1 || hasSeasonEpisodeHint) ? 'tv' : 'movie';
         }
 
         // TMDB 锚定
@@ -456,7 +483,8 @@ class MediaLibraryLayoutService {
         if (!normalized) return '';
         const index = normalized.indexOf('/');
         const stripped = index >= 0 ? normalized.substring(index + 1) : normalized;
-        return joinPosix(normalizeRelativePath(localStrmPrefix), stripped);
+        // 必须剥裸 strm，避免 /strm + 业务段 叠成相对 strm/...
+        return joinPosix(normalizeLocalStrmPrefix(localStrmPrefix), stripped);
     }
 
     /**
@@ -475,6 +503,8 @@ class MediaLibraryLayoutService {
 module.exports = {
     MediaLibraryLayoutService,
     normalizeRelativePath,
+    normalizeLocalStrmPrefix,
+    joinLocalStrmPath,
     sanitizePathSegment,
     joinPosix,
     pad2

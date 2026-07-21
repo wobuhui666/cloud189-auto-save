@@ -593,13 +593,24 @@ const StrmConfigTab: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">本地路径前缀 (可选)</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={formData.localPathPrefix || ''}
                 onChange={e => setFormData({...formData, localPathPrefix: e.target.value})}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
-                placeholder="/volume1/media"
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="留空 或 emby（相对 STRM 根，勿填绝对路径）"
               />
+              <p className="text-[11px] leading-relaxed text-slate-500">
+                相对「应用 STRM 根目录」的前缀，不是宿主机绝对路径。Docker 物理根多为
+                <code className="mx-1 rounded bg-slate-100 px-1">/home/strm</code>
+                （已挂载到宿主机）。填
+                <code className="mx-1 rounded bg-slate-100 px-1">/strm</code>
+                或
+                <code className="mx-1 rounded bg-slate-100 px-1">strm</code>
+                会视为空，避免叠成
+                <code className="mx-1 rounded bg-slate-100 px-1">strm/strm</code>
+                。最终：STRM根 + 此前缀 + 资源路径。
+              </p>
             </div>
           </div>
 
@@ -878,13 +889,24 @@ const StrmConfigTab: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">本地路径前缀 (可选)</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={lazyFormData.localPathPrefix || ''}
                 onChange={e => setLazyFormData({...lazyFormData, localPathPrefix: e.target.value})}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" 
-                placeholder="/volume1/media"
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="留空 或 emby（相对 STRM 根，勿填绝对路径）"
               />
+              <p className="text-[11px] leading-relaxed text-slate-500">
+                相对「应用 STRM 根目录」的前缀。物理根在 Docker 中多为
+                <code className="mx-1 rounded bg-slate-100 px-1">/home/strm</code>
+                。
+                <code className="mx-1 rounded bg-slate-100 px-1">/strm</code>
+                /
+                <code className="mx-1 rounded bg-slate-100 px-1">strm</code>
+                会当空前缀，避免
+                <code className="mx-1 rounded bg-slate-100 px-1">strm/strm</code>
+                。
+              </p>
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Key, Lock, LogOut, Plus, RefreshCw, Search, ShieldAlert, ShieldCheck, Unlock } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
@@ -62,8 +62,21 @@ interface HdhiveSearchResponse {
   warning: string;
 }
 
+export interface HdhivePrefillData {
+  /** 片名关键词 或 TMDB 数字 ID */
+  query?: string;
+  /** name=按片名搜；tmdbId=按 TMDB ID 查天翼资源 */
+  searchMode?: 'name' | 'tmdbId';
+  /** tmdbId 模式下的媒体类型 */
+  tmdbType?: 'movie' | 'tv';
+  /** 是否进入后自动搜索 */
+  autoSearch?: boolean;
+}
+
 interface HdhiveTabProps {
   onTransfer: (data: any) => void;
+  prefill?: HdhivePrefillData | null;
+  onPrefillConsumed?: () => void;
 }
 
 const buildPosterUrl = (posterPath?: string) => {
@@ -86,7 +99,7 @@ const formatResourceCost = (resource: HdhiveResource) => {
   return points === null ? '积分未知' : `${points} 积分`;
 };
 
-const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
+const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer, prefill, onPrefillConsumed }) => {
   const toast = useToast();
   const dialog = useDialog();
   const [query, setQuery] = useState('');
@@ -105,6 +118,7 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
   const [loginLoading, setLoginLoading] = useState(false);
   const [syncCookieLoading, setSyncCookieLoading] = useState(false);
   const [checkinLoading, setCheckinLoading] = useState(false);
+  const prefillAppliedRef = useRef<HdhivePrefillData | null>(null);
   const canQueryHdhiveResources = Boolean(
     status?.signedCustomerApiAvailable
     || status?.hasCookie
@@ -299,6 +313,41 @@ const HdhiveTab: React.FC<HdhiveTabProps> = ({ onTransfer }) => {
       handleSearch(value);
     }
   };
+
+  // 海报墙等入口跳转时预填搜索条件（在搜索函数定义之后挂载）
+  useEffect(() => {
+    if (!prefill) {
+      prefillAppliedRef.current = null;
+      return;
+    }
+    if (prefillAppliedRef.current === prefill) return;
+
+    const nextQuery = String(prefill.query || '').trim();
+    const nextMode = prefill.searchMode === 'tmdbId' ? 'tmdbId' : 'name';
+    const nextType = prefill.tmdbType === 'movie' ? 'movie' : 'tv';
+    const shouldAuto = prefill.autoSearch !== false && !!nextQuery;
+
+    setSearchMode(nextMode);
+    setTmdbType(nextType);
+    setQuery(nextQuery);
+    prefillAppliedRef.current = prefill;
+
+    // 等状态提交后再清理父级 prefill，避免重复触发
+    const timer = window.setTimeout(() => {
+      onPrefillConsumed?.();
+      if (shouldAuto) {
+        if (nextMode === 'tmdbId') {
+          handleQueryResources(nextType, nextQuery);
+        } else {
+          handleSearch(nextQuery);
+        }
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+    // 仅在 prefill 引用变化时触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   const transferShare = (shareLink: string, accessCode: string, taskName: string, tmdbId = '') => {
     onTransfer({

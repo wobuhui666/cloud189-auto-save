@@ -27,6 +27,7 @@ const AIService = require('./services/ai');
 const CustomPushService = require('./services/message/CustomPushService');
 const { SubscriptionService } = require('./services/subscription');
 const { StrmConfigService } = require('./services/strmConfig');
+const { joinLocalStrmPath } = require('./services/mediaLibraryLayout');
 const { TMDBService } = require('./services/tmdb');
 const { StreamProxyService } = require('./services/streamProxy');
 const { LazyShareStrmService } = require('./services/lazyShareStrm');
@@ -1989,6 +1990,129 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    // 文件管理页：整理选中项为媒体库结构，可选生成 STRM（不创建 Task，后台执行避免卡住前端）
+    app.post('/api/file-manager/organize', async (req, res) => {
+        try {
+            const accountId = parseInt(req.body.accountId);
+            const parentFolderId = String(req.body.parentFolderId || '').trim();
+            const items = Array.isArray(req.body.items) ? req.body.items : [];
+            const useAi = req.body.useAi !== false;
+            const generateStrm = !!req.body.generateStrm;
+            const forceRefresh = !!req.body.forceRefresh;
+            const deleteEmptySource = !!req.body.deleteEmptySource;
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            if (!parentFolderId) {
+                throw new Error('当前目录不能为空');
+            }
+            if (!items.length) {
+                throw new Error('未选择需要整理的文件');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+
+            // 先回响应，再后台跑整理（同 STRM 重建模式）
+            res.json({
+                success: true,
+                data: {
+                    message: '整理任务已开始后台执行',
+                    count: items.length,
+                    generateStrm,
+                    useAi,
+                    deleteEmptySource
+                }
+            });
+
+            organizerService.organizeCloudSelection({
+                account,
+                parentFolderId,
+                items,
+                useAi,
+                forceRefresh,
+                generateStrm,
+                deleteEmptySource
+            }).then((result) => {
+                folderCache.clearPrefix('folders_');
+                const results = Array.isArray(result?.results) ? result.results : [];
+                const ok = results.filter((row) => !row.error && !row.skipped);
+                const skipped = results.filter((row) => row.skipped);
+                const failed = results.filter((row) => row.error);
+                const summaryLines = results.map((row) => {
+                    if (row.error) return `✗ ${row.item?.name || '?'}: ${row.error}`;
+                    if (row.skipped) return `○ ${row.item?.name || '?'}: ${row.message || '跳过'}`;
+                    return `✓ ${row.message || row.item?.name || '?'}`;
+                });
+                logTaskEvent(
+                    `[文件整理] 后台完成 account=${accountId} 成功=${ok.length} 跳过=${skipped.length} 失败=${failed.length}\n`
+                    + summaryLines.join('\n')
+                );
+            }).catch((error) => {
+                logTaskEvent(`[文件整理] 后台失败: ${error.message}`, 'error');
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 文件管理页：对已整理好的云盘目录镜像生成 STRM（不改云盘、不建 Task，后台执行）
+    app.post('/api/file-manager/generate-strm', async (req, res) => {
+        try {
+            const accountId = parseInt(req.body.accountId);
+            const directories = Array.isArray(req.body.directories) ? req.body.directories : [];
+            const localPathPrefix = req.body.localPathPrefix != null
+                ? String(req.body.localPathPrefix)
+                : '';
+            const overwriteExisting = !!req.body.overwriteExisting;
+            const excludePattern = String(req.body.excludePattern || '').trim();
+            if (!accountId) {
+                throw new Error('账号ID不能为空');
+            }
+            const normalizedDirectories = directories
+                .map((item) => ({
+                    folderId: String(item?.folderId || item?.id || '').trim(),
+                    name: String(item?.name || '').trim(),
+                    path: String(item?.path || item?.name || '').trim().replace(/^\/+|\/+$/g, '')
+                }))
+                .filter((item) => item.folderId);
+            if (!normalizedDirectories.length) {
+                throw new Error('请至少选择一个带 folderId 的文件夹');
+            }
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+
+            res.json({
+                success: true,
+                data: {
+                    message: 'STRM生成已开始后台执行',
+                    count: normalizedDirectories.length,
+                    overwriteExisting
+                }
+            });
+
+            const strmService = new StrmService();
+            strmService.generateSelectedDirectories(account, normalizedDirectories, {
+                useStreamProxy: true,
+                localPathPrefix,
+                overwriteExisting,
+                excludePattern
+            }).then((message) => {
+                logTaskEvent(
+                    `[文件STRM] 后台完成 account=${accountId} 目录数=${normalizedDirectories.length}\n`
+                    + (message || '')
+                );
+            }).catch((error) => {
+                logTaskEvent(`[文件STRM] 后台失败: ${error.message}`, 'error');
+            });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     app.post('/api/files/rename', async (req, res) => {
         const {taskId, accountId, files, sourceRegex, targetRegex } = req.body;
         if (files.length == 0) {
@@ -2025,9 +2149,9 @@ AppDataSource.initialize().then(async () => {
                 result.push(`文件${file.destFileName} ${renameResult.res_msg}`)
             }else{
                 if (strmEnabled){
-                    // 从realFolderName中获取文件夹名称 删除对应的本地文件
+                    // 与生成路径一致：剥裸 strm 前缀后删除旧 STRM
                     const oldFile = path.join(folderName, file.oldName);
-                    await strmService.delete(path.join(task.account.localStrmPrefix, oldFile))
+                    await strmService.delete(joinLocalStrmPath(task.account.localStrmPrefix, oldFile));
                 }
                 successFiles.push({id: file.fileId, name: file.destFileName})
             }

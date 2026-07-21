@@ -9,7 +9,7 @@ const { CasService } = require('./casService');
 const { StrmService } = require('./strm');
 const { StreamProxyService } = require('./streamProxy');
 const { OrganizerService } = require('./organizer');
-const { MediaLibraryLayoutService } = require('./mediaLibraryLayout');
+const { MediaLibraryLayoutService, joinLocalStrmPath } = require('./mediaLibraryLayout');
 const { logTaskEvent } = require('../utils/logUtils');
 const { getDownloader, resetDownloader } = require('./downloader');
 const { PtSourceService } = require('./ptSource');
@@ -888,15 +888,15 @@ class PtService {
         const accountId = Number(account.id);
         const targetFolderId = String(subscription.targetFolderId || '');
 
-        // 确定目标根目录
+        // 确定目标根目录（剥裸 strm 前缀，避免 strm/strm）
         let targetRoot;
         if (organizeEnabled) {
-            // 优先媒体库 layout：{localStrmPrefix}/{分类}/{作品}
+            // 优先媒体库 layout：{normalizedPrefix}/{分类}/{作品}
             // organizedDir 可能是 category/title/season，取前两段作 root，季放 relative
             const firstOrg = String(files[0].organizedDir || '').replace(/\\/g, '/');
             const parts = firstOrg.split('/').filter(Boolean);
             if (parts.length >= 2) {
-                targetRoot = path.join(account.localStrmPrefix, parts[0], parts[1]);
+                targetRoot = joinLocalStrmPath(account.localStrmPrefix, parts[0], parts[1]);
                 // 把 season 等剩余段写回 relativeDir，避免重复嵌套
                 const rest = parts.slice(2).join('/');
                 for (const f of files) {
@@ -908,13 +908,13 @@ class PtService {
                     }
                 }
             } else {
-                targetRoot = path.join(account.localStrmPrefix, files[0].organizedDir || '');
+                targetRoot = joinLocalStrmPath(account.localStrmPrefix, files[0].organizedDir || '');
             }
         } else {
-            // 原始模式：使用 {localStrmPrefix}/PT/{subName}/{relName}
+            // 原始模式：使用 {normalizedPrefix}/PT/{subName}/{relName}
             const subName = safeFileName(subscription.name || `sub-${subscription.id}`);
             const relName = safeFileName(release.title || `release-${release.id}`);
-            targetRoot = path.join(account.localStrmPrefix, 'PT', subName, relName);
+            targetRoot = joinLocalStrmPath(account.localStrmPrefix, 'PT', subName, relName);
         }
 
         await strmService.generateCustom(

@@ -26,10 +26,11 @@ class QbittorrentClient {
 
     _getCommonHeaders(extraHeaders = {}) {
         const baseUrl = this.getBaseUrl();
+        const cookieName = this.sidCookieName || 'SID';
         return {
             Referer: `${baseUrl}/`,
             Origin: baseUrl,
-            Cookie: this.sid ? `SID=${this.sid}` : '',
+            Cookie: this.sid ? `${cookieName}=${this.sid}` : '',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             ...extraHeaders
         };
@@ -69,11 +70,15 @@ class QbittorrentClient {
             }
             throw new Error('qBittorrent 登录未返回 SID');
         }
-        const sidCookie = setCookie.find((cookie) => cookie.startsWith('SID='));
+        // qBittorrent 5.x 使用 QBT_SID_<port>，旧版使用 SID
+        const sidCookie = setCookie.find((cookie) => /^(SID|QBT_SID_[^=]+)=/i.test(cookie));
         if (!sidCookie) {
             throw new Error('qBittorrent 登录未返回有效 SID');
         }
-        this.sid = sidCookie.split(';')[0].slice(4);
+        const eq = sidCookie.indexOf('=');
+        const pair = sidCookie.split(';')[0];
+        this.sidCookieName = pair.slice(0, eq);
+        this.sid = pair.slice(eq + 1);
         return this.sid;
     }
 

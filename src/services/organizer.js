@@ -217,6 +217,285 @@ class OrganizerService {
         };
     }
 
+    /**
+     * 文件管理页一次性整理：对任意选中的云盘文件/文件夹做媒体库归档 + 可选 STRM。
+     * 每个顶层 item 独立识别为一部作品；不创建/更新 Task。
+     *
+     * @param {Object} options
+     * @param {Object} options.account
+     * @param {string} options.parentFolderId  当前浏览目录（分类目录创建在此之下）
+     * @param {Array<{id:string,name:string,isFolder:boolean}>} options.items
+     * @param {boolean} [options.useAi=true]
+     * @param {boolean} [options.forceRefresh=false]
+     * @param {boolean} [options.generateStrm=false]
+     * @param {boolean} [options.deleteEmptySource=false] 源文件夹搬空后删除空壳
+     */
+    async organizeCloudSelection({
+        account,
+        parentFolderId,
+        items = [],
+        useAi = true,
+        forceRefresh = false,
+        generateStrm = false,
+        deleteEmptySource = false
+    } = {}) {
+        if (!account?.id) {
+            throw new Error('账号不存在');
+        }
+        if (!parentFolderId) {
+            throw new Error('当前目录不能为空');
+        }
+        const normalizedItems = (Array.isArray(items) ? items : [])
+            .map((item) => ({
+                id: String(item?.id || '').trim(),
+                name: String(item?.name || '').trim(),
+                isFolder: !!item?.isFolder
+            }))
+            .filter((item) => item.id && item.name);
+        if (!normalizedItems.length) {
+            throw new Error('未选择需要整理的文件');
+        }
+
+        const cloud189 = Cloud189Service.getInstance(account);
+        this.layoutService.taskService = this.taskService;
+
+        let strmService = null;
+        let streamProxyService = null;
+        if (generateStrm) {
+            strmService = new StrmService();
+            const { StreamProxyService } = require('./streamProxy');
+            streamProxyService = new StreamProxyService();
+        }
+
+        const categoryCache = new Map();
+        const results = [];
+
+        for (const item of normalizedItems) {
+            try {
+                const rawFiles = item.isFolder
+                    ? await this.taskService._collectFolderFilesRecursive(cloud189, item.id, '', null)
+                    : [{
+                        id: item.id,
+                        name: item.name,
+                        isFolder: false,
+                        relativeDir: '',
+                        parentFolderId: String(parentFolderId)
+                    }];
+
+                const files = (rawFiles || []).filter((file) => file && !file.isFolder && file.id && file.name);
+                if (!files.length) {
+                    results.push({
+                        item,
+                        skipped: true,
+                        message: '目录为空或无可整理文件，跳过'
+                    });
+                    continue;
+                }
+
+                const resourceName = item.isFolder
+                    ? item.name
+                    : path.parse(item.name).name;
+                logTaskEvent(`[文件整理] 开始: ${item.name}（${files.length} 文件）`);
+
+                const libraryInfo = await this.layoutService.resolveLibraryInfo({
+                    resourceName,
+                    files: files.map((file) => ({ id: file.id, name: file.name })),
+                    useAi: !!useAi,
+                    forceRefresh: !!forceRefresh
+                });
+                const resourceInfo = libraryInfo.resourceInfo || {
+                    name: libraryInfo.canonicalTitle,
+                    year: libraryInfo.year,
+                    type: libraryInfo.mediaType,
+                    episode: []
+                };
+                const fileMap = new Map(
+                    (resourceInfo.episode || []).map((entry) => [String(entry.id), entry])
+                );
+
+                const categoryFolderId = await this._ensureFolderByName(
+                    cloud189,
+                    String(parentFolderId),
+                    libraryInfo.categoryName,
+                    categoryCache
+                );
+                const resourceFolderId = await this._ensureFolderByName(
+                    cloud189,
+                    categoryFolderId,
+                    libraryInfo.resourceFolderName,
+                    categoryCache
+                );
+
+                const nestedCache = new Map();
+                const movedFiles = [];
+                let renamedCount = 0;
+                let movedCount = 0;
+                const operations = [];
+
+                for (const file of files) {
+                    const aiFile = fileMap.get(String(file.id));
+                    const targetFileName = this.layoutService.buildFileName(
+                        file,
+                        aiFile,
+                        resourceInfo,
+                        libraryInfo
+                    );
+                    const targetRelativeDir = this.layoutService.buildRelativeDir(
+                        file,
+                        aiFile,
+                        libraryInfo
+                    );
+                    const targetFolderId = await this._ensureDirectoryPath(
+                        cloud189,
+                        resourceFolderId,
+                        targetRelativeDir,
+                        nestedCache
+                    );
+
+                    if (file.name !== targetFileName) {
+                        const renameResult = await cloud189.renameFile(file.id, targetFileName);
+                        if (!renameResult || (renameResult.res_code && renameResult.res_code !== 0)) {
+                            throw new Error(`重命名失败: ${file.name} -> ${targetFileName}`);
+                        }
+                        operations.push(`重命名 ${file.name} -> ${targetFileName}`);
+                        renamedCount += 1;
+                        file.name = targetFileName;
+                    }
+
+                    if (String(file.parentFolderId || '') !== String(targetFolderId)) {
+                        await this.taskService.moveCloudFile(cloud189, {
+                            id: file.id,
+                            name: file.name,
+                            isFolder: false
+                        }, targetFolderId);
+                        operations.push(`移动 ${file.name} -> ${targetRelativeDir || '媒体根目录'}`);
+                        movedCount += 1;
+                        file.parentFolderId = String(targetFolderId);
+                    }
+
+                    file.relativeDir = targetRelativeDir;
+                    file.relativePath = targetRelativeDir
+                        ? `${targetRelativeDir}/${file.name}`
+                        : file.name;
+                    movedFiles.push(file);
+                }
+
+                let strmMessage = '';
+                if (generateStrm && strmService?.enable && streamProxyService) {
+                    const targetRoot = this.layoutService.buildStrmRoot(
+                        account.localStrmPrefix,
+                        libraryInfo
+                    );
+                    strmMessage = await strmService.generateCustom(
+                        targetRoot,
+                        movedFiles,
+                        async (file) => streamProxyService.buildStreamUrl({
+                            type: 'task',
+                            accountId: account.id,
+                            fileId: file.id,
+                            fileName: file.name
+                        }),
+                        false,
+                        false
+                    ) || '';
+                } else if (generateStrm && strmService && !strmService.enable) {
+                    strmMessage = 'STRM生成未启用，已跳过';
+                }
+
+                let deletedEmptySource = false;
+                if (
+                    deleteEmptySource
+                    && item.isFolder
+                    && String(item.id) !== String(resourceFolderId)
+                    && String(item.id) !== String(categoryFolderId)
+                    && String(item.id) !== String(parentFolderId)
+                ) {
+                    deletedEmptySource = await this._deleteFolderIfEmpty(
+                        cloud189,
+                        item.id,
+                        item.name
+                    );
+                    if (deletedEmptySource) {
+                        operations.push(`删除空目录 ${item.name}`);
+                    }
+                }
+
+                const targetSummary = `${libraryInfo.categoryName}/${libraryInfo.resourceFolderName}`;
+                logTaskEvent(
+                    `[文件整理] 完成: ${item.name} -> ${targetSummary}`
+                    + `（重命名 ${renamedCount}，移动 ${movedCount}`
+                    + `${deletedEmptySource ? '，已删空源目录' : ''}）`
+                );
+
+                results.push({
+                    item,
+                    libraryInfo: {
+                        mediaType: libraryInfo.mediaType,
+                        categoryName: libraryInfo.categoryName,
+                        resourceFolderName: libraryInfo.resourceFolderName,
+                        canonicalTitle: libraryInfo.canonicalTitle,
+                        year: libraryInfo.year,
+                        tmdbId: libraryInfo.tmdbId || ''
+                    },
+                    fileCount: files.length,
+                    renamedCount,
+                    movedCount,
+                    deletedEmptySource,
+                    operations,
+                    strmMessage,
+                    message: `${item.name} → ${targetSummary}（${files.length} 文件`
+                        + `${deletedEmptySource ? '，已删空源目录' : ''}）`
+                });
+            } catch (error) {
+                logTaskEvent(`[文件整理] 失败: ${item.name}: ${error.message}`);
+                results.push({
+                    item,
+                    error: error.message || String(error)
+                });
+            }
+        }
+
+        return { results };
+    }
+
+    /**
+     * 若目录内无任何文件/子文件夹则删除（用于整理后清空壳源目录）
+     * @returns {Promise<boolean>} 是否已删除
+     */
+    async _deleteFolderIfEmpty(cloud189, folderId, folderName = '') {
+        if (!folderId || !this.taskService?.deleteCloudFile) {
+            return false;
+        }
+        try {
+            const listing = await cloud189.listFiles(String(folderId));
+            if (!listing?.fileListAO) {
+                // 列不出内容时保守跳过，避免误删
+                return false;
+            }
+            const files = listing.fileListAO.fileList || [];
+            const folders = listing.fileListAO.folderList || [];
+            if (files.length || folders.length) {
+                logTaskEvent(
+                    `[文件整理] 源目录未清空，保留: ${folderName || folderId}`
+                    + `（文件 ${files.length}，子目录 ${folders.length}）`
+                );
+                return false;
+            }
+            await this.taskService.deleteCloudFile(
+                cloud189,
+                { id: String(folderId), name: folderName || String(folderId) },
+                1
+            );
+            logTaskEvent(`[文件整理] 已删除空源目录: ${folderName || folderId}`);
+            return true;
+        } catch (error) {
+            logTaskEvent(
+                `[文件整理] 删除空源目录失败 ${folderName || folderId}: ${error.message}`
+            );
+            return false;
+        }
+    }
+
     async markError(taskId, error) {
         if (!this.taskRepo) {
             return;

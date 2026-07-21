@@ -16,6 +16,7 @@ import {
   Bookmark,
   Trash2,
   Play,
+  Search,
 } from 'lucide-react';
 import { getDoubanHotMovies, getDoubanHotTV, searchDouban } from '../../lib/douban.client';
 import { getBangumiToday, getBangumiByWeekday, getBangumiRanking } from '../../lib/bangumi.client';
@@ -253,6 +254,7 @@ interface MediaDetailModalProps {
   onClose: () => void;
   onAddAutoSeries: (item: MediaItem) => void;
   onPTSearch: (item: MediaItem) => void;
+  onHdhiveSearch: (item: MediaItem) => void;
   addingSeries: boolean;
 }
 
@@ -262,6 +264,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   onClose,
   onAddAutoSeries,
   onPTSearch,
+  onHdhiveSearch,
   addingSeries,
 }) => {
   if (!item) return null;
@@ -315,6 +318,13 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           >
             {addingSeries ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             {addingSeries ? '添加中…' : '添加自动追剧'}
+          </button>
+          <button
+            onClick={() => onHdhiveSearch(item)}
+            className="flex-1 flex items-center justify-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          >
+            <Search className="w-4 h-4" />
+            影巢搜索
           </button>
           <button
             onClick={() => onPTSearch(item)}
@@ -387,9 +397,16 @@ const Chip: React.FC<ChipProps> = ({ active, onClick, children }) => (
 // === 主组件 ===
 interface PosterWallTabProps {
   onCreatePtSubscription?: (data: { name: string; rssUrl: string; sourcePreset: string }) => void;
+  /** 跳转影巢页并预填搜索（片名 / TMDB ID） */
+  onSearchHdhive?: (data: {
+    query: string;
+    searchMode: 'name' | 'tmdbId';
+    tmdbType?: 'movie' | 'tv';
+    autoSearch?: boolean;
+  }) => void;
 }
 
-const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription }) => {
+const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, onSearchHdhive }) => {
   const toast = useToast();
   const [activeSource, setActiveSource] = useState<MediaSource>('douban');
   const [loading, setLoading] = useState(false);
@@ -678,6 +695,20 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription })
     setIsPTSearchOpen(true);
   };
 
+  // 跳转影巢：TMDB 源优先用 ID 查天翼资源，其它源用片名关键词
+  const handleHdhiveSearch = (item: MediaItem) => {
+    setIsDetailOpen(false);
+    if (!onSearchHdhive) return;
+    const isTmdb = item.source === 'tmdb' && /^\d+$/.test(String(item.id || ''));
+    const mediaType: 'movie' | 'tv' = item.type === 'movie' ? 'movie' : 'tv';
+    onSearchHdhive({
+      query: isTmdb ? String(item.id) : item.title,
+      searchMode: isTmdb ? 'tmdbId' : 'name',
+      tmdbType: mediaType,
+      autoSearch: true,
+    });
+  };
+
   // 手动刷新当前激活源
   const handleRefresh = () => {
     if (activeSource === 'douban') {
@@ -850,6 +881,7 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription })
         onClose={() => setIsDetailOpen(false)}
         onAddAutoSeries={handleAddAutoSeries}
         onPTSearch={handlePTSearch}
+        onHdhiveSearch={handleHdhiveSearch}
         addingSeries={addingSeries}
       />
 

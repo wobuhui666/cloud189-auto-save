@@ -43,7 +43,7 @@ import SettingsTab from './components/tabs/SettingsTab';
 import CasTab from './components/tabs/CasTab';
 import PtTab, { type PtPrefillData } from './components/tabs/PtTab';
 import PosterWallTab from './components/tabs/PosterWallTab';
-import HdhiveTab from './components/tabs/HdhiveTab';
+import HdhiveTab, { type HdhivePrefillData } from './components/tabs/HdhiveTab';
 import { useDialog } from './components/ui/Dialog';
 
 // --- Types ---
@@ -89,6 +89,7 @@ export default function App() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [ptPrefill, setPtPrefill] = useState<PtPrefillData | null>(null);
+  const [hdhivePrefill, setHdhivePrefill] = useState<HdhivePrefillData | null>(null);
 
   const resolvedTheme = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -468,7 +469,13 @@ export default function App() {
                 )}
                 {activeTab === 'fileManager' && <FileManagerTab />}
                 {activeTab === 'autoSeries' && <AutoSeriesTab />}
-                {activeTab === 'hdhive' && <HdhiveTab onTransfer={handleOpenCreateTask} />}
+                {activeTab === 'hdhive' && (
+                  <HdhiveTab
+                    onTransfer={handleOpenCreateTask}
+                    prefill={hdhivePrefill}
+                    onPrefillConsumed={() => setHdhivePrefill(null)}
+                  />
+                )}
                 {activeTab === 'organizer' && <OrganizerTab />}
                 {activeTab === 'subscription' && <SubscriptionTab onTransfer={handleOpenCreateTask} />}
                 {activeTab === 'strmConfig' && <StrmConfigTab />}
@@ -480,6 +487,10 @@ export default function App() {
                     onCreatePtSubscription={(data) => {
                       setPtPrefill(data);
                       setActiveTab('pt');
+                    }}
+                    onSearchHdhive={(data) => {
+                      setHdhivePrefill(data);
+                      setActiveTab('hdhive');
                     }}
                   />
                 )}

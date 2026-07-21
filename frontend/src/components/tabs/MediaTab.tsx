@@ -453,6 +453,14 @@ const MediaTab: React.FC = () => {
                 description="允许系统为转存任务生成 .strm 播放文件"
               />
             </div>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 text-[11px] leading-relaxed text-slate-500">
+              账号「本地」前缀是相对 STRM 根目录的逻辑路径，不是 Linux 绝对路径。
+              物理根固定为应用 <code className="mx-0.5 rounded bg-white px-1">strm</code> 目录
+              （Docker 常见 <code className="mx-0.5 rounded bg-white px-1">/home/strm</code>，可挂载到宿主机）。
+              填 <code className="mx-0.5 rounded bg-white px-1">/strm</code> 或 <code className="mx-0.5 rounded bg-white px-1">strm</code> 会视为空前缀，避免叠成
+              <code className="mx-0.5 rounded bg-white px-1">strm/strm</code>。
+              最终路径 = STRM根 + 本地前缀 + 媒体库布局（如 电影/作品名）。
+            </div>
             <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
               <Checkbox
                 size="lg"

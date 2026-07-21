@@ -9,7 +9,12 @@ const { StreamProxyService } = require('./streamProxy');
 const { Cloud189Service } = require('./cloud189');
 
 const { CasService } = require('./casService');
-const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
+const {
+    MediaLibraryLayoutService,
+    normalizeRelativePath,
+    normalizeLocalStrmPrefix,
+    joinLocalStrmPath
+} = require('./mediaLibraryLayout');
 
 class StrmService {
     constructor() {
@@ -155,23 +160,35 @@ class StrmService {
             return '';
         }
 
+        let relative = '';
         const baseWithSep = normalizedBaseDir.endsWith(path.sep)
             ? normalizedBaseDir
             : `${normalizedBaseDir}${path.sep}`;
         if (normalizedTargetPath.startsWith(baseWithSep)) {
-            return path.relative(normalizedBaseDir, normalizedTargetPath);
+            relative = path.relative(normalizedBaseDir, normalizedTargetPath);
+        } else {
+            const baseName = path.basename(normalizedBaseDir);
+            const marker = `${path.sep}${baseName}${path.sep}`;
+            const markerIndex = normalizedTargetPath.lastIndexOf(marker);
+            if (markerIndex >= 0) {
+                relative = normalizedTargetPath.substring(markerIndex + marker.length);
+            } else if (normalizedTargetPath.endsWith(`${path.sep}${baseName}`)) {
+                relative = '';
+            } else {
+                relative = normalizedTargetPath.replace(/^([/\\])+/, '');
+            }
         }
 
-        const baseName = path.basename(normalizedBaseDir);
-        const marker = `${path.sep}${baseName}${path.sep}`;
-        const markerIndex = normalizedTargetPath.lastIndexOf(marker);
-        if (markerIndex >= 0) {
-            return normalizedTargetPath.substring(markerIndex + marker.length);
-        }
-        if (normalizedTargetPath.endsWith(`${path.sep}${baseName}`)) {
+        // 与 normalizeLocalStrmPrefix 对齐：相对路径若仍以裸 strm 开头则剥离
+        // 兼容历史 job/旧 join 写出的 "strm/电影/..."（无前导 / 时 marker 剥不掉）
+        relative = String(relative || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+        if (relative === 'strm' || relative === '.') {
             return '';
         }
-        return normalizedTargetPath.replace(/^([/\\])+/, '');
+        if (relative.startsWith('strm/')) {
+            relative = relative.slice('strm/'.length).replace(/^\/+/, '');
+        }
+        return relative;
     }
 
     _resolveBasePath(targetPath = '') {
@@ -356,7 +373,10 @@ class StrmService {
                 continue;
             }
             const sourcePath = this._normalizeRelativePath(path.join(baseStartPath, relativeSourcePath));
-            const targetRoot = this._normalizeRelativePath(path.join(options.localPathPrefix || account.localStrmPrefix || '', relativeSourcePath));
+            const targetRoot = joinLocalStrmPath(
+                options.localPathPrefix || account.localStrmPrefix || '',
+                relativeSourcePath
+            );
             if (options.overwriteExisting) {
                 await this.deleteDir(targetRoot);
             }
@@ -408,8 +428,9 @@ class StrmService {
                 continue;
             }
             const relativeSourcePath = this._normalizeRelativePath(directory.path || directory.name);
-            const targetRoot = this._normalizeRelativePath(
-                path.join(options.localPathPrefix || account.localStrmPrefix || '', relativeSourcePath || directory.name || folderId)
+            const targetRoot = joinLocalStrmPath(
+                options.localPathPrefix || account.localStrmPrefix || '',
+                relativeSourcePath || directory.name || folderId
             );
             if (options.overwriteExisting) {
                 await this.deleteDir(targetRoot);
@@ -530,9 +551,9 @@ class StrmService {
                 };
                 // 获取媒体文件后缀列表
                 const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
-                 // 如果覆盖 则直接删除currentPath
+                 // 如果覆盖 则直接删除对应 STRM 目录（剥裸 strm 前缀）
                 if (overwrite) {
-                    await this.deleteDir(path.join(account.localStrmPrefix, startPath))
+                    await this.deleteDir(joinLocalStrmPath(account.localStrmPrefix, startPath));
                 }
                 await this._processDirectory(startPath, account, stats, mediaSuffixs, overwrite);
                 const userrname = account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
@@ -589,9 +610,10 @@ class StrmService {
                         continue;
                     }
 
-                    // 构建STRM文件路径
+                    // 构建STRM文件路径（localStrmPrefix 剥裸 strm，避免 baseDir/strm/...）
                     const relativePath = dirPath.substring(dirPath.indexOf('/') + 1).replace(/^\/+|\/+$/g, '')
-                    const targetDir = path.join(this.baseDir, account.localStrmPrefix, relativePath);
+                    const targetRelativeRoot = joinLocalStrmPath(account.localStrmPrefix, relativePath);
+                    const targetDir = this._resolveBasePath(targetRelativeRoot);
                     const parsedPath = path.parse(file.name);
                     const strmPath = path.join(targetDir, `${parsedPath.name}.strm`);
                     // overwrite && await this._deleteDirAllStrm(targetDir)
@@ -932,7 +954,13 @@ class StrmService {
         if (!this.enable){
             // 如果cloudStrmPrefix存在 且不是url地址
             if (task.account.cloudStrmPrefix && !task.account.cloudStrmPrefix.startsWith('http')) {
-                return path.join(task.account.cloudStrmPrefix, taskRoot.replace(String(task.account.localStrmPrefix || '').replace(/^\/+|\/+$/g, ''), '').replace(/^\//, '') || taskRoot);
+                // taskRoot 已剥裸 strm；仅再去掉非空自定义前缀段
+                const prefix = normalizeLocalStrmPrefix(task.account.localStrmPrefix || '');
+                let relative = taskRoot || '';
+                if (prefix && (relative === prefix || relative.startsWith(prefix + '/'))) {
+                    relative = relative === prefix ? '' : relative.slice(prefix.length + 1);
+                }
+                return path.join(task.account.cloudStrmPrefix, relative || taskRoot);
             }
         }else{
             return path.join(this.baseDir, taskRoot);

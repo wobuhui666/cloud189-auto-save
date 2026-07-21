@@ -382,14 +382,28 @@ const AccountTab: React.FC = () => {
     const labels = {
       alias: '新的别名',
       cloud: '新的媒体目录前缀',
-      local: '新的本地目录前缀',
+      local: '本地 STRM 路径前缀',
       emby: '新的Emby替换路径',
       familyFolder: '家庭中转目录ID'
     };
+    const messages = {
+      alias: '请输入新的别名',
+      cloud: '请输入云端媒体目录前缀（Alist/云盘路径用，可填绝对或相对路径）',
+      local:
+        '本地 STRM 路径前缀（相对「应用 STRM 根目录」，不是 Linux 绝对路径）。\n' +
+        '• 物理根固定为项目/容器下的 strm 目录（Docker 常见 /home/strm，已挂载到宿主机）\n' +
+        '• 填 /strm 或 strm 会被视为空，避免叠成 strm/strm\n' +
+        '• 留空：直接写 电影/作品/…\n' +
+        '• 示例：emby → emby/电影/作品/…\n' +
+        '最终路径 = STRM根 + 此前缀 + 媒体库布局',
+      emby: '请输入 Emby 替换路径',
+      familyFolder: '请输入家庭中转目录 ID（留空使用家庭根目录）',
+    };
     const newVal = await dialog.prompt({
       title: labels[type],
-      message: `请输入${labels[type]}`,
+      message: messages[type],
       defaultValue: currentVal,
+      placeholder: type === 'local' ? '留空 或 emby（不要填宿主机绝对路径）' : undefined,
     });
     if (newVal === null) return;
 
@@ -623,17 +637,22 @@ const AccountTab: React.FC = () => {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-1 text-xs">
-                      <span 
+                      <span
                         className="cursor-pointer hover:text-[#0b57d0]"
                         onClick={() => updateField(account.id, 'cloud', account.cloudStrmPrefix || '')}
+                        title="云端媒体目录前缀（Alist/云盘路径）"
                       >
                         云端: {account.cloudStrmPrefix || '未设置'}
                       </span>
-                      <span 
+                      <span
                         className="cursor-pointer hover:text-[#0b57d0]"
                         onClick={() => updateField(account.id, 'local', account.localStrmPrefix || '')}
+                        title="本地 STRM 相对前缀。物理根为应用 strm 目录（Docker 常见 /home/strm）。填 /strm 或 strm 视为空，避免 strm/strm。"
                       >
                         本地: {account.localStrmPrefix || '未设置'}
+                      </span>
+                      <span className="text-[10px] leading-snug text-slate-400">
+                        本地=STRM 相对前缀，非 Linux 绝对路径；/strm 会当空
                       </span>
                     </div>
                   </td>

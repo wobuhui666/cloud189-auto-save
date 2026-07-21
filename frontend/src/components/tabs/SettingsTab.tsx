@@ -194,7 +194,7 @@ const initialSettings: SettingsData = {
     enableSessionKeepAlive: true,
     sessionKeepAliveCron: '0 */4 * * *',
     mediaSuffix: '.mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov',
-    enableOnlySaveMedia: false,
+    enableOnlySaveMedia: true,
     enableAutoCreateFolder: false,
     autoCreate: { accountId: '', targetFolderId: '', targetFolder: '' }
   },
@@ -764,7 +764,9 @@ const SettingsTab: React.FC = () => {
               </div>
               <div>
                 <span className="text-sm font-medium text-slate-900">仅转存媒体文件</span>
-                <p className="text-[10px] text-slate-400">跳过图片、文档等非媒体文件</p>
+                <p className="text-[10px] text-slate-400">
+                  跳过图片、文档等非媒体文件。推荐开启：图片与视频同批转存时，违规图片可能导致整批失败（InfosecuMD5CheckError）。
+                </p>
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">

@@ -21,7 +21,7 @@ class ConfigService {
         enableSessionKeepAlive: true,
         sessionKeepAliveCron: '0 */4 * * *',
         mediaSuffix: '.mkv;.iso;.ts;.mp4;.avi;.rmvb;.wmv;.m2ts;.mpg;.flv;.rm;.mov;.cas', // 媒体文件后缀
-        enableOnlySaveMedia: false, // 只保存媒体文件
+        enableOnlySaveMedia: true, // 只保存媒体文件（避免图片与视频同批转存触发 InfosecuMD5CheckError）
         enableAutoDeleteCompletedTask: false, // 任务完结后自动删除任务记录
         enableAutoCreateFolder: false,
         autoCreate: {

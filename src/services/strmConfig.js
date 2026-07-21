@@ -5,6 +5,7 @@ const { logTaskEvent } = require('../utils/logUtils');
 const { Cloud189Service } = require('./cloud189');
 const ConfigService = require('./ConfigService');
 const { StreamProxyService } = require('./streamProxy');
+const { joinLocalStrmPath } = require('./mediaLibraryLayout');
 
 class StrmConfigService {
     constructor(strmConfigRepo, accountRepo, subscriptionRepo, subscriptionResourceRepo) {
@@ -185,10 +186,14 @@ class StrmConfigService {
                 continue;
             }
             const groupedEntries = this._groupEntriesByRelativeDir(entries);
-            const targetBase = path.join(config.localPathPrefix || `订阅strm/${subscription.name}`, resource.title);
+            // 剥裸 /strm，避免订阅 STRM 写到 strm/订阅strm/...
+            const targetBase = joinLocalStrmPath(
+                config.localPathPrefix || `订阅strm/${subscription.name}`,
+                resource.title
+            );
 
             for (const [relativeDir, files] of Object.entries(groupedEntries)) {
-                const targetRoot = path.join(targetBase, relativeDir);
+                const targetRoot = joinLocalStrmPath(targetBase, relativeDir);
                 await service.generateCustom(
                     targetRoot,
                     files,

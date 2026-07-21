@@ -10,7 +10,12 @@ const AIService = require('./ai');
 const { OrganizerService } = require('./organizer');
 const { CasService } = require('./casService');
 const { CasMetadataCacheService } = require('./casMetadataCache');
-const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
+const {
+    MediaLibraryLayoutService,
+    normalizeRelativePath,
+    normalizeLocalStrmPrefix,
+    joinLocalStrmPath
+} = require('./mediaLibraryLayout');
 const { TMDBService } = require('./tmdb');
 
 class LazyShareStrmService {
@@ -43,7 +48,8 @@ class LazyShareStrmService {
         const accountId = Number(params.accountId);
         const targetFolderId = String(params.targetFolderId || '').trim();
         const shareLink = String(params.shareLink || '').trim();
-        const localPathPrefix = String(params.localPathPrefix || '').trim();
+        // 剥裸 /strm，避免叠层；其它前缀（如 emby）原样保留
+        const localPathPrefix = normalizeLocalStrmPrefix(String(params.localPathPrefix || '').trim());
         const overwriteExisting = !!params.overwriteExisting;
 
         if (!accountId) {
@@ -55,7 +61,8 @@ class LazyShareStrmService {
         if (!shareLink) {
             throw new Error('分享链接不能为空');
         }
-        if (!localPathPrefix) {
+        // 允许用户填 /strm（规范化后为空，落到物理根）
+        if (!String(params.localPathPrefix || '').trim()) {
             throw new Error('本地STRM目录不能为空');
         }
 
@@ -410,7 +417,8 @@ class LazyShareStrmService {
     }
 
     async _buildStrmLayout({ localPathPrefix, resourceName, rootName = '', files = [], tmdbInfo = null, enableOrganizer = false, task = null }) {
-        const normalizedLocalPathPrefix = this._normalizeRelativePath(localPathPrefix);
+        // 必须剥裸 strm，不能只做相对路径清洗
+        const normalizedLocalPathPrefix = normalizeLocalStrmPrefix(localPathPrefix);
         const fallbackRootName = this._normalizeRelativePath(rootName);
         const normalizedResourceName = String(resourceName || rootName || '').trim();
         const fallbackTargetRoot = this._resolveFallbackTargetRoot({
@@ -482,7 +490,7 @@ class LazyShareStrmService {
     }
 
     _resolveFallbackTargetRoot({ localPathPrefix = '', rootName = '', resourceName = '', enableOrganizer = false, task = null }) {
-        const normalizedLocalPathPrefix = this._normalizeRelativePath(localPathPrefix);
+        const normalizedLocalPathPrefix = normalizeLocalStrmPrefix(localPathPrefix);
         // 已锁定 layout 时优先媒体库路径
         if (enableOrganizer || task?.libraryLayout) {
             const locked = this.layoutService.parseTaskLibraryLayout(task);
@@ -490,15 +498,16 @@ class LazyShareStrmService {
                 return this.layoutService.buildStrmRoot(normalizedLocalPathPrefix, locked);
             }
             if (task?.realFolderName) {
-                const taskRelativeRoot = this._getTaskRelativeRootPath(task.realFolderName);
-                if (taskRelativeRoot) {
-                    return this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, taskRelativeRoot));
+                // fromRealFolderName 内部已 normalizeLocalStrmPrefix
+                const fromReal = this.layoutService.fromRealFolderName(task.realFolderName, normalizedLocalPathPrefix);
+                if (fromReal) {
+                    return fromReal;
                 }
             }
         }
 
         const safeRootName = this._normalizeRelativePath(rootName || this._sanitizePathSegment(resourceName));
-        return this._normalizeRelativePath(path.join(normalizedLocalPathPrefix, safeRootName));
+        return joinLocalStrmPath(normalizedLocalPathPrefix, safeRootName);
     }
 
     _normalizeRelativePath(targetPath = '') {
@@ -534,12 +543,14 @@ class LazyShareStrmService {
 
     _getTaskLocalPath(task) {
         if (task?.enableOrganizer) {
-            return this._normalizeRelativePath(task.account?.localStrmPrefix || '');
+            // 仅返回规范化前缀；layout 根由 _buildStrmLayout 再拼
+            return normalizeLocalStrmPrefix(task.account?.localStrmPrefix || '');
         }
-        const realFolderName = String(task.realFolderName || '').replace(/\\/g, '/');
-        const index = realFolderName.indexOf('/');
-        const taskRelativePath = index >= 0 ? realFolderName.substring(index + 1) : realFolderName;
-        return this._normalizeRelativePath(path.join(task.account?.localStrmPrefix || '', taskRelativePath));
+        // 与任务 STRM 一致：砍云盘首段 + 剥裸 strm
+        return this.layoutService.fromRealFolderName(
+            task.realFolderName || '',
+            task.account?.localStrmPrefix || ''
+        );
     }
 
     async _inspectFolder(cloud189, folderId) {
