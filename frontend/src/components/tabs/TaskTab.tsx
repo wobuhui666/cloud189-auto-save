@@ -140,7 +140,13 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         setTotalPages(nextTotalPages);
         // 仅丢弃不在当前页结果里的选中项；不要整表清空（否则全选会被随后的刷新冲掉）
         const nextIds = new Set(nextTasks.map((task) => task.id));
-        setSelectedTaskIds((prev) => prev.filter((id) => nextIds.has(id)));
+        setSelectedTaskIds((prev) => {
+          const next = prev.filter((id) => nextIds.has(id));
+          if (next.length === prev.length && next.every((id, i) => id === prev[i])) {
+            return prev;
+          }
+          return next;
+        });
         if (page > nextTotalPages) {
           setPage(nextTotalPages);
         }
@@ -253,10 +259,20 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const pageStart = totalTasks === 0 ? 0 : (page - 1) * TASK_PAGE_SIZE + 1;
   const pageEnd = Math.min(page * TASK_PAGE_SIZE, totalTasks);
 
+  // 仅在 filter 选项变化时修剪失效标签；内容不变时必须返回原数组，否则会触发 fetch 死循环
   useEffect(() => {
-    const availableTagKeys = new Set(availableTagFilters.map((filterTag) => filterTag.key));
-    setActiveTagFilters((currentFilters) => currentFilters.filter((filterKey) => availableTagKeys.has(filterKey)));
-  }, [tasks]);
+    const availableTagKeys = new Set([
+      ...TASK_FEATURE_FILTERS.map((filterTag) => filterTag.key),
+      ...filterGroups.map((group) => `group:${group}`),
+    ]);
+    setActiveTagFilters((currentFilters) => {
+      const next = currentFilters.filter((filterKey) => availableTagKeys.has(filterKey));
+      if (next.length === currentFilters.length && next.every((key, i) => key === currentFilters[i])) {
+        return currentFilters;
+      }
+      return next;
+    });
+  }, [filterGroups]);
 
   const handleExecuteTask = async (id: number) => {
     if (executingTaskIds.includes(id)) {
