@@ -70,20 +70,27 @@ const SettingsNav: React.FC<SettingsNavProps> = ({ items, onVisibleChange, class
 
 export default SettingsNav;
 
-/** 滚动到 section；用于跨 Tab 跳转 */
-export function scrollToSettingsSection(id: string, retries = 12) {
+/** 滚动到 section；用于跨 Tab 跳转（等 Tab 动画/数据挂载） */
+export function scrollToSettingsSection(id: string, retries = 40) {
   const tryScroll = (left: number) => {
     const el = document.getElementById(id);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // 主滚动容器优先；没有则退回元素自身
+      const scroller = document.querySelector('.content-scrollable') as HTMLElement | null;
+      if (scroller) {
+        const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 16;
+        scroller.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      } else {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
       return;
     }
     if (left > 0) {
-      requestAnimationFrame(() => tryScroll(left - 1));
+      window.setTimeout(() => tryScroll(left - 1), 50);
     }
   };
-  // 等 Tab 挂载
-  setTimeout(() => tryScroll(retries), 50);
+  // Tab 切换有 ~200ms 动画，略等再找节点
+  window.setTimeout(() => tryScroll(retries), 220);
 }
 
 export const MEDIA_SECTION_STORAGE_KEY = 'media-scroll-section';

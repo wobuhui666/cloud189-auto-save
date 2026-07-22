@@ -132,12 +132,15 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       const response = await fetch(`/api/tasks?${params.toString()}`, { signal });
       const data = await response.json();
       if (data.success) {
-        setTasks(data.data || []);
+        const nextTasks: Task[] = data.data || [];
+        setTasks(nextTasks);
         const nextTotal = Number(data.pagination?.total || 0);
         const nextTotalPages = Math.max(1, Number(data.pagination?.totalPages || 1));
         setTotalTasks(nextTotal);
         setTotalPages(nextTotalPages);
-        setSelectedTaskIds([]);
+        // 仅丢弃不在当前页结果里的选中项；不要整表清空（否则全选会被随后的刷新冲掉）
+        const nextIds = new Set(nextTasks.map((task) => task.id));
+        setSelectedTaskIds((prev) => prev.filter((id) => nextIds.has(id)));
         if (page > nextTotalPages) {
           setPage(nextTotalPages);
         }

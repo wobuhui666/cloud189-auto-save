@@ -167,19 +167,17 @@ const MediaTab: React.FC = () => {
   ];
   const [visibleSectionIds, setVisibleSectionIds] = useState<string[] | null>(null);
 
-  useEffect(() => {
-    try {
-      const target = sessionStorage.getItem(MEDIA_SECTION_STORAGE_KEY);
-      if (target) {
-        sessionStorage.removeItem(MEDIA_SECTION_STORAGE_KEY);
-        scrollToSettingsSection(target);
-      }
-    } catch {}
-  }, []);
   const dialog = useDialog();
   const [settings, setSettings] = useState<MediaSettings>(initialSettings);
   const [regexPresets, setRegexPresets] = useState<RegexPreset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingScrollSection, setPendingScrollSection] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(MEDIA_SECTION_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [saving, setSaving] = useState(false);
   const [isRegexModalOpen, setIsRegexModalOpen] = useState(false);
   const [isEditRegexModalOpen, setIsEditRegexModalOpen] = useState(false);
@@ -287,6 +285,16 @@ const MediaTab: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // CAS「秒传设置」跳转：等 loading 结束 DOM 有 section 后再滚
+  useEffect(() => {
+    if (loading || !pendingScrollSection) return;
+    try {
+      sessionStorage.removeItem(MEDIA_SECTION_STORAGE_KEY);
+    } catch {}
+    scrollToSettingsSection(pendingScrollSection);
+    setPendingScrollSection(null);
+  }, [loading, pendingScrollSection]);
 
   const handleSave = async () => {
     setSaving(true);
