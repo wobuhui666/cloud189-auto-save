@@ -471,7 +471,7 @@ const AccountTab: React.FC = () => {
 
       {storageSummary && storageSummary.enabled && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-3xl border border-slate-200/60 p-6 shadow-sm">
+          <div className="ui-card p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
               <Database size={20} className="text-[#0b57d0]" />
               <span className="text-sm font-semibold text-slate-900">个人容量聚合</span>
@@ -479,7 +479,7 @@ const AccountTab: React.FC = () => {
             <div className="flex items-end justify-between">
               <div>
                 <p className="text-2xl font-semibold text-slate-900">{formatBytes(storageSummary.cloud.used)}</p>
-                <p className="text-xs text-slate-500 mt-1">总容量 {formatBytes(storageSummary.cloud.total)}</p>
+                <p className="text-xs ui-muted mt-1">总容量 {formatBytes(storageSummary.cloud.total)}</p>
               </div>
               <span className="text-xs text-slate-400">{storageSummary.accounts.length} 个账号</span>
             </div>
@@ -487,7 +487,7 @@ const AccountTab: React.FC = () => {
               <div className="h-full bg-[#0b57d0]" style={{ width: `${storageSummary.cloud.total ? Math.min(100, storageSummary.cloud.used / storageSummary.cloud.total * 100) : 0}%` }} />
             </div>
           </div>
-          <div className="bg-white rounded-3xl border border-slate-200/60 p-6 shadow-sm">
+          <div className="ui-card p-6 shadow-sm">
             <div className="flex items-center gap-3 mb-4">
               <Database size={20} className="text-slate-500" />
               <span className="text-sm font-semibold text-slate-900">家庭容量聚合</span>
@@ -495,7 +495,7 @@ const AccountTab: React.FC = () => {
             <div className="flex items-end justify-between">
               <div>
                 <p className="text-2xl font-semibold text-slate-900">{formatBytes(storageSummary.family.used)}</p>
-                <p className="text-xs text-slate-500 mt-1">总容量 {formatBytes(storageSummary.family.total)}</p>
+                <p className="text-xs ui-muted mt-1">总容量 {formatBytes(storageSummary.family.total)}</p>
               </div>
               <span className="text-xs text-slate-400">含家庭空间</span>
             </div>
@@ -506,7 +506,7 @@ const AccountTab: React.FC = () => {
         </div>
       )}
       
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="ui-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -584,8 +584,8 @@ const AccountTab: React.FC = () => {
                         {(account.username || 'U').substring(0, 3)}
                       </div>
                       <div className="flex flex-col">
-                        <span className="font-medium text-slate-900">{account.username || '未知'}</span>
-                        <span className="text-xs text-slate-500">
+                        <span className="font-medium ui-title">{account.username || '未知'}</span>
+                        <span className="text-xs ui-muted">
                           {account.accountType === 'family' ? '家庭云' : '个人云'}
                           {account.familyId && ` / ${account.familyId}`}
                         </span>
@@ -602,7 +602,7 @@ const AccountTab: React.FC = () => {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-1.5">
-                      <div className="flex justify-between text-xs text-slate-500">
+                      <div className="flex justify-between text-xs ui-muted">
                         <span>{formatBytes(cloudUsed)}</span>
                         <span>{formatBytes(cloudTotal)}</span>
                       </div>
@@ -624,7 +624,7 @@ const AccountTab: React.FC = () => {
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-col gap-1.5">
-                      <div className="flex justify-between text-xs text-slate-500">
+                      <div className="flex justify-between text-xs ui-muted">
                         <span>{formatBytes(familyUsed)}</span>
                         <span>{formatBytes(familyTotal)}</span>
                       </div>
@@ -672,7 +672,7 @@ const AccountTab: React.FC = () => {
         <form id="modal-form" onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">用户名</label>
+              <label className="text-sm font-medium ui-title">用户名</label>
               <input 
                 type="text" 
                 value={formData.username}
@@ -683,7 +683,7 @@ const AccountTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">密码</label>
+              <label className="text-sm font-medium ui-title">密码</label>
               <input
                 type="password"
                 value={formData.password}
@@ -694,7 +694,7 @@ const AccountTab: React.FC = () => {
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">Cookie (可选)</label>
+            <label className="text-sm font-medium ui-title">Cookie (可选)</label>
             <textarea
               rows={3}
               value={formData.cookies}
@@ -702,7 +702,7 @@ const AccountTab: React.FC = () => {
               placeholder={editingAccount?.hasCookies ? '已保存 Cookie；留空不覆盖' : '可选 Cookie'}
               className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
             />
-            <p className="text-xs text-slate-500">
+            <p className="text-xs ui-muted">
               {editingAccount
                 ? '编辑时密码/Cookie 留空表示不修改；若都填写则优先使用密码。'
                 : '密码和 Cookie 至少填写一个，如果都填写，则只有账号密码生效。'}
@@ -710,7 +710,7 @@ const AccountTab: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">别名</label>
+              <label className="text-sm font-medium ui-title">别名</label>
               <input 
                 type="text" 
                 value={formData.alias}
@@ -719,7 +719,7 @@ const AccountTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">账号类型</label>
+              <label className="text-sm font-medium ui-title">账号类型</label>
               <select 
                 value={formData.accountType}
                 onChange={e => setFormData({...formData, accountType: e.target.value as 'personal' | 'family'})}
@@ -733,7 +733,7 @@ const AccountTab: React.FC = () => {
           {formData.accountType === 'family' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">Family ID</label>
+                <label className="text-sm font-medium ui-title">Family ID</label>
                 <input
                   type="text"
                   value={formData.familyId}
@@ -742,7 +742,7 @@ const AccountTab: React.FC = () => {
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">家庭中转目录ID</label>
+                <label className="text-sm font-medium ui-title">家庭中转目录ID</label>
                 <input
                   type="text"
                   value={formData.familyFolderId}
@@ -796,13 +796,13 @@ const AccountTab: React.FC = () => {
           {qrData?.qrUrl ? (
             <img src={qrData.qrUrl} alt="天翼云盘登录二维码" className="h-56 w-56 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm" />
           ) : (
-            <div className="flex h-56 w-56 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
+            <div className="flex h-56 w-56 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm ui-muted">
               获取二维码中...
             </div>
           )}
           <div className="text-center">
-            <p className="text-sm font-medium text-slate-900">{qrMessage}</p>
-            <p className="mt-1 text-xs text-slate-500">使用天翼云盘 App 扫码并确认后会自动添加或更新账号。</p>
+            <p className="text-sm font-medium ui-title">{qrMessage}</p>
+            <p className="mt-1 text-xs ui-muted">使用天翼云盘 App 扫码并确认后会自动添加或更新账号。</p>
           </div>
         </div>
       </Modal>

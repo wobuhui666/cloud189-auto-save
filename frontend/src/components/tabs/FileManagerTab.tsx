@@ -516,8 +516,8 @@ const FileManagerTab: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/60 p-4 flex flex-col md:flex-row md:items-center justify-between shadow-sm gap-4">
-        <div className="flex items-center flex-wrap gap-1 text-sm text-slate-500 px-2">
+      <div className="ui-card p-4 flex flex-col md:flex-row md:items-center justify-between shadow-sm gap-4">
+        <div className="flex items-center flex-wrap gap-1 text-sm ui-muted px-2">
           <Files size={18} className="mr-1" />
           {path.map((segment, index) => (
             <React.Fragment key={segment.id}>
@@ -542,13 +542,13 @@ const FileManagerTab: React.FC = () => {
               className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-full text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 w-56"
             />
           </div>
-          <span className="text-sm text-slate-500 font-medium whitespace-nowrap">
+          <span className="text-sm ui-muted font-medium whitespace-nowrap">
             {driveLabel && `${driveLabel} · `}共 {visibleEntries.length} 项
           </span>
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm">
+      <div className="ui-card shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -598,7 +598,7 @@ const FileManagerTab: React.FC = () => {
                           {entry.isFolder ? <Folder size={20} /> : <FileText size={20} />}
                         </div>
                         <span 
-                          className={`font-medium text-slate-900 ${entry.isFolder ? 'cursor-pointer hover:text-[#0b57d0]' : ''}`}
+                          className={`font-medium ui-title ${entry.isFolder ? 'cursor-pointer hover:text-[#0b57d0]' : ''}`}
                           onClick={() => entry.isFolder && handleNavigate(entry.id, entry.name)}
                         >
                           {entry.name}

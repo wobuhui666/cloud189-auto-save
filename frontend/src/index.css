@@ -1,10 +1,11 @@
+/* 国内环境可选加载；失败则回退 system-ui（见 --font-sans） */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Flex:opsz,wght@8..144,400;500;700&display=swap');
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: "Inter", "Roboto Flex", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", "Roboto Flex", ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --color-brand: #0b57d0;
   --color-brand-container: #d3e3fd;
   --color-brand-container-hover: #c2e7ff;
@@ -45,6 +46,41 @@
 
   body {
     @apply bg-[var(--bg-surface)] text-[var(--text-primary)] antialiased transition-colors duration-300;
+  }
+}
+
+/* 语义表面：优先用这些，逐步替代硬编码 bg-white / text-slate-*
+ * 一期仍保留下方 .dark !important 兼容层，后续可删 */
+@layer components {
+  .ui-card {
+    background-color: var(--bg-main);
+    border: 1px solid var(--border-color);
+    border-radius: 1.5rem; /* rounded-3xl */
+  }
+
+  .ui-card-muted {
+    background-color: color-mix(in srgb, var(--bg-surface) 80%, var(--bg-main));
+    border: 1px solid var(--border-color);
+    border-radius: 1rem;
+  }
+
+  .ui-title {
+    color: var(--text-primary);
+  }
+
+  .ui-muted {
+    color: var(--text-secondary);
+  }
+
+  .ui-input {
+    background-color: color-mix(in srgb, var(--bg-surface) 70%, var(--bg-main));
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+  }
+
+  .ui-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.85;
   }
 }
 

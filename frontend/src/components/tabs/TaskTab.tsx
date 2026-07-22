@@ -77,23 +77,6 @@ const TASK_FEATURE_FILTERS: Array<{
   { key: 'feature:keep-cas', label: '保留CAS', matches: (task) => Boolean(task.keepCasAfterRestore) }
 ];
 
-const getTaskFilterKeys = (task: Task) => {
-  const filterKeys: string[] = [];
-  const groupName = task.taskGroup?.trim();
-
-  if (groupName) {
-    filterKeys.push(`group:${groupName}`);
-  }
-
-  TASK_FEATURE_FILTERS.forEach((filterTag) => {
-    if (filterTag.matches(task)) {
-      filterKeys.push(filterTag.key);
-    }
-  });
-
-  return filterKeys;
-};
-
 const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const toast = useToast();
   const dialog = useDialog();
@@ -118,6 +101,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number } | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
+  const [filterGroups, setFilterGroups] = useState<string[]>([]);
+
   const fetchTasks = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
@@ -129,15 +114,39 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       if (debouncedSearchTerm) {
         params.set('search', debouncedSearchTerm);
       }
+      const featureKeys = activeTagFilters
+        .filter((key) => key.startsWith('feature:'))
+        .map((key) => key.slice('feature:'.length));
+      const groupKeys = activeTagFilters
+        .filter((key) => key.startsWith('group:'))
+        .map((key) => key.slice('group:'.length));
+      if (featureKeys.length > 0) {
+        params.set('features', featureKeys.join(','));
+      }
+      // 多分组时取第一个精确匹配（UI 芯片为 AND；多 group 罕见，用 search 补）
+      if (groupKeys.length === 1) {
+        params.set('taskGroup', groupKeys[0]);
+      } else if (groupKeys.length > 1) {
+        params.set('taskGroup', groupKeys[0]);
+      }
       const response = await fetch(`/api/tasks?${params.toString()}`, { signal });
       const data = await response.json();
       if (data.success) {
-        setTasks(data.data || []);
+        const nextTasks: Task[] = data.data || [];
+        setTasks(nextTasks);
         const nextTotal = Number(data.pagination?.total || 0);
         const nextTotalPages = Math.max(1, Number(data.pagination?.totalPages || 1));
         setTotalTasks(nextTotal);
         setTotalPages(nextTotalPages);
-        setSelectedTaskIds([]);
+        // 仅丢弃不在当前页结果里的选中项；不要整表清空（否则全选会被随后的刷新冲掉）
+        const nextIds = new Set(nextTasks.map((task) => task.id));
+        setSelectedTaskIds((prev) => {
+          const next = prev.filter((id) => nextIds.has(id));
+          if (next.length === prev.length && next.every((id, i) => id === prev[i])) {
+            return prev;
+          }
+          return next;
+        });
         if (page > nextTotalPages) {
           setPage(nextTotalPages);
         }
@@ -152,7 +161,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         setLoading(false);
       }
     }
-  }, [statusFilter, debouncedSearchTerm, page]);
+  }, [statusFilter, debouncedSearchTerm, page, activeTagFilters]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -163,13 +172,31 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, debouncedSearchTerm]);
+  }, [statusFilter, debouncedSearchTerm, activeTagFilters]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchTasks(controller.signal);
     return () => controller.abort();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/tasks/filter-options');
+        const data = await res.json();
+        if (!cancelled && data.success) {
+          setFilterGroups(Array.isArray(data.data?.groups) ? data.data.groups : []);
+        }
+      } catch {
+        // ignore — chips 仍可用固定 feature
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -209,37 +236,22 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
     }
   }, [openTaskMenuId]);
 
+  // feature 固定展示；group 来自全库 filter-options（不再仅当前页）
   const availableTagFilters: TaskFilterTag[] = [
-    ...TASK_FEATURE_FILTERS
-      .filter((filterTag) => tasks.some((task) => filterTag.matches(task)))
-      .map((filterTag) => ({
-        key: filterTag.key,
-        label: filterTag.label,
-        tone: 'feature' as const
-      })),
-    ...Array.from(
-      new Set(
-        tasks
-          .map((task) => task.taskGroup?.trim())
-          .filter((taskGroup): taskGroup is string => Boolean(taskGroup))
-      )
-    )
-      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
-      .map((taskGroup) => ({
-        key: `group:${taskGroup}`,
-        label: taskGroup,
-        tone: 'group' as const
-      }))
+    ...TASK_FEATURE_FILTERS.map((filterTag) => ({
+      key: filterTag.key,
+      label: filterTag.label,
+      tone: 'feature' as const
+    })),
+    ...filterGroups.map((taskGroup) => ({
+      key: `group:${taskGroup}`,
+      label: taskGroup,
+      tone: 'group' as const
+    }))
   ];
 
-  const filteredTasks = tasks.filter((task) => {
-    if (activeTagFilters.length === 0) {
-      return true;
-    }
-
-    const taskFilterKeys = new Set(getTaskFilterKeys(task));
-    return activeTagFilters.every((filterKey) => taskFilterKeys.has(filterKey));
-  });
+  // 服务端已按标签筛选，列表直接用 tasks
+  const filteredTasks = tasks;
 
   const allVisibleSelected =
     filteredTasks.length > 0 &&
@@ -247,10 +259,20 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const pageStart = totalTasks === 0 ? 0 : (page - 1) * TASK_PAGE_SIZE + 1;
   const pageEnd = Math.min(page * TASK_PAGE_SIZE, totalTasks);
 
+  // 仅在 filter 选项变化时修剪失效标签；内容不变时必须返回原数组，否则会触发 fetch 死循环
   useEffect(() => {
-    const availableTagKeys = new Set(availableTagFilters.map((filterTag) => filterTag.key));
-    setActiveTagFilters((currentFilters) => currentFilters.filter((filterKey) => availableTagKeys.has(filterKey)));
-  }, [tasks]);
+    const availableTagKeys = new Set([
+      ...TASK_FEATURE_FILTERS.map((filterTag) => filterTag.key),
+      ...filterGroups.map((group) => `group:${group}`),
+    ]);
+    setActiveTagFilters((currentFilters) => {
+      const next = currentFilters.filter((filterKey) => availableTagKeys.has(filterKey));
+      if (next.length === currentFilters.length && next.every((key, i) => key === currentFilters[i])) {
+        return currentFilters;
+      }
+      return next;
+    });
+  }, [filterGroups]);
 
   const handleExecuteTask = async (id: number) => {
     if (executingTaskIds.includes(id)) {
@@ -760,11 +782,11 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           </span>
         </label>
 
-        <span className="text-sm text-slate-500">
+        <span className="text-sm ui-muted">
           已选 {selectedTaskIds.length} 项
         </span>
 
-        <span className="text-sm text-slate-500">
+        <span className="text-sm ui-muted">
           显示 {pageStart}-{pageEnd} / {totalTasks} 项
         </span>
 
@@ -888,14 +910,14 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-bold text-slate-900 text-lg truncate max-w-[300px]" title={taskName}>{taskName}</h3>
+                      <h3 className="font-bold ui-title text-lg truncate max-w-[300px]" title={taskName}>{taskName}</h3>
                       {getStatusBadge(task.status)}
                       {task.enableLazyStrm && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">懒STRM</span>}
                       {task.enableCron && <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-[10px] font-bold">定时任务</span>}
                       {task.enableOrganizer && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold">整理器</span>}
                       {task.keepCasAfterRestore && <span className="px-2 py-0.5 bg-sky-100 text-sky-700 rounded text-[10px] font-bold">保留CAS</span>}
                     </div>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <p className="text-sm ui-muted mt-1">
                       账号: {task.account?.username || '未知账号'} • 分组: {task.taskGroup || '-'}
                     </p>
                     <div className="flex items-center gap-4 mt-3">
@@ -910,7 +932,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                 
                 <div className="flex flex-col items-end gap-3">
                   <div className="text-right">
-                    <div className="text-sm font-bold text-slate-900">{task.currentEpisodes} / {task.totalEpisodes > 0 ? task.totalEpisodes : '?'} 集</div>
+                    <div className="text-sm font-bold ui-title">{task.currentEpisodes} / {task.totalEpisodes > 0 ? task.totalEpisodes : '?'} 集</div>
                     <div className="w-36 h-2 bg-slate-100 rounded-full mt-2 overflow-hidden">
                       <motion.div 
                         initial={{ width: 0 }}
@@ -993,7 +1015,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         {filteredTasks.length === 0 && !loading && (
           <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-300">
             <ClipboardList size={48} className="mx-auto text-slate-300 mb-4" />
-            <p className="text-slate-500 font-medium">
+            <p className="ui-muted font-medium">
               {tasks.length === 0 ? '暂无任务' : '没有匹配当前筛选条件的任务'}
             </p>
           </div>
@@ -1002,7 +1024,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
       {totalPages > 1 && (
         <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row">
-          <span className="text-sm text-slate-500">
+          <span className="text-sm ui-muted">
             第 {page} / {totalPages} 页，每页 {TASK_PAGE_SIZE} 项
           </span>
           <div className="flex items-center gap-2">
@@ -1010,7 +1032,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
               type="button"
               onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
               disabled={page <= 1 || loading}
-              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium ui-title transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               上一页
             </button>
@@ -1018,7 +1040,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
               type="button"
               onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
               disabled={page >= totalPages || loading}
-              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium ui-title transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               下一页
             </button>

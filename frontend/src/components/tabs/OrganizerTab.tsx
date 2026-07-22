@@ -87,7 +87,7 @@ const OrganizerTab: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <h2 className="text-xl font-bold text-slate-900">整理器任务</h2>
+        <h2 className="text-xl font-bold ui-title">整理器任务</h2>
         <div className="flex items-center gap-3">
           <div className="relative w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -114,7 +114,7 @@ const OrganizerTab: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="ui-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -154,7 +154,7 @@ const OrganizerTab: React.FC = () => {
                           {isRunning ? '执行中' : '执行整理'}
                         </button>
                       </td>
-                      <td className="px-6 py-4 font-medium text-slate-900">
+                      <td className="px-6 py-4 font-medium ui-title">
                         <div>{task.resourceName}</div>
                         {task.shareFolderName && (
                           <div className="text-xs text-slate-400 mt-0.5">{task.shareFolderName}</div>

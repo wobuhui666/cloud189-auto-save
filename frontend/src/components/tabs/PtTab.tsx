@@ -838,7 +838,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="ui-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -866,7 +866,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                         <Magnet size={20} />
                       </div>
                       <div className="flex flex-col">
-                        <span className="font-medium text-slate-900 truncate max-w-[160px]" title={sub.name}>{sub.name}</span>
+                        <span className="font-medium ui-title truncate max-w-[160px]" title={sub.name}>{sub.name}</span>
                         {!sub.enabled && <span className="text-[10px] text-red-500 font-bold uppercase">已禁用</span>}
                       </div>
                     </div>
@@ -916,13 +916,13 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editing ? '编辑 PT 订阅' : '添加 PT 订阅'} footer={null}>
         <form onSubmit={handleSave} className="space-y-5">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">订阅名称</label>
+            <label className="text-sm font-medium ui-title">订阅名称</label>
             <input type="text" required value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })}
               className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">RSS 来源</label>
+            <label className="text-sm font-medium ui-title">RSS 来源</label>
             <select value={formData.sourcePreset} onChange={e => {
               const preset = presets.find(p => p.key === e.target.value);
               setFormData({
@@ -933,11 +933,11 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
             }} className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none">
               {presets.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
             </select>
-            <p className="text-xs text-slate-500">{presets.find(p => p.key === formData.sourcePreset)?.description || ''}</p>
+            <p className="text-xs ui-muted">{presets.find(p => p.key === formData.sourcePreset)?.description || ''}</p>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">RSS URL</label>
+            <label className="text-sm font-medium ui-title">RSS URL</label>
             <div className="flex gap-2">
               <input type="text" value={formData.rssUrl} onChange={e => setFormData({ ...formData, rssUrl: e.target.value })}
                 placeholder={presets.find(p => p.key === formData.sourcePreset)?.defaultRssUrl || ''}
@@ -953,13 +953,13 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">包含正则（可选）</label>
+              <label className="text-sm font-medium ui-title">包含正则（可选）</label>
               <input type="text" value={formData.includePattern} onChange={e => setFormData({ ...formData, includePattern: e.target.value })}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs"
                 placeholder="例如: 1080p|2160p" />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">排除正则（可选）</label>
+              <label className="text-sm font-medium ui-title">排除正则（可选）</label>
               <input type="text" value={formData.excludePattern} onChange={e => setFormData({ ...formData, excludePattern: e.target.value })}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs"
                 placeholder="例如: cam|ts.x264" />
@@ -968,7 +968,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
           <div className="rounded-2xl border border-slate-200 overflow-hidden">
             <button type="button" onClick={() => setShowAdvanced(v => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-sm font-medium text-slate-700">
+              className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-sm font-medium ui-title">
               <span className="flex items-center gap-2"><Filter size={14} /> 高级规则（过滤 / 去重 / 备用 RSS / 集数）</span>
               {showAdvanced ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
             </button>
@@ -976,21 +976,21 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
               <div className="p-4 space-y-4 bg-white">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">分辨率正则</label>
+                    <label className="text-xs ui-muted">分辨率正则</label>
                     <input type="text" value={formData.resolutionPattern}
                       onChange={e => setFormData({ ...formData, resolutionPattern: e.target.value })}
                       placeholder="例如: 1080p|2160p"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">质量正则</label>
+                    <label className="text-xs ui-muted">质量正则</label>
                     <input type="text" value={formData.qualityPattern}
                       onChange={e => setFormData({ ...formData, qualityPattern: e.target.value })}
                       placeholder="例如: BluRay|WEB-DL"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">特效正则</label>
+                    <label className="text-xs ui-muted">特效正则</label>
                     <input type="text" value={formData.effectPattern}
                       onChange={e => setFormData({ ...formData, effectPattern: e.target.value })}
                       placeholder="例如: HDR|DV|Dolby"
@@ -1000,21 +1000,21 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">最小体积 (MB)</label>
+                    <label className="text-xs ui-muted">最小体积 (MB)</label>
                     <input type="number" min={0} value={formData.sizeMinMB}
                       onChange={e => setFormData({ ...formData, sizeMinMB: Number(e.target.value) || 0 })}
                       placeholder="0 = 不限"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">最大体积 (MB)</label>
+                    <label className="text-xs ui-muted">最大体积 (MB)</label>
                     <input type="number" min={0} value={formData.sizeMaxMB}
                       onChange={e => setFormData({ ...formData, sizeMaxMB: Number(e.target.value) || 0 })}
                       placeholder="0 = 不限"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">最少做种数</label>
+                    <label className="text-xs ui-muted">最少做种数</label>
                     <input type="number" min={0} value={formData.seedersMin}
                       onChange={e => setFormData({ ...formData, seedersMin: Number(e.target.value) || 0 })}
                       placeholder="0 = 不限"
@@ -1068,7 +1068,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs text-slate-500">备用 RSS</label>
+                  <label className="text-xs ui-muted">备用 RSS</label>
                   <textarea
                     rows={3}
                     value={formData.standbyRssJson}
@@ -1080,28 +1080,28 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">延迟下载(分钟)</label>
+                    <label className="text-xs ui-muted">延迟下载(分钟)</label>
                     <input type="number" min={0} value={formData.delayedDownloadMinutes}
                       onChange={e => setFormData({ ...formData, delayedDownloadMinutes: Number(e.target.value) || 0 })}
                       placeholder="0 = 不延迟"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">不下载集数</label>
+                    <label className="text-xs ui-muted">不下载集数</label>
                     <input type="text" value={formData.notDownloadEpisodes}
                       onChange={e => setFormData({ ...formData, notDownloadEpisodes: e.target.value })}
                       placeholder="1, 3, 7-9"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">集数偏移</label>
+                    <label className="text-xs ui-muted">集数偏移</label>
                     <input type="number" step="0.5" value={formData.episodeOffset}
                       onChange={e => setFormData({ ...formData, episodeOffset: Number(e.target.value) || 0 })}
                       placeholder="0"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs outline-none" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-500">总集数</label>
+                    <label className="text-xs ui-muted">总集数</label>
                     <input type="number" min={0} value={formData.totalEpisodeNumber}
                       onChange={e => setFormData({ ...formData, totalEpisodeNumber: Number(e.target.value) || 0 })}
                       placeholder="0 = 不限制"
@@ -1137,14 +1137,14 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   {formData.customEpisode && (
                     <div className="grid grid-cols-1 md:grid-cols-[1fr_120px] gap-3">
                       <div className="space-y-1.5">
-                        <label className="text-xs text-slate-500">集数提取正则</label>
+                        <label className="text-xs ui-muted">集数提取正则</label>
                         <input type="text" value={formData.customEpisodeRegex}
                           onChange={e => setFormData({ ...formData, customEpisodeRegex: e.target.value })}
                           placeholder="例如: 第(\\d+)话"
                           className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-2xl text-xs outline-none font-mono" />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-xs text-slate-500">分组序号</label>
+                        <label className="text-xs ui-muted">分组序号</label>
                         <input type="number" min={0} value={formData.customEpisodeGroupIndex}
                           onChange={e => setFormData({ ...formData, customEpisodeGroupIndex: Number(e.target.value) || 1 })}
                           className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-2xl text-xs outline-none" />
@@ -1160,7 +1160,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">天翼云盘账号</label>
+            <label className="text-sm font-medium ui-title">天翼云盘账号</label>
             <select value={formData.accountId} onChange={e => setFormData({ ...formData, accountId: Number(e.target.value), targetFolderId: '', targetFolder: '' })}
               className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" required>
               <option value={0}>请选择</option>
@@ -1169,7 +1169,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">目标目录</label>
+            <label className="text-sm font-medium ui-title">目标目录</label>
             <div className="flex gap-2">
               <input type="text" readOnly value={formData.targetFolder || formData.targetFolderId} placeholder="点击右侧按钮选择目录"
                 className="flex-1 px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
@@ -1238,7 +1238,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   return (
                   <tr key={rel.id} className="hover:bg-slate-50/50">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-slate-900 truncate max-w-[300px]" title={rel.title}>{rel.title}</div>
+                      <div className="font-medium ui-title truncate max-w-[300px]" title={rel.title}>{rel.title}</div>
                       {(sizeText || rel.seeders != null && rel.seeders > 0 || factorText || rel.subgroup || episodeBadge || rel.resolution || rel.quality || tags.length > 0) && (
                         <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500">
                           {rel.subgroup && (
@@ -1288,7 +1288,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                       <div className="flex items-center gap-2">
                         <span className={`px-2 py-1 rounded-full text-xs ${statusColor(rel.status)}`}>{statusLabel(rel.status)}</span>
                         {(rel.status === 'downloading' || rel.status === 'uploading') && rel.progress != null && rel.progress > 0 && (
-                          <span className="text-xs text-slate-500 font-mono">{rel.progress}%</span>
+                          <span className="text-xs ui-muted font-mono">{rel.progress}%</span>
                         )}
                       </div>
                       {(rel.status === 'downloading' || rel.status === 'uploading') && rel.progress != null && rel.progress > 0 && (
@@ -1325,25 +1325,25 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
               <div className="flex items-center gap-2 text-sm font-medium text-slate-800"><Download size={16} /> 下载客户端</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2 md:col-span-2">
-                  <label className="text-xs text-slate-500">类型</label>
+                  <label className="text-xs ui-muted">类型</label>
                   <select value={settings.downloader.type} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, type: e.target.value } })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none">
                     <option value="qbittorrent">qBittorrent</option>
                   </select>
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <label className="text-xs text-slate-500">WebUI 地址</label>
+                  <label className="text-xs ui-muted">WebUI 地址</label>
                   <input type="text" value={settings.downloader.baseUrl} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, baseUrl: e.target.value } })}
                     placeholder="http://192.168.1.10:8080"
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">用户名</label>
+                  <label className="text-xs ui-muted">用户名</label>
                   <input type="text" value={settings.downloader.username} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, username: e.target.value } })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">密码</label>
+                  <label className="text-xs ui-muted">密码</label>
                   <input
                     type="password"
                     value={settings.downloader.password}
@@ -1353,12 +1353,12 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">分类前缀</label>
+                  <label className="text-xs ui-muted">分类前缀</label>
                   <input type="text" value={settings.downloader.categoryPrefix} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, categoryPrefix: e.target.value } })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">标签前缀</label>
+                  <label className="text-xs ui-muted">标签前缀</label>
                   <input type="text" value={settings.downloader.tagPrefix} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, tagPrefix: e.target.value } })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
                 </div>
@@ -1386,24 +1386,24 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
             <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
               <div className="text-sm font-medium text-slate-800">下载与定时</div>
               <div className="space-y-2">
-                <label className="text-xs text-slate-500">下载根目录（容器内可见路径）</label>
+                <label className="text-xs ui-muted">下载根目录（容器内可见路径）</label>
                 <input type="text" value={settings.downloadRoot} onChange={e => setSettings({ ...settings, downloadRoot: e.target.value })}
                   placeholder="例如：/downloads/pt" className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">RSS 拉取 cron</label>
+                  <label className="text-xs ui-muted">RSS 拉取 cron</label>
                   <input type="text" value={settings.pollCron} onChange={e => setSettings({ ...settings, pollCron: e.target.value })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-slate-500">清理 cron</label>
+                  <label className="text-xs ui-muted">清理 cron</label>
                   <input type="text" value={settings.cleanupCron} onChange={e => setSettings({ ...settings, cleanupCron: e.target.value })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-xs text-slate-500">全局排除正则</label>
+                <label className="text-xs ui-muted">全局排除正则</label>
                 <textarea
                   rows={3}
                   value={settings.globalExcludePattern}
@@ -1457,7 +1457,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
               {settings.strmOrganize.enabled && (
                 <>
                   <div className="space-y-2">
-                    <label className="text-xs text-slate-500">整理模式</label>
+                    <label className="text-xs ui-muted">整理模式</label>
                     <select value={settings.strmOrganize.mode}
                       onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, mode: e.target.value as 'regex' | 'ai' } })}
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none">
@@ -1469,14 +1469,14 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   {settings.strmOrganize.mode === 'regex' && (
                     <>
                       <div className="space-y-2">
-                        <label className="text-xs text-slate-500">分类目录名</label>
+                        <label className="text-xs ui-muted">分类目录名</label>
                         <input type="text" value={settings.strmOrganize.categoryFolder}
                           onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, categoryFolder: e.target.value } })}
                           placeholder="动漫"
                           className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-xs text-slate-500">文件名模板</label>
+                        <label className="text-xs ui-muted">文件名模板</label>
                         <input type="text" value={settings.strmOrganize.fileTemplate}
                           onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, fileTemplate: e.target.value } })}
                           placeholder="{title} S{season}E{episode}"
@@ -1485,14 +1485,14 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <label className="text-xs text-slate-500">季度提取正则（留空用默认）</label>
+                          <label className="text-xs ui-muted">季度提取正则（留空用默认）</label>
                           <input type="text" value={settings.strmOrganize.seasonRegex}
                             onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, seasonRegex: e.target.value } })}
                             placeholder="S(\d{1,2})|第(\d+)季"
                             className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none font-mono text-xs" />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-xs text-slate-500">集数提取正则（留空用默认）</label>
+                          <label className="text-xs ui-muted">集数提取正则（留空用默认）</label>
                           <input type="text" value={settings.strmOrganize.episodeRegex}
                             onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, episodeRegex: e.target.value } })}
                             placeholder="第\d+[话話集]|EP?\d+"
@@ -1500,7 +1500,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-xs text-slate-500">默认季度（当无法提取时）</label>
+                        <label className="text-xs ui-muted">默认季度（当无法提取时）</label>
                         <input type="number" value={settings.strmOrganize.defaultSeason} min={1}
                           onChange={e => setSettings({ ...settings, strmOrganize: { ...settings.strmOrganize, defaultSeason: Number(e.target.value) } })}
                           className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
@@ -1509,7 +1509,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   )}
 
                   {settings.strmOrganize.mode === 'ai' && (
-                    <div className="text-xs text-slate-500 bg-slate-50 p-3 rounded-xl">
+                    <div className="text-xs ui-muted bg-slate-50 p-3 rounded-xl">
                       AI 模式需要在系统设置中配置 OpenAI 和 TMDB API Key。整理器会自动识别番剧信息并整理目录结构。
                     </div>
                   )}
@@ -1518,7 +1518,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
             </div>
 
             <div className="border-t border-slate-200 pt-4 mt-4">
-              <h3 className="text-sm font-medium text-slate-700 mb-3">站点代理（需在系统设置中配置代理服务器）</h3>
+              <h3 className="text-sm font-medium ui-title mb-3">站点代理（需在系统设置中配置代理服务器）</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {[
                   { key: 'ptMikan', label: '蜜柑计划' },
@@ -1616,7 +1616,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                         {group.itemCount != null && <div className="text-xs text-slate-400">{group.itemCount} 个资源</div>}
                       </button>
                       <button type="button" onClick={(e) => { e.stopPropagation(); handlePreviewGroup(idx, group); }}
-                        className="ml-2 px-3 py-1.5 text-xs text-slate-500 hover:text-[#0b57d0] hover:bg-[#0b57d0]/10 rounded-full transition-colors">
+                        className="ml-2 px-3 py-1.5 text-xs ui-muted hover:text-[#0b57d0] hover:bg-[#0b57d0]/10 rounded-full transition-colors">
                         {previewGroupIdx === idx ? '收起' : '预览'}
                       </button>
                     </div>

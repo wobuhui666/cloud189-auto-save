@@ -460,7 +460,7 @@ const StrmConfigTab: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="ui-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -490,7 +490,7 @@ const StrmConfigTab: React.FC = () => {
                       <div className={`p-2 rounded-xl ${config.enabled ? 'bg-[#c2e7ff] text-[#001d35]' : 'bg-slate-100 text-slate-400'}`}>
                         <Link2 size={20} />
                       </div>
-                      <span className="font-medium text-slate-900">{config.name}</span>
+                      <span className="font-medium ui-title">{config.name}</span>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-slate-600">
@@ -601,7 +601,7 @@ const StrmConfigTab: React.FC = () => {
       >
         <form onSubmit={handleSaveConfig} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">配置名称</label>
+            <label className="text-sm font-medium ui-title">配置名称</label>
             <input 
               type="text" 
               value={formData.name}
@@ -614,7 +614,7 @@ const StrmConfigTab: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">生成类型</label>
+              <label className="text-sm font-medium ui-title">生成类型</label>
               <select 
                 value={formData.type}
                 onChange={e => setFormData({...formData, type: e.target.value as 'normal' | 'subscription'})}
@@ -625,7 +625,7 @@ const StrmConfigTab: React.FC = () => {
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">本地路径前缀 (可选)</label>
+              <label className="text-sm font-medium ui-title">本地路径前缀 (可选)</label>
               <input
                 type="text"
                 value={formData.localPathPrefix || ''}
@@ -650,7 +650,7 @@ const StrmConfigTab: React.FC = () => {
           {formData.type === 'normal' ? (
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">选择账号</label>
+                <label className="text-sm font-medium ui-title">选择账号</label>
                 <div className="flex flex-wrap gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-200">
                   {accounts.map(acc => (
                     <label key={acc.id} className="flex items-center gap-2 cursor-pointer group">
@@ -676,7 +676,7 @@ const StrmConfigTab: React.FC = () => {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-slate-700">指定目录 (可选)</label>
+                  <label className="text-sm font-medium ui-title">指定目录 (可选)</label>
                   <div className="flex items-center gap-2">
                     <select 
                       className="text-xs border border-slate-300 rounded-full px-3 py-1 bg-white outline-none"
@@ -694,14 +694,14 @@ const StrmConfigTab: React.FC = () => {
                 </div>
                 <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                   {!formData.directories?.length ? (
-                    <p className="text-xs text-slate-500 italic p-4 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300">
+                    <p className="text-xs ui-muted italic p-4 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300">
                       未选择目录，将按账号媒体目录整体生成。
                     </p>
                   ) : (
                     formData.directories.map((dir, idx) => (
                       <div key={idx} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl group hover:border-[#0b57d0]/30 transition-colors">
                         <div className="flex flex-col min-w-0">
-                          <span className="text-sm font-medium text-slate-900 truncate">{dir.name}</span>
+                          <span className="text-sm font-medium ui-title truncate">{dir.name}</span>
                           <span className="text-[10px] text-slate-500 truncate">{getAccountLabel(dir.accountId)} / {dir.path}</span>
                         </div>
                         <button 
@@ -720,7 +720,7 @@ const StrmConfigTab: React.FC = () => {
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">选择订阅</label>
+                <label className="text-sm font-medium ui-title">选择订阅</label>
                 <select 
                   value={formData.subscriptionId || ''}
                   onChange={e => setFormData({...formData, subscriptionId: Number(e.target.value), resourceIds: []})}
@@ -736,7 +736,7 @@ const StrmConfigTab: React.FC = () => {
 
               {formData.subscriptionId && (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">选择资源 (可选)</label>
+                  <label className="text-sm font-medium ui-title">选择资源 (可选)</label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl border border-slate-200 max-h-48 overflow-y-auto custom-scrollbar">
                     {resources.map(res => (
                       <label key={res.id} className="flex items-center gap-2 cursor-pointer group">
@@ -757,7 +757,7 @@ const StrmConfigTab: React.FC = () => {
                         <span className="text-xs text-slate-600 truncate" title={res.title}>{res.title}</span>
                       </label>
                     ))}
-                    {resources.length === 0 && <p className="col-span-2 text-center text-xs text-slate-500 py-4">该订阅暂无资源</p>}
+                    {resources.length === 0 && <p className="col-span-2 text-center text-xs ui-muted py-4">该订阅暂无资源</p>}
                   </div>
                   <p className="text-[10px] text-slate-400">不勾选任何资源则生成该订阅下的所有资源。</p>
                 </div>
@@ -767,7 +767,7 @@ const StrmConfigTab: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">排除模式 (正则, 可选)</label>
+              <label className="text-sm font-medium ui-title">排除模式 (正则, 可选)</label>
               <input
                 type="text"
                 value={formData.excludePattern || ''}
@@ -822,7 +822,7 @@ const StrmConfigTab: React.FC = () => {
 
           {formData.enableCron && (
             <div className="space-y-2 animate-in slide-in-from-top-2 duration-200">
-              <label className="text-sm font-medium text-slate-700">Cron 表达式</label>
+              <label className="text-sm font-medium ui-title">Cron 表达式</label>
               <input
                 type="text"
                 value={formData.cronExpression || ''}
@@ -864,7 +864,7 @@ const StrmConfigTab: React.FC = () => {
             </p>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">选择账号</label>
+            <label className="text-sm font-medium ui-title">选择账号</label>
             <select
               value={lazyFormData.accountId}
               onChange={e => setLazyFormData({ ...lazyFormData, accountId: e.target.value })}
@@ -879,7 +879,7 @@ const StrmConfigTab: React.FC = () => {
           </div>
 
           <div className="space-y-2">
-             <label className="text-sm font-medium text-slate-700">分享链接</label>
+             <label className="text-sm font-medium ui-title">分享链接</label>
               <div className="flex gap-3">
                 <input
                   type="text"
@@ -901,7 +901,7 @@ const StrmConfigTab: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">保存目录</label>
+              <label className="text-sm font-medium ui-title">保存目录</label>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -921,7 +921,7 @@ const StrmConfigTab: React.FC = () => {
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">本地路径前缀 (可选)</label>
+              <label className="text-sm font-medium ui-title">本地路径前缀 (可选)</label>
               <input
                 type="text"
                 value={lazyFormData.localPathPrefix || ''}
