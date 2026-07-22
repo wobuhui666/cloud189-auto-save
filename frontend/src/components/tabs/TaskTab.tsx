@@ -763,11 +763,11 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           </span>
         </label>
 
-        <span className="text-sm text-slate-500">
+        <span className="text-sm ui-muted">
           已选 {selectedTaskIds.length} 项
         </span>
 
-        <span className="text-sm text-slate-500">
+        <span className="text-sm ui-muted">
           显示 {pageStart}-{pageEnd} / {totalTasks} 项
         </span>
 
@@ -891,14 +891,14 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-bold text-slate-900 text-lg truncate max-w-[300px]" title={taskName}>{taskName}</h3>
+                      <h3 className="font-bold ui-title text-lg truncate max-w-[300px]" title={taskName}>{taskName}</h3>
                       {getStatusBadge(task.status)}
                       {task.enableLazyStrm && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-bold">懒STRM</span>}
                       {task.enableCron && <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-[10px] font-bold">定时任务</span>}
                       {task.enableOrganizer && <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px] font-bold">整理器</span>}
                       {task.keepCasAfterRestore && <span className="px-2 py-0.5 bg-sky-100 text-sky-700 rounded text-[10px] font-bold">保留CAS</span>}
                     </div>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <p className="text-sm ui-muted mt-1">
                       账号: {task.account?.username || '未知账号'} • 分组: {task.taskGroup || '-'}
                     </p>
                     <div className="flex items-center gap-4 mt-3">
@@ -913,7 +913,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                 
                 <div className="flex flex-col items-end gap-3">
                   <div className="text-right">
-                    <div className="text-sm font-bold text-slate-900">{task.currentEpisodes} / {task.totalEpisodes > 0 ? task.totalEpisodes : '?'} 集</div>
+                    <div className="text-sm font-bold ui-title">{task.currentEpisodes} / {task.totalEpisodes > 0 ? task.totalEpisodes : '?'} 集</div>
                     <div className="w-36 h-2 bg-slate-100 rounded-full mt-2 overflow-hidden">
                       <motion.div 
                         initial={{ width: 0 }}
@@ -996,7 +996,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         {filteredTasks.length === 0 && !loading && (
           <div className="text-center py-20 bg-slate-50 rounded-3xl border border-dashed border-slate-300">
             <ClipboardList size={48} className="mx-auto text-slate-300 mb-4" />
-            <p className="text-slate-500 font-medium">
+            <p className="ui-muted font-medium">
               {tasks.length === 0 ? '暂无任务' : '没有匹配当前筛选条件的任务'}
             </p>
           </div>
@@ -1005,7 +1005,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
       {totalPages > 1 && (
         <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:flex-row">
-          <span className="text-sm text-slate-500">
+          <span className="text-sm ui-muted">
             第 {page} / {totalPages} 页，每页 {TASK_PAGE_SIZE} 项
           </span>
           <div className="flex items-center gap-2">
@@ -1013,7 +1013,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
               type="button"
               onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
               disabled={page <= 1 || loading}
-              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium ui-title transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               上一页
             </button>
@@ -1021,7 +1021,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
               type="button"
               onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
               disabled={page >= totalPages || loading}
-              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full border border-slate-300 px-4 py-2 text-sm font-medium ui-title transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               下一页
             </button>

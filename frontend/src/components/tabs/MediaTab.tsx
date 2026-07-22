@@ -409,16 +409,16 @@ const MediaTab: React.FC = () => {
       {/* OpenAI / AI Settings */}
       <section id="media-ai" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-ai')}>
         <div className="flex items-center justify-between">
-          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+          <h3 className="text-xl font-medium ui-title flex items-center gap-3">
             <Cpu size={24} className="text-[#0b57d0]" /> AI 辅助重命名
           </h3>
           <Switch checked={settings.openai.enable} onChange={(v) => updateSetting('openai.enable', v)} />
         </div>
         
-        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.openai.enable && 'opacity-60 pointer-events-none'}`}>
+        <div className={`ui-card p-8 space-y-6 shadow-sm transition-opacity ${!settings.openai.enable && 'opacity-60 pointer-events-none'}`}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">API 地址</label>
+              <label className="text-sm font-medium ui-title">API 地址</label>
               <input 
                 type="text" 
                 value={settings.openai.baseUrl}
@@ -428,7 +428,7 @@ const MediaTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">API Key</label>
+              <label className="text-sm font-medium ui-title">API Key</label>
               <input
                 type="password"
                 value={settings.openai.apiKey}
@@ -440,7 +440,7 @@ const MediaTab: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">模型名称</label>
+              <label className="text-sm font-medium ui-title">模型名称</label>
               <input 
                 type="text" 
                 value={settings.openai.model}
@@ -450,7 +450,7 @@ const MediaTab: React.FC = () => {
               />
             </div>
             <div className="md:col-span-2 space-y-2">
-              <label className="text-sm font-medium text-slate-700">剧集命名模板</label>
+              <label className="text-sm font-medium ui-title">剧集命名模板</label>
               <input 
                 type="text" 
                 value={settings.openai.rename.template}
@@ -461,8 +461,8 @@ const MediaTab: React.FC = () => {
           </div>
           <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
             <div className="pr-6">
-              <p className="text-sm font-medium text-slate-900">AI API 流控</p>
-              <p className="text-xs text-slate-500">开启后会将 AI 请求串行排队，降低上游接口并发压力。</p>
+              <p className="text-sm font-medium ui-title">AI API 流控</p>
+              <p className="text-xs ui-muted">开启后会将 AI 请求串行排队，降低上游接口并发压力。</p>
             </div>
             <Switch
               checked={settings.openai.flowControlEnabled}
@@ -471,7 +471,7 @@ const MediaTab: React.FC = () => {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">电影命名模板</label>
+            <label className="text-sm font-medium ui-title">电影命名模板</label>
             <input 
               type="text" 
               value={settings.openai.rename.movieTemplate}
@@ -490,10 +490,10 @@ const MediaTab: React.FC = () => {
 
       {/* STRM Settings */}
       <section id="media-strm" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-strm')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Link2 size={24} className="text-[#0b57d0]" /> STRM 设置
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="flex flex-col gap-4">
             <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
               <Checkbox
@@ -501,7 +501,7 @@ const MediaTab: React.FC = () => {
                 align="start"
                 checked={settings.strm.enable}
                 onChange={(v) => updateSetting('strm.enable', v)}
-                label={<span className="text-sm font-medium text-slate-900">启用 STRM 生成</span>}
+                label={<span className="text-sm font-medium ui-title">启用 STRM 生成</span>}
                 description="允许系统为转存任务生成 .strm 播放文件"
               />
             </div>
@@ -519,7 +519,7 @@ const MediaTab: React.FC = () => {
                 align="start"
                 checked={settings.strm.useStreamProxy}
                 onChange={(v) => updateSetting('strm.useStreamProxy', v)}
-                label={<span className="text-sm font-medium text-slate-900">普通任务使用系统中转</span>}
+                label={<span className="text-sm font-medium ui-title">普通任务使用系统中转</span>}
                 description="由服务端换取直链，避免临时直链过期"
               />
             </div>
@@ -529,10 +529,10 @@ const MediaTab: React.FC = () => {
 
       {/* CAS 秒传设置 */}
       <section id="media-cas" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-cas')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Zap size={24} className="text-[#0b57d0]" /> 秒传设置
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="flex flex-col gap-4">
             <label
               className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
@@ -546,7 +546,7 @@ const MediaTab: React.FC = () => {
                 {settings.cas.enableFamilyTransit && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">启用家庭中转</span>
+                <span className="text-sm font-medium ui-title">启用家庭中转</span>
                 <p className="text-[10px] text-slate-400">秒传时通过家庭云中转，规避个人云风控</p>
               </div>
             </label>
@@ -562,7 +562,7 @@ const MediaTab: React.FC = () => {
                 {settings.cas.familyTransitFirst && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">优先使用家庭中转</span>
+                <span className="text-sm font-medium ui-title">优先使用家庭中转</span>
                 <p className="text-[10px] text-slate-400">默认先尝试家庭云秒传，失败再回退个人云</p>
               </div>
             </label>
@@ -578,7 +578,7 @@ const MediaTab: React.FC = () => {
                 {settings.cas.deleteCasAfterRestore && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">恢复后删除 CAS 文件</span>
+                <span className="text-sm font-medium ui-title">恢复后删除 CAS 文件</span>
                 <p className="text-[10px] text-slate-400">秒传恢复成功后自动删除 .cas 存根文件</p>
               </div>
             </label>
@@ -594,7 +594,7 @@ const MediaTab: React.FC = () => {
                 {settings.cas.deleteSourceAfterGenerate && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">生成后删除源文件</span>
+                <span className="text-sm font-medium ui-title">生成后删除源文件</span>
                 <p className="text-[10px] text-slate-400">生成 .cas 存根后自动删除原始文件</p>
               </div>
             </label>
@@ -610,13 +610,13 @@ const MediaTab: React.FC = () => {
 
       {/* Emby Settings */}
       <section id="media-emby" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-emby')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Tv size={24} className="text-[#0b57d0]" /> Emby 设置
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Emby 地址</label>
+              <label className="text-sm font-medium ui-title">Emby 地址</label>
               <input
                 type="text"
                 value={settings.emby.serverUrl}
@@ -626,7 +626,7 @@ const MediaTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">API Key</label>
+              <label className="text-sm font-medium ui-title">API Key</label>
               <input
                 type="password"
                 value={settings.emby.apiKey}
@@ -636,7 +636,7 @@ const MediaTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">Webhook 密钥</label>
+              <label className="text-sm font-medium ui-title">Webhook 密钥</label>
               <div className="flex gap-3">
                 <input
                   type="password"
@@ -666,7 +666,7 @@ const MediaTab: React.FC = () => {
                 >
                   {settings.emby.enable && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                 </div>
-                <span className="text-sm font-medium text-slate-900">启用 Emby 入库通知</span>
+                <span className="text-sm font-medium ui-title">启用 Emby 入库通知</span>
               </label>
             </div>
             <div className="flex items-center gap-6 flex-wrap">
@@ -679,11 +679,11 @@ const MediaTab: React.FC = () => {
                 >
                   {settings.emby.proxy.enable && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                 </div>
-                <span className="text-sm font-medium text-slate-900">启用 Emby 反代播放</span>
+                <span className="text-sm font-medium ui-title">启用 Emby 反代播放</span>
               </label>
               {settings.emby.proxy.enable && (
                 <div className="flex items-center gap-3">
-                  <label className="text-sm font-medium text-slate-700">代理端口</label>
+                  <label className="text-sm font-medium ui-title">代理端口</label>
                   <input
                     type="number"
                     value={settings.emby.proxy.port}
@@ -703,13 +703,13 @@ const MediaTab: React.FC = () => {
                 >
                   {settings.emby.prewarm.enable && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                 </div>
-                <span className="text-sm font-medium text-slate-900">启用下一集预热</span>
+                <span className="text-sm font-medium ui-title">启用下一集预热</span>
               </label>
             </div>
             {settings.emby.prewarm.enable && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Sessions 轮询间隔(ms)</label>
+                  <label className="text-sm font-medium ui-title">Sessions 轮询间隔(ms)</label>
                   <input
                     type="number"
                     value={settings.emby.prewarm.sessionPollIntervalMs}
@@ -718,7 +718,7 @@ const MediaTab: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">预热去重时长(ms)</label>
+                  <label className="text-sm font-medium ui-title">预热去重时长(ms)</label>
                   <input
                     type="number"
                     value={settings.emby.prewarm.dedupeTtlMs}
@@ -734,13 +734,13 @@ const MediaTab: React.FC = () => {
 
       {/* CloudSaver Settings */}
       <section id="media-cloudsaver" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-cloudsaver')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Monitor size={24} className="text-[#0b57d0]" /> CloudSaver 设置
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2 md:col-span-3">
-              <label className="text-sm font-medium text-slate-700">服务地址</label>
+              <label className="text-sm font-medium ui-title">服务地址</label>
               <input
                 type="text"
                 value={settings.cloudSaver.baseUrl}
@@ -750,7 +750,7 @@ const MediaTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">用户名</label>
+              <label className="text-sm font-medium ui-title">用户名</label>
               <input
                 type="text"
                 value={settings.cloudSaver.username}
@@ -759,7 +759,7 @@ const MediaTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">密码</label>
+              <label className="text-sm font-medium ui-title">密码</label>
               <input
                 type="password"
                 value={settings.cloudSaver.password}
@@ -775,14 +775,14 @@ const MediaTab: React.FC = () => {
       {/* Hdhive Settings */}
       <section id="media-hdhive" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-hdhive')}>
         <div className="flex items-center justify-between">
-          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+          <h3 className="text-xl font-medium ui-title flex items-center gap-3">
             <Search size={24} className="text-[#0b57d0]" /> 影巢设置
           </h3>
           <Switch checked={settings.hdhive.enabled} onChange={(v) => updateSetting('hdhive.enabled', v)} />
         </div>
-        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60 pointer-events-none'}`}>
+        <div className={`ui-card p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60 pointer-events-none'}`}>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">站点地址</label>
+            <label className="text-sm font-medium ui-title">站点地址</label>
             <input
               type="text"
               value={settings.hdhive.baseUrl}
@@ -792,7 +792,7 @@ const MediaTab: React.FC = () => {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">网页登录 Cookie</label>
+            <label className="text-sm font-medium ui-title">网页登录 Cookie</label>
             <textarea
               value={settings.hdhive.cookie}
               onChange={e => updateSetting('hdhive.cookie', e.target.value)}
@@ -801,7 +801,7 @@ const MediaTab: React.FC = () => {
               className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 resize-y min-h-[104px]"
             />
             {settings.hdhive.hasCookie && (
-              <p className="text-xs text-slate-500">已保存 Cookie，留空保存不会覆盖当前值。</p>
+              <p className="text-xs ui-muted">已保存 Cookie，留空保存不会覆盖当前值。</p>
             )}
           </div>
           <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 flex gap-3">
@@ -817,12 +817,12 @@ const MediaTab: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <section id="media-bridge" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-bridge')}>
           <div className="flex items-center justify-between">
-            <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+            <h3 className="text-xl font-medium ui-title flex items-center gap-3">
               <Globe size={24} className="text-[#0b57d0]" /> Alist 设置
             </h3>
             <Switch checked={settings.alist.enable} onChange={(v) => updateSetting('alist.enable', v)} />
           </div>
-          <div className={`bg-white rounded-3xl border border-slate-200/60 p-6 space-y-4 shadow-sm transition-opacity ${!settings.alist.enable && 'opacity-60 pointer-events-none'}`}>
+          <div className={`ui-card p-6 space-y-4 shadow-sm transition-opacity ${!settings.alist.enable && 'opacity-60 pointer-events-none'}`}>
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-500 block">Alist 地址</label>
               <input 
@@ -848,12 +848,12 @@ const MediaTab: React.FC = () => {
 
         <section id="media-oauth" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-oauth')}>
           <div className="flex items-center justify-between">
-            <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+            <h3 className="text-xl font-medium ui-title flex items-center gap-3">
               <Search size={24} className="text-[#0b57d0]" /> TMDB 刮削
             </h3>
             <Switch checked={settings.tmdb.enableScraper} onChange={(v) => updateSetting('tmdb.enableScraper', v)} />
           </div>
-          <div className={`bg-white rounded-3xl border border-slate-200/60 p-6 space-y-4 shadow-sm transition-opacity ${!settings.tmdb.enableScraper && 'opacity-60 pointer-events-none'}`}>
+          <div className={`ui-card p-6 space-y-4 shadow-sm transition-opacity ${!settings.tmdb.enableScraper && 'opacity-60 pointer-events-none'}`}>
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-500 block">TMDB API Key</label>
               <input
@@ -871,10 +871,10 @@ const MediaTab: React.FC = () => {
 
       {/* Media Organizer Settings */}
       <section id="media-alist" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-alist')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Settings size={24} className="text-[#0b57d0]" /> 媒体库分类命名
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {Object.entries(settings.organizer.categories).map(([key, value]) => (
               <div key={key} className="space-y-1">
@@ -898,12 +898,12 @@ const MediaTab: React.FC = () => {
 
       {/* Regex Presets Management */}
       <section id="media-regex" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-regex')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Settings size={24} className="text-[#0b57d0]" /> 正则预设管理
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 shadow-sm">
+        <div className="ui-card p-8 shadow-sm">
           <div className="flex items-center justify-between mb-6">
-            <p className="text-sm text-slate-500">预设常用的重命名和筛选规则，一键套用于任务。</p>
+            <p className="text-sm ui-muted">预设常用的重命名和筛选规则，一键套用于任务。</p>
             <button 
               onClick={() => setIsRegexModalOpen(true)}
               className="px-6 py-2.5 bg-[#d3e3fd] text-[#041e49] rounded-full text-sm font-medium hover:bg-[#c2e7ff] transition-all flex items-center gap-2"
@@ -964,8 +964,8 @@ const MediaTab: React.FC = () => {
             {regexPresets.map((preset, index) => (
               <div key={index} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between group">
                 <div>
-                  <h4 className="font-bold text-slate-900 text-sm">{preset.name}</h4>
-                  <p className="text-xs text-slate-500 mt-0.5">{preset.description || '无描述'}</p>
+                  <h4 className="font-bold ui-title text-sm">{preset.name}</h4>
+                  <p className="text-xs ui-muted mt-0.5">{preset.description || '无描述'}</p>
                 </div>
                 <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button 

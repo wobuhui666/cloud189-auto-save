@@ -498,7 +498,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       {/* 标题栏 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-slate-900">CAS 秒传</h2>
+          <h2 className="text-xl font-bold ui-title">CAS 秒传</h2>
           <button
             type="button"
             onClick={() => {
@@ -515,7 +515,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-sm text-slate-500">
+          <div className="flex items-center gap-2 text-sm ui-muted">
             {config.enableFamilyTransit ? (
               <span className="flex items-center gap-1 text-emerald-600">
                 <CheckCircle2 size={14} /> 家庭中转已启用
@@ -531,18 +531,18 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* 粘贴恢复 */}
-        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+        <div className="ui-card overflow-hidden shadow-sm">
           <div className="p-6 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Download className="text-blue-500" size={20} />
-              <h3 className="font-bold text-slate-900">秒传恢复</h3>
+              <h3 className="font-bold ui-title">秒传恢复</h3>
             </div>
-            <p className="text-sm text-slate-500 mt-1">粘贴单个 .cas 存根内容，立即恢复到网盘</p>
+            <p className="text-sm ui-muted mt-1">粘贴单个 .cas 存根内容，立即恢复到网盘</p>
           </div>
 
           <div className="p-6 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">执行账号</label>
+              <label className="block text-sm font-medium ui-title mb-2">执行账号</label>
               <select
                 value={selectedAccountId || ''}
                 onChange={(e) => setSelectedAccountId(Number(e.target.value))}
@@ -555,7 +555,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">存根内容 (Base64 或 JSON)</label>
+              <label className="block text-sm font-medium ui-title mb-2">存根内容 (Base64 或 JSON)</label>
               <textarea
                 value={casContent}
                 onChange={(e) => setCasContent(e.target.value)}
@@ -565,7 +565,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">自定义文件名 (可选)</label>
+              <label className="block text-sm font-medium ui-title mb-2">自定义文件名 (可选)</label>
               <input
                 type="text"
                 value={restoreName}
@@ -576,7 +576,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">存入目录</label>
+              <label className="block text-sm font-medium ui-title mb-2">存入目录</label>
               <button
                 onClick={() => openFolderSelector('restore')}
                 className="w-full flex items-center justify-between px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm hover:border-[#0b57d0] transition-all"
@@ -600,18 +600,18 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
         </div>
 
         {/* 存根导入 */}
-        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+        <div className="ui-card overflow-hidden shadow-sm">
           <div className="p-6 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Upload className="text-violet-500" size={20} />
-              <h3 className="font-bold text-slate-900">存根导入</h3>
+              <h3 className="font-bold ui-title">存根导入</h3>
             </div>
-            <p className="text-sm text-slate-500 mt-1">上传 .cas / zip / rar 包（含 .cas 目录树），批量秒传并生成 STRM</p>
+            <p className="text-sm ui-muted mt-1">上传 .cas / zip / rar 包（含 .cas 目录树），批量秒传并生成 STRM</p>
           </div>
 
           <div className="p-6 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">选择文件</label>
+              <label className="block text-sm font-medium ui-title mb-2">选择文件</label>
               {/* 不限制 accept：部分浏览器对未知 MIME 的 .cas 会整项灰掉，无法点选 */}
               <input
                 ref={fileInputRef}
@@ -644,7 +644,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                   </div>
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-slate-800">点击选择 .cas / .zip / .rar</div>
-                    <div className="text-xs text-slate-500 mt-0.5">支持单个存根或含 .cas 的压缩包</div>
+                    <div className="text-xs ui-muted mt-0.5">支持单个存根或含 .cas 的压缩包</div>
                   </div>
                 </button>
               ) : (
@@ -657,10 +657,10 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-slate-900 truncate" title={selectedFile.name}>
+                    <div className="text-sm font-medium ui-title truncate" title={selectedFile.name}>
                       {selectedFile.name}
                     </div>
-                    <div className="text-xs text-slate-500 mt-0.5">
+                    <div className="text-xs ui-muted mt-0.5">
                       {(selectedFile.size / 1024).toFixed(1)} KB
                     </div>
                   </div>
@@ -689,7 +689,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">任务标题（可选）</label>
+              <label className="block text-sm font-medium ui-title mb-2">任务标题（可选）</label>
               <input
                 type="text"
                 value={importTitle}
@@ -700,7 +700,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">存入目录</label>
+              <label className="block text-sm font-medium ui-title mb-2">存入目录</label>
               <button
                 onClick={() => openFolderSelector('import')}
                 className="w-full flex items-center justify-between px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm hover:border-[#0b57d0] transition-all"
@@ -714,7 +714,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">还原模式</label>
+                <label className="block text-sm font-medium ui-title mb-2">还原模式</label>
                 <select
                   value={importMode}
                   onChange={(e) => setImportMode(e.target.value as 'restore' | 'lazy')}
@@ -725,7 +725,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">目录整理</label>
+                <label className="block text-sm font-medium ui-title mb-2">目录整理</label>
                 <select
                   value={organizeMode}
                   onChange={(e) => setOrganizeMode(e.target.value as 'library' | 'mirror')}
@@ -736,7 +736,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">STRM</label>
+                <label className="block text-sm font-medium ui-title mb-2">STRM</label>
                 <select
                   value={importStrmMode}
                   onChange={(e) => setImportStrmMode(e.target.value as 'none' | 'normal' | 'lazy')}
@@ -760,7 +760,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
               </label>
             </div>
 
-            <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3 text-xs text-slate-500 space-y-1">
+            <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3 text-xs ui-muted space-y-1">
               <p>账号：{selectedAccountLabel || '未选择'}</p>
               <p>
                 {organizeMode === 'library'
@@ -783,11 +783,11 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       </div>
 
       {/* 导入任务 */}
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="ui-card overflow-hidden shadow-sm">
         <div className="p-6 border-b border-slate-100 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <List className="text-slate-700" size={20} />
-            <h3 className="font-bold text-slate-900">导入任务</h3>
+            <h3 className="font-bold ui-title">导入任务</h3>
           </div>
           <button
             onClick={() => { fetchJobs(); if (activeJobId) fetchJobDetail(activeJobId); }}
@@ -815,7 +815,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                           {job.mode === 'lazy' ? '懒还原' : '立即还原'} / STRM:{job.strmMode}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 truncate">
+                      <p className="text-xs ui-muted truncate">
                         源：{job.sourceName} · 成功 {job.success}/{job.total} · 失败 {job.failed} · 跳过 {job.skipped}
                       </p>
                       {job.message && <p className="text-xs text-slate-400">{job.message}</p>}
@@ -852,9 +852,9 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="font-semibold text-slate-800">任务详情：{activeJob.title}</h4>
-                <button onClick={() => { setActiveJob(null); setActiveJobId(null); }} className="text-xs text-slate-500">关闭</button>
+                <button onClick={() => { setActiveJob(null); setActiveJobId(null); }} className="text-xs ui-muted">关闭</button>
               </div>
-              <p className="text-xs text-slate-500 mb-3">
+              <p className="text-xs ui-muted mb-3">
                 {statusLabel(activeJob.status)} · 成功 {activeJob.success} / 失败 {activeJob.failed} / 跳过 {activeJob.skipped} / 共 {activeJob.total}
               </p>
               {failedEntries.length > 0 ? (
@@ -879,11 +879,11 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
 
       {/* 管理区 */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+        <div className="ui-card overflow-hidden shadow-sm">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FolderArchive className="text-sky-500" size={20} />
-              <h3 className="font-bold text-slate-900">导入 STRM</h3>
+              <h3 className="font-bold ui-title">导入 STRM</h3>
             </div>
             <button
               onClick={() => fetchStrmList(strmPath)}
@@ -893,7 +893,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             </button>
           </div>
           <div className="p-6 space-y-3">
-            <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className="flex items-center gap-2 text-xs ui-muted">
               <span>当前路径：</span>
               <code className="bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg">{strmPath || '(根/CAS导入)'}</code>
               {!!strmPath && (
@@ -946,11 +946,11 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
           </div>
         </div>
 
-        <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+        <div className="ui-card overflow-hidden shadow-sm">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <AlertCircle className="text-amber-500" size={20} />
-              <h3 className="font-bold text-slate-900">分享懒 STRM 缓存</h3>
+              <h3 className="font-bold ui-title">分享懒 STRM 缓存</h3>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -1012,10 +1012,10 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
             <p>Hash 命中即可恢复，无需上传原片；未命中会失败。</p>
           </div>
         </div>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-6">
+        <div className="ui-card p-6">
           <div className="flex items-center gap-2 mb-3">
             <Zap className="text-amber-500" size={18} />
-            <h3 className="font-bold text-slate-900">导入包说明</h3>
+            <h3 className="font-bold ui-title">导入包说明</h3>
           </div>
           <div className="space-y-2 text-sm text-slate-600">
             <p>支持单个 `.cas`，或 zip / rar 内整树 `.cas`（如剧集 Season 目录）。</p>

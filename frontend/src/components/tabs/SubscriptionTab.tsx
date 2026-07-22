@@ -804,7 +804,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         </button>
       </div>
       
-      <div className="bg-white rounded-3xl border border-slate-200/60 overflow-hidden shadow-sm">
+      <div className="ui-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50/50 border-b border-slate-100">
@@ -835,12 +835,12 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                         <Rss size={20} />
                       </div>
                       <div className="flex flex-col">
-                        <span className="font-medium text-slate-900 truncate max-w-[150px]" title={sub.name}>{sub.name}</span>
+                        <span className="font-medium ui-title truncate max-w-[150px]" title={sub.name}>{sub.name}</span>
                         {!sub.enabled && <span className="text-[10px] text-red-500 font-bold uppercase">已禁用</span>}
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 font-mono text-xs text-slate-500">{sub.uuid}</td>
+                  <td className="px-6 py-4 font-mono text-xs ui-muted">{sub.uuid}</td>
                   <td className="px-6 py-4 text-slate-600">{sub.resourceCount}</td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-1.5" title={sub.lastRefreshMessage || ''}>
@@ -897,7 +897,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       >
         <form id="modal-form" onSubmit={handleSaveSub} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">UUID / 订阅主页链接</label>
+            <label className="text-sm font-medium ui-title">UUID / 订阅主页链接</label>
             <input 
               type="text" 
               value={subFormData.uuid}
@@ -957,8 +957,8 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
               <div className="mt-3 p-4 bg-[#f8fbff] rounded-2xl border border-[#d7e7ff] space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-medium text-slate-900">订阅内链接选择</div>
-                    <div className="text-xs text-slate-500 mt-1">
+                    <div className="text-sm font-medium ui-title">订阅内链接选择</div>
+                    <div className="text-xs ui-muted mt-1">
                       当前已选 {subFormData.selectedShareCodes.length} 项，未选择时默认全量同步。
                     </div>
                   </div>
@@ -1001,7 +1001,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             )}
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">名称 (可选)</label>
+            <label className="text-sm font-medium ui-title">名称 (可选)</label>
             <input 
               type="text" 
               value={subFormData.name}
@@ -1011,7 +1011,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">备注</label>
+            <label className="text-sm font-medium ui-title">备注</label>
             <textarea 
               value={subFormData.remark}
               onChange={e => setSubFormData({...subFormData, remark: e.target.value})}
@@ -1044,8 +1044,8 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                 <div className="rounded-2xl border border-[#d7e7ff] bg-[#f8fbff] p-4 space-y-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-medium text-slate-900">任务预估</div>
-                      <div className="text-xs text-slate-500 mt-1">
+                      <div className="text-sm font-medium ui-title">任务预估</div>
+                      <div className="text-xs ui-muted mt-1">
                         默认账号和保存目录沿用“自动追剧”设置，任务分组默认单独归到订阅任务。
                       </div>
                     </div>
@@ -1056,19 +1056,19 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                     <div className="rounded-xl bg-white border border-slate-200 px-3 py-2">
                       <div className="text-slate-500">默认账号</div>
-                      <div className="mt-1 font-medium text-slate-900">
+                      <div className="mt-1 font-medium ui-title">
                         {subFormData.autoTaskConfig.accountId || '未配置'}
                       </div>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-200 px-3 py-2">
                       <div className="text-slate-500">默认保存目录</div>
-                      <div className="mt-1 font-medium text-slate-900 truncate" title={subFormData.autoTaskConfig.targetFolder || ''}>
+                      <div className="mt-1 font-medium ui-title truncate" title={subFormData.autoTaskConfig.targetFolder || ''}>
                         {subFormData.autoTaskConfig.targetFolder || '未配置'}
                       </div>
                     </div>
                     <div className="rounded-xl bg-white border border-slate-200 px-3 py-2">
                       <div className="text-slate-500">订阅资源数</div>
-                      <div className="mt-1 font-medium text-slate-900">
+                      <div className="mt-1 font-medium ui-title">
                         {autoTaskPreview?.estimatedResourceCount ?? previewInfo?.remoteResourceCount ?? 0}
                       </div>
                     </div>
@@ -1097,7 +1097,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">任务分组</label>
+                    <label className="text-sm font-medium ui-title">任务分组</label>
                     <input
                       type="text"
                       value={subFormData.autoTaskConfig.taskGroup}
@@ -1107,7 +1107,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">任务备注</label>
+                    <label className="text-sm font-medium ui-title">任务备注</label>
                     <input
                       type="text"
                       value={subFormData.autoTaskConfig.remark}
@@ -1147,7 +1147,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
 
                 {subFormData.autoTaskConfig.enableCron && (
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">Cron 表达式</label>
+                    <label className="text-sm font-medium ui-title">Cron 表达式</label>
                     <input
                       type="text"
                       value={subFormData.autoTaskConfig.cronExpression}
@@ -1174,7 +1174,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         title="选择订阅里的链接"
         footer={
           <div className="px-8 py-6 flex justify-between gap-3 border-t border-slate-100">
-            <div className="text-xs text-slate-500 self-center">
+            <div className="text-xs ui-muted self-center">
               已选 {remoteSelectorSelectedShareCodes.length} 项
             </div>
             <div className="flex gap-3">
@@ -1196,7 +1196,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       >
         <div className="space-y-4 pt-6">
           <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs text-slate-600">
-            <div className="font-medium text-slate-900">UUID</div>
+            <div className="font-medium ui-title">UUID</div>
             <div className="mt-1 font-mono break-all">{remoteSelectorUuid || subFormData.uuid || '-'}</div>
             <div className="mt-2 text-slate-500">
               保存后仅同步勾选的链接；如果不勾选，则仍按整个订阅全量同步。
@@ -1234,7 +1234,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             </button>
           </div>
 
-          <div className="flex items-center justify-between text-xs text-slate-500">
+          <div className="flex items-center justify-between text-xs ui-muted">
             <span>远程共 {remoteSelectorTotalCount} 项</span>
             <span>第 {remoteSelectorPageNum} / {Math.max(remoteSelectorTotalPages, 1)} 页</span>
           </div>
@@ -1270,7 +1270,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
-                        <span className="font-medium text-slate-900 break-all">{item.title}</span>
+                        <span className="font-medium ui-title break-all">{item.title}</span>
                         <a
                           href={item.shareLink}
                           target="_blank"
@@ -1368,7 +1368,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                 <tr key={res.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex flex-col max-w-[200px]">
-                      <span className="font-medium text-slate-900 truncate" title={res.title}>{res.title}</span>
+                      <span className="font-medium ui-title truncate" title={res.title}>{res.title}</span>
                       <a 
                         href={res.shareLink} 
                         target="_blank" 
@@ -1442,7 +1442,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
       >
         <form id="res-modal-form" onSubmit={handleSaveResource} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">资源标题 (可选)</label>
+            <label className="text-sm font-medium ui-title">资源标题 (可选)</label>
             <input 
               type="text" 
               value={resFormData.title}
@@ -1452,7 +1452,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">分享链接</label>
+            <label className="text-sm font-medium ui-title">分享链接</label>
             <input 
               type="text" 
               value={resFormData.shareLink}
@@ -1463,7 +1463,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
             />
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">访问码 (可选)</label>
+            <label className="text-sm font-medium ui-title">访问码 (可选)</label>
             <input 
               type="text" 
               value={resFormData.accessCode}
@@ -1497,7 +1497,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
         footer={null}
       >
         <div className="space-y-4">
-          <div className="flex items-center gap-2 p-2 bg-slate-50 rounded-2xl overflow-x-auto text-xs text-slate-500 whitespace-nowrap scrollbar-none">
+          <div className="flex items-center gap-2 p-2 bg-slate-50 rounded-2xl overflow-x-auto text-xs ui-muted whitespace-nowrap scrollbar-none">
             <span className="shrink-0">{browserTitle}</span>
             {browserStack.map((folder, i) => (
               <React.Fragment key={folder.id}>
@@ -1562,7 +1562,7 @@ const SubscriptionTab: React.FC<SubscriptionTabProps> = ({ onTransfer }) => {
                   </tr>
                 ) : browserEntries.map(entry => (
                   <tr key={entry.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-4 py-3 font-medium text-slate-900 truncate max-w-[200px]" title={entry.name}>{entry.name}</td>
+                    <td className="px-4 py-3 font-medium ui-title truncate max-w-[200px]" title={entry.name}>{entry.name}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{entry.isFolder ? '目录' : '文件'}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">

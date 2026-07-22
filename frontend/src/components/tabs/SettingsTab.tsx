@@ -627,13 +627,13 @@ const SettingsTab: React.FC = () => {
 
       {/* System Credentials */}
       <section id="settings-auth" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-auth')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Shield size={24} className="text-[#0b57d0]" /> 访问认证
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">管理员用户名</label>
+              <label className="text-sm font-medium ui-title">管理员用户名</label>
               <input 
                 type="text" 
                 value={settings.system.username}
@@ -642,7 +642,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">管理员密码</label>
+              <label className="text-sm font-medium ui-title">管理员密码</label>
               <input 
                 type="password" 
                 value={settings.system.password}
@@ -653,7 +653,7 @@ const SettingsTab: React.FC = () => {
             </div>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">系统 API Key</label>
+            <label className="text-sm font-medium ui-title">系统 API Key</label>
             <div className="flex gap-3">
               <input
                 type="password"
@@ -675,13 +675,13 @@ const SettingsTab: React.FC = () => {
 
       {/* Task Settings */}
       <section id="settings-task" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-task')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Database size={24} className="text-[#0b57d0]" /> 任务设置
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">任务过期天数</label>
+              <label className="text-sm font-medium ui-title">任务过期天数</label>
               <input 
                 type="number" 
                 value={settings.task.taskExpireDays}
@@ -690,7 +690,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">最大重试次数</label>
+              <label className="text-sm font-medium ui-title">最大重试次数</label>
               <input 
                 type="number" 
                 value={settings.task.maxRetries}
@@ -699,7 +699,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">重试间隔 (秒)</label>
+              <label className="text-sm font-medium ui-title">重试间隔 (秒)</label>
               <input 
                 type="number" 
                 value={settings.task.retryInterval}
@@ -710,7 +710,7 @@ const SettingsTab: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">任务检查定时 (Cron)</label>
+              <label className="text-sm font-medium ui-title">任务检查定时 (Cron)</label>
               <input 
                 type="text" 
                 value={settings.task.taskCheckCron}
@@ -719,7 +719,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">回收站清理定时 (Cron)</label>
+              <label className="text-sm font-medium ui-title">回收站清理定时 (Cron)</label>
               <input 
                 type="text" 
                 value={settings.task.cleanRecycleCron}
@@ -728,7 +728,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">懒转存清理定时 (Cron)</label>
+              <label className="text-sm font-medium ui-title">懒转存清理定时 (Cron)</label>
               <input 
                 type="text" 
                 value={settings.task.lazyFileCleanupCron}
@@ -737,7 +737,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Session 保活定时 (Cron)</label>
+              <label className="text-sm font-medium ui-title">Session 保活定时 (Cron)</label>
               <input
                 type="text"
                 value={settings.task.sessionKeepAliveCron}
@@ -746,7 +746,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">懒转存保留时间 (小时)</label>
+              <label className="text-sm font-medium ui-title">懒转存保留时间 (小时)</label>
               <input 
                 type="number" 
                 value={settings.task.lazyFileRetentionHours}
@@ -755,7 +755,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">媒体文件后缀</label>
+              <label className="text-sm font-medium ui-title">媒体文件后缀</label>
               <input 
                 type="text" 
                 value={settings.task.mediaSuffix}
@@ -776,7 +776,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableAutoClearRecycle && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">自动清空回收站</span>
+                <span className="text-sm font-medium ui-title">自动清空回收站</span>
                 <p className="text-[10px] text-slate-400">定期清理个人云回收站</p>
               </div>
             </label>
@@ -790,7 +790,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableAutoClearFamilyRecycle && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">自动清理家庭云回收站</span>
+                <span className="text-sm font-medium ui-title">自动清理家庭云回收站</span>
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
@@ -803,7 +803,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableAutoCleanLazyFiles && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">自动清理懒转存文件</span>
+                <span className="text-sm font-medium ui-title">自动清理懒转存文件</span>
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
@@ -816,7 +816,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableOnlySaveMedia && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">仅转存媒体文件</span>
+                <span className="text-sm font-medium ui-title">仅转存媒体文件</span>
                 <p className="text-[10px] text-slate-400">
                   跳过图片、文档等非媒体文件。推荐开启：图片与视频同批转存时，违规图片可能导致整批失败（InfosecuMD5CheckError）。
                 </p>
@@ -832,7 +832,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableAutoCreateFolder && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">目标文件夹自动创建</span>
+                <span className="text-sm font-medium ui-title">目标文件夹自动创建</span>
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
@@ -845,7 +845,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableStorageAggregation && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">账号容量聚合</span>
+                <span className="text-sm font-medium ui-title">账号容量聚合</span>
                 <p className="text-[10px] text-slate-400">账号页显示多账号容量汇总</p>
               </div>
             </label>
@@ -859,7 +859,7 @@ const SettingsTab: React.FC = () => {
                 {settings.task.enableSessionKeepAlive && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">账号 Session 保活</span>
+                <span className="text-sm font-medium ui-title">账号 Session 保活</span>
                 <p className="text-[10px] text-slate-400">定时刷新账号会话</p>
               </div>
             </label>
@@ -870,7 +870,7 @@ const SettingsTab: React.FC = () => {
               type="button"
               onClick={runKeepAlive}
               disabled={keepAliveRunning}
-              className="px-5 py-3 bg-white border border-slate-300 rounded-2xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
+              className="px-5 py-3 bg-white border border-slate-300 rounded-2xl text-sm font-medium ui-title hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
             >
               <RefreshCw size={18} className={keepAliveRunning ? 'animate-spin' : ''} />
               立即执行账号保活
@@ -879,12 +879,12 @@ const SettingsTab: React.FC = () => {
 
           {/* Auto Series Defaults */}
           <div className="pt-6 border-t border-slate-100 space-y-4">
-            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <h4 className="text-sm font-bold ui-title flex items-center gap-2">
               <PlayCircle size={18} className="text-[#0b57d0]" /> 自动追剧默认配置
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">默认追剧账号</label>
+                <label className="text-sm font-medium ui-title">默认追剧账号</label>
                 <select 
                   value={settings.task.autoCreate.accountId}
                   onChange={(e) => updateSettings('task.autoCreate.accountId', e.target.value)}
@@ -897,7 +897,7 @@ const SettingsTab: React.FC = () => {
                 </select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700">默认保存目录</label>
+                <label className="text-sm font-medium ui-title">默认保存目录</label>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
@@ -924,7 +924,7 @@ const SettingsTab: React.FC = () => {
       {/* Telegram Bot Settings */}
       <section id="settings-telegram" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-telegram')}>
         <div className="flex items-center justify-between">
-          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+          <h3 className="text-xl font-medium ui-title flex items-center gap-3">
             <Send size={24} className="text-[#0b57d0]" /> Telegram 机器人
           </h3>
           <Switch
@@ -935,8 +935,8 @@ const SettingsTab: React.FC = () => {
             }}
           />
         </div>
-        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.telegram.bot.enable && 'opacity-60 pointer-events-none'}`}>
-          <div className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed space-y-2">
+        <div className={`ui-card p-8 space-y-6 shadow-sm transition-opacity ${!settings.telegram.bot.enable && 'opacity-60 pointer-events-none'}`}>
+          <div className="text-xs ui-muted bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed space-y-2">
             <p>启用后，你可以通过 Telegram 机器人直接管理任务、切换账号、搜索资源以及接收任务状态推送。</p>
             <p>1. Bot Token 可通过 @BotFather 创建机器人后获取。</p>
             <p>2. Chat ID 需要先给机器人发消息，再从更新记录或测试消息里确认。</p>
@@ -944,7 +944,7 @@ const SettingsTab: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Bot Token</label>
+              <label className="text-sm font-medium ui-title">Bot Token</label>
               <input
                 type="password"
                 value={settings.telegram.bot.botToken}
@@ -957,7 +957,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">默认 Chat ID</label>
+              <label className="text-sm font-medium ui-title">默认 Chat ID</label>
               <input
                 type="text"
                 value={settings.telegram.bot.chatId}
@@ -970,7 +970,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">反代 API 域名 (可选)</label>
+              <label className="text-sm font-medium ui-title">反代 API 域名 (可选)</label>
               <input
                 type="text"
                 value={settings.telegram.proxyDomain}
@@ -980,7 +980,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">允许使用的 Chat ID 列表</label>
+              <label className="text-sm font-medium ui-title">允许使用的 Chat ID 列表</label>
               <textarea
                 value={(settings.telegram.bot.allowedChatIds || []).join('\n')}
                 onChange={(e) => updateSettings('telegram.bot.allowedChatIds', parseIdList(e.target.value))}
@@ -990,7 +990,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">管理员 Chat ID 列表</label>
+              <label className="text-sm font-medium ui-title">管理员 Chat ID 列表</label>
               <textarea
                 value={(settings.telegram.bot.adminChatIds || []).join('\n')}
                 onChange={(e) => updateSettings('telegram.bot.adminChatIds', parseIdList(e.target.value))}
@@ -1011,7 +1011,7 @@ const SettingsTab: React.FC = () => {
                 {settings.telegram.notifyOnSuccess && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">成功通知</span>
+                <span className="text-sm font-medium ui-title">成功通知</span>
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
@@ -1024,7 +1024,7 @@ const SettingsTab: React.FC = () => {
                 {settings.telegram.notifyOnFailure && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">失败通知</span>
+                <span className="text-sm font-medium ui-title">失败通知</span>
               </div>
             </label>
             <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
@@ -1037,7 +1037,7 @@ const SettingsTab: React.FC = () => {
                 {settings.telegram.notifyOnScrape && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
               </div>
               <div>
-                <span className="text-sm font-medium text-slate-900">刮削通知</span>
+                <span className="text-sm font-medium ui-title">刮削通知</span>
               </div>
             </label>
           </div>
@@ -1045,7 +1045,7 @@ const SettingsTab: React.FC = () => {
             <button
               type="button"
               onClick={testTelegramConfig}
-              className="px-5 py-3 bg-white border border-slate-300 rounded-2xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              className="px-5 py-3 bg-white border border-slate-300 rounded-2xl text-sm font-medium ui-title hover:bg-slate-50 transition-colors"
             >
               测试配置
             </button>
@@ -1055,10 +1055,10 @@ const SettingsTab: React.FC = () => {
 
       {/* Push Notifications */}
       <section id="settings-push" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-push')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Bell size={24} className="text-[#b3261e]" /> 消息推送
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           {/* WeCom */}
           <div className="space-y-4">
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
@@ -1067,8 +1067,8 @@ const SettingsTab: React.FC = () => {
                   <MessageSquare size={20} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-900">企业微信推送</p>
-                  <p className="text-xs text-slate-500">通过 Webhook 推送任务状态</p>
+                  <p className="text-sm font-medium ui-title">企业微信推送</p>
+                  <p className="text-xs ui-muted">通过 Webhook 推送任务状态</p>
                 </div>
               </div>
               <Switch checked={settings.wecom.enable} onChange={(v) => updateSettings('wecom.enable', v)} />
@@ -1095,8 +1095,8 @@ const SettingsTab: React.FC = () => {
                   <Bell size={20} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-900">Bark 推送</p>
-                  <p className="text-xs text-slate-500">iOS Bark App，服务端地址 + 设备 Key</p>
+                  <p className="text-sm font-medium ui-title">Bark 推送</p>
+                  <p className="text-xs ui-muted">iOS Bark App，服务端地址 + 设备 Key</p>
                 </div>
               </div>
               <Switch checked={settings.bark.enable} onChange={(v) => updateSettings('bark.enable', v)} />
@@ -1135,8 +1135,8 @@ const SettingsTab: React.FC = () => {
                   <MessageSquare size={20} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-900">WxPusher</p>
-                  <p className="text-xs text-slate-500">简单推送 SPT，微信接收通知</p>
+                  <p className="text-sm font-medium ui-title">WxPusher</p>
+                  <p className="text-xs ui-muted">简单推送 SPT，微信接收通知</p>
                 </div>
               </div>
               <Switch checked={settings.wxpusher.enable} onChange={(v) => updateSettings('wxpusher.enable', v)} />
@@ -1163,8 +1163,8 @@ const SettingsTab: React.FC = () => {
                   <Bell size={20} />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-slate-900">PushPlus</p>
-                  <p className="text-xs text-slate-500">Token 推送，可选群组与渠道</p>
+                  <p className="text-sm font-medium ui-title">PushPlus</p>
+                  <p className="text-xs ui-muted">Token 推送，可选群组与渠道</p>
                 </div>
               </div>
               <Switch checked={settings.pushplus.enable} onChange={(v) => updateSettings('pushplus.enable', v)} />
@@ -1226,13 +1226,13 @@ const SettingsTab: React.FC = () => {
 
       {/* Network Proxy */}
       <section id="settings-proxy" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-proxy')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Globe size={24} className="text-[#0b57d0]" /> 网络代理
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">代理地址</label>
+              <label className="text-sm font-medium ui-title">代理地址</label>
               <input 
                 type="text" 
                 value={settings.proxy.host}
@@ -1242,7 +1242,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">代理端口</label>
+              <label className="text-sm font-medium ui-title">代理端口</label>
               <input 
                 type="number" 
                 value={settings.proxy.port}
@@ -1254,7 +1254,7 @@ const SettingsTab: React.FC = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">代理用户名</label>
+              <label className="text-sm font-medium ui-title">代理用户名</label>
               <input 
                 type="text" 
                 value={settings.proxy.username}
@@ -1263,7 +1263,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">代理密码</label>
+              <label className="text-sm font-medium ui-title">代理密码</label>
               <input
                 type="password"
                 value={settings.proxy.password}
@@ -1298,18 +1298,18 @@ const SettingsTab: React.FC = () => {
       {/* HDHive */}
       <section id="settings-hdhive" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-hdhive')}>
         <div className="flex items-center justify-between">
-          <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+          <h3 className="text-xl font-medium ui-title flex items-center gap-3">
             <Search size={24} className="text-[#0b57d0]" /> 影巢资源
           </h3>
           <Switch checked={settings.hdhive.enabled} onChange={(v) => updateSettings('hdhive.enabled', v)} />
         </div>
-        <div className={`bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60'}`}>
-          <div className="text-xs text-slate-500 bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed">
+        <div className={`ui-card p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60'}`}>
+          <div className="text-xs ui-muted bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed">
             支持 Cookie 网页解析、OpenAPI OAuth 和 Browser Bridge 签名网页模式。敏感凭证如已保存或通过环境变量配置，可保持输入框为空。
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">影巢站点地址</label>
+              <label className="text-sm font-medium ui-title">影巢站点地址</label>
               <input
                 type="url"
                 value={settings.hdhive.baseUrl}
@@ -1319,7 +1319,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Client ID</label>
+              <label className="text-sm font-medium ui-title">Client ID</label>
               <input
                 type="text"
                 value={settings.hdhive.clientId}
@@ -1329,7 +1329,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">网页登录账号</label>
+              <label className="text-sm font-medium ui-title">网页登录账号</label>
               <input
                 type="text"
                 value={settings.hdhive.username}
@@ -1339,7 +1339,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">网页登录密码</label>
+              <label className="text-sm font-medium ui-title">网页登录密码</label>
               <input
                 type="password"
                 value={settings.hdhive.password}
@@ -1349,7 +1349,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">Cookie</label>
+              <label className="text-sm font-medium ui-title">Cookie</label>
               <textarea
                 rows={3}
                 value={settings.hdhive.cookie}
@@ -1359,7 +1359,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Browser Bridge 地址</label>
+              <label className="text-sm font-medium ui-title">Browser Bridge 地址</label>
               <input
                 type="url"
                 value={settings.hdhive.browserBridge.baseUrl}
@@ -1369,7 +1369,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-700">Browser Bridge Token</label>
+              <label className="text-sm font-medium ui-title">Browser Bridge Token</label>
               <input
                 type="password"
                 value={settings.hdhive.browserBridge.token}
@@ -1381,14 +1381,14 @@ const SettingsTab: React.FC = () => {
             <div className="space-y-2 md:col-span-2">
               <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
                 <div>
-                  <div className="text-sm font-medium text-slate-700">启用 Browser Bridge 签名模式</div>
-                  <div className="mt-1 text-xs text-slate-500">用于 `/api/customer/*`、网页登录取 Cookie、签到和资源解锁。</div>
+                  <div className="text-sm font-medium ui-title">启用 Browser Bridge 签名模式</div>
+                  <div className="mt-1 text-xs ui-muted">用于 `/api/customer/*`、网页登录取 Cookie、签到和资源解锁。</div>
                 </div>
                 <Switch checked={settings.hdhive.browserBridge.enabled} onChange={(v) => updateSettings('hdhive.browserBridge.enabled', v)} />
               </div>
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">API Key</label>
+              <label className="text-sm font-medium ui-title">API Key</label>
               <input
                 type="password"
                 value={settings.hdhive.apiKey}
@@ -1398,7 +1398,7 @@ const SettingsTab: React.FC = () => {
               />
             </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium text-slate-700">资源解锁 Action ID</label>
+              <label className="text-sm font-medium ui-title">资源解锁 Action ID</label>
               <input
                 type="text"
                 value={settings.hdhive.resourceUnlockActionId}
@@ -1410,8 +1410,8 @@ const SettingsTab: React.FC = () => {
             <div className="space-y-3 md:col-span-2">
               <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
                 <div>
-                  <div className="text-sm font-medium text-slate-700">每日自动签到</div>
-                  <div className="mt-1 text-xs text-slate-500">依赖 Browser Bridge 签名模式，按下方 Cron 定时调用影巢签到接口并推送积分结果。</div>
+                  <div className="text-sm font-medium ui-title">每日自动签到</div>
+                  <div className="mt-1 text-xs ui-muted">依赖 Browser Bridge 签名模式，按下方 Cron 定时调用影巢签到接口并推送积分结果。</div>
                 </div>
                 <Switch checked={settings.hdhive.checkin.enabled} onChange={(v) => updateSettings('hdhive.checkin.enabled', v)} />
               </div>
@@ -1420,8 +1420,8 @@ const SettingsTab: React.FC = () => {
                   <div className="space-y-2">
                     <div className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3">
                       <div>
-                        <div className="text-sm font-medium text-slate-700">随机签到时间</div>
-                        <div className="mt-1 text-xs text-slate-500">开启后每天在时间窗口内随机一次，关闭后按固定 Cron 执行。</div>
+                        <div className="text-sm font-medium ui-title">随机签到时间</div>
+                        <div className="mt-1 text-xs ui-muted">开启后每天在时间窗口内随机一次，关闭后按固定 Cron 执行。</div>
                       </div>
                       <Switch checked={settings.hdhive.checkin.randomTimeEnabled} onChange={(v) => updateSettings('hdhive.checkin.randomTimeEnabled', v)} />
                     </div>
@@ -1429,8 +1429,8 @@ const SettingsTab: React.FC = () => {
                   <div className="flex items-end">
                     <div className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3">
                       <div>
-                        <div className="text-sm font-medium text-slate-700">自动过人机校验</div>
-                        <div className="mt-1 text-xs text-slate-500">遇到 space_captcha 时让 Bridge 浏览器侧自动验证。</div>
+                        <div className="text-sm font-medium ui-title">自动过人机校验</div>
+                        <div className="mt-1 text-xs ui-muted">遇到 space_captcha 时让 Bridge 浏览器侧自动验证。</div>
                       </div>
                       <Switch checked={settings.hdhive.checkin.autoVerify} onChange={(v) => updateSettings('hdhive.checkin.autoVerify', v)} />
                     </div>
@@ -1438,7 +1438,7 @@ const SettingsTab: React.FC = () => {
                   {settings.hdhive.checkin.randomTimeEnabled ? (
                     <>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700">开始时间</label>
+                        <label className="text-sm font-medium ui-title">开始时间</label>
                         <input
                           type="time"
                           value={settings.hdhive.checkin.randomWindowStart}
@@ -1447,7 +1447,7 @@ const SettingsTab: React.FC = () => {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700">结束时间</label>
+                        <label className="text-sm font-medium ui-title">结束时间</label>
                         <input
                           type="time"
                           value={settings.hdhive.checkin.randomWindowEnd}
@@ -1458,7 +1458,7 @@ const SettingsTab: React.FC = () => {
                     </>
                   ) : (
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-700">签到 Cron</label>
+                      <label className="text-sm font-medium ui-title">签到 Cron</label>
                       <input
                         type="text"
                         value={settings.hdhive.checkin.cron}
@@ -1477,10 +1477,10 @@ const SettingsTab: React.FC = () => {
 
       {/* Custom Push Management */}
       <section id="settings-custom-push" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-custom-push')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Bell size={24} className="text-[#b3261e]" /> 自定义推送列表
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="flex justify-end">
             <button 
               type="button"
@@ -1506,8 +1506,8 @@ const SettingsTab: React.FC = () => {
                       <Bell size={20} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-900 truncate">{push.name}</p>
-                      <p className="text-xs text-slate-500 truncate max-w-[300px]">{push.description || push.url}</p>
+                      <p className="text-sm font-medium ui-title truncate">{push.name}</p>
+                      <p className="text-xs ui-muted truncate max-w-[300px]">{push.description || push.url}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1547,10 +1547,10 @@ const SettingsTab: React.FC = () => {
 
       {/* Regex Presets Management */}
       <section id="settings-regex" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-regex')}>
-        <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
+        <h3 className="text-xl font-medium ui-title flex items-center gap-3">
           <Cpu size={24} className="text-[#0b57d0]" /> 正则预设列表
         </h3>
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
+        <div className="ui-card p-8 space-y-6 shadow-sm">
           <div className="flex justify-end">
             <button 
               type="button"
@@ -1576,8 +1576,8 @@ const SettingsTab: React.FC = () => {
                       <Cpu size={20} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-900 truncate">{preset.name}</p>
-                      <p className="text-xs text-slate-500 truncate max-w-[300px]">{preset.description || `${preset.sourceRegex} -> ${preset.targetRegex}`}</p>
+                      <p className="text-sm font-medium ui-title truncate">{preset.name}</p>
+                      <p className="text-xs ui-muted truncate max-w-[300px]">{preset.description || `${preset.sourceRegex} -> ${preset.targetRegex}`}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
