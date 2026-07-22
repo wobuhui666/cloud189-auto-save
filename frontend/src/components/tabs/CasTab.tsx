@@ -22,6 +22,7 @@ import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import type { TabType } from '../../App';
 import { useDialog } from '../ui/Dialog';
 import { useToast } from '../ui/Toast';
+import { MEDIA_SECTION_STORAGE_KEY } from '../ui/SettingsNav';
 
 interface Account {
   id: number;
@@ -499,11 +500,18 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-slate-900">CAS 秒传</h2>
           <button
-            onClick={() => onNavigate?.('media')}
-            className="p-2 bg-white border border-slate-300 rounded-full hover:bg-slate-50 transition-all text-slate-600 shadow-sm"
-            title="在媒体设置中配置"
+            type="button"
+            onClick={() => {
+              try {
+                sessionStorage.setItem(MEDIA_SECTION_STORAGE_KEY, 'media-cas');
+              } catch {}
+              onNavigate?.('media');
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 rounded-full hover:bg-slate-50 transition-all text-slate-600 shadow-sm text-sm"
+            title="在媒体设置中配置秒传"
           >
-            <Settings size={18} />
+            <Settings size={16} />
+            秒传设置
           </button>
         </div>
         <div className="flex items-center gap-3">

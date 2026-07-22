@@ -21,6 +21,7 @@ import Checkbox from '../ui/Checkbox';
 import Switch from '../ui/Switch';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
+import SettingsNav, { type SettingsNavItem, scrollToSettingsSection, MEDIA_SECTION_STORAGE_KEY } from '../ui/SettingsNav';
 
 interface MediaSettings {
   strm: {
@@ -152,6 +153,29 @@ const initialSettings: MediaSettings = {
 
 const MediaTab: React.FC = () => {
   const toast = useToast();
+  const mediaNavItems: SettingsNavItem[] = [
+    { id: 'media-ai', label: 'AI 重命名', keywords: ['openai', 'ai', '重命名'] },
+    { id: 'media-strm', label: 'STRM', keywords: ['strm', '中转'] },
+    { id: 'media-cas', label: '秒传', keywords: ['cas', '秒传', '家庭中转'] },
+    { id: 'media-emby', label: 'Emby', keywords: ['emby', 'jellyfin'] },
+    { id: 'media-cloudsaver', label: 'CloudSaver', keywords: ['cloudsaver'] },
+    { id: 'media-hdhive', label: '影巢', keywords: ['hdhive', '影巢', 'cookie'] },
+    { id: 'media-bridge', label: 'Alist', keywords: ['alist'] },
+    { id: 'media-oauth', label: 'TMDB 刮削', keywords: ['tmdb', '刮削'] },
+    { id: 'media-alist', label: '媒体库分类', keywords: ['分类', 'organizer', '电影'] },
+    { id: 'media-regex', label: '正则预设', keywords: ['正则', 'regex'] },
+  ];
+  const [visibleSectionIds, setVisibleSectionIds] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    try {
+      const target = sessionStorage.getItem(MEDIA_SECTION_STORAGE_KEY);
+      if (target) {
+        sessionStorage.removeItem(MEDIA_SECTION_STORAGE_KEY);
+        scrollToSettingsSection(target);
+      }
+    } catch {}
+  }, []);
   const dialog = useDialog();
   const [settings, setSettings] = useState<MediaSettings>(initialSettings);
   const [regexPresets, setRegexPresets] = useState<RegexPreset[]>([]);
@@ -379,9 +403,11 @@ const MediaTab: React.FC = () => {
   }
 
   return (
-    <div className="max-w-4xl space-y-8 pb-12">
+    <div className="max-w-4xl space-y-8 pb-12 pb-8">
+      <SettingsNav items={mediaNavItems} onVisibleChange={setVisibleSectionIds} />
+
       {/* OpenAI / AI Settings */}
-      <section className="space-y-4">
+      <section id="media-ai" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-ai')}>
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
             <Cpu size={24} className="text-[#0b57d0]" /> AI 辅助重命名
@@ -463,7 +489,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* STRM Settings */}
-      <section className="space-y-4">
+      <section id="media-strm" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-strm')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Link2 size={24} className="text-[#0b57d0]" /> STRM 设置
         </h3>
@@ -502,7 +528,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* CAS 秒传设置 */}
-      <section className="space-y-4">
+      <section id="media-cas" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-cas')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Zap size={24} className="text-[#0b57d0]" /> 秒传设置
         </h3>
@@ -583,7 +609,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* Emby Settings */}
-      <section className="space-y-4">
+      <section id="media-emby" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-emby')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Tv size={24} className="text-[#0b57d0]" /> Emby 设置
         </h3>
@@ -707,7 +733,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* CloudSaver Settings */}
-      <section className="space-y-4">
+      <section id="media-cloudsaver" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-cloudsaver')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Monitor size={24} className="text-[#0b57d0]" /> CloudSaver 设置
         </h3>
@@ -747,7 +773,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* Hdhive Settings */}
-      <section className="space-y-4">
+      <section id="media-hdhive" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-hdhive')}>
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
             <Search size={24} className="text-[#0b57d0]" /> 影巢设置
@@ -789,7 +815,7 @@ const MediaTab: React.FC = () => {
 
       {/* Alist & TMDB */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <section className="space-y-4">
+        <section id="media-bridge" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-bridge')}>
           <div className="flex items-center justify-between">
             <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
               <Globe size={24} className="text-[#0b57d0]" /> Alist 设置
@@ -820,7 +846,7 @@ const MediaTab: React.FC = () => {
           </div>
         </section>
 
-        <section className="space-y-4">
+        <section id="media-oauth" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-oauth')}>
           <div className="flex items-center justify-between">
             <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
               <Search size={24} className="text-[#0b57d0]" /> TMDB 刮削
@@ -844,7 +870,7 @@ const MediaTab: React.FC = () => {
       </div>
 
       {/* Media Organizer Settings */}
-      <section className="space-y-4">
+      <section id="media-alist" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-alist')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Settings size={24} className="text-[#0b57d0]" /> 媒体库分类命名
         </h3>
@@ -871,7 +897,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* Regex Presets Management */}
-      <section className="space-y-4">
+      <section id="media-regex" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('media-regex')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Settings size={24} className="text-[#0b57d0]" /> 正则预设管理
         </h3>
@@ -898,7 +924,7 @@ const MediaTab: React.FC = () => {
       </section>
 
       {/* Save Button */}
-      <div className="flex justify-end pt-4 gap-4 sticky bottom-8 z-10">
+      <div className="flex justify-end pt-4 gap-4 sticky bottom-8 z-10 pr-20 md:pr-24">
         <button 
           onClick={fetchData}
           className="px-8 py-3 bg-white border border-slate-300 text-slate-700 rounded-full font-medium shadow-lg hover:bg-slate-50 transition-all flex items-center gap-2"

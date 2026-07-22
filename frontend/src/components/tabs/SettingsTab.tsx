@@ -6,6 +6,7 @@ import Checkbox from '../ui/Checkbox';
 import Switch from '../ui/Switch';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
+import SettingsNav, { type SettingsNavItem } from '../ui/SettingsNav';
 
 const parseIntOr = (raw: string, fallback: number) => {
   if (raw === '' || raw === '-' ) return fallback;
@@ -264,6 +265,17 @@ const initialSettings: SettingsData = {
 const SettingsTab: React.FC = () => {
   const toast = useToast();
   const dialog = useDialog();
+  const settingsNavItems: SettingsNavItem[] = [
+    { id: 'settings-auth', label: '访问认证', keywords: ['认证', '用户名', '密码', 'api'] },
+    { id: 'settings-task', label: '任务设置', keywords: ['任务', '过期', '重试', 'cron', '回收站'] },
+    { id: 'settings-telegram', label: 'Telegram', keywords: ['telegram', 'tg', 'bot'] },
+    { id: 'settings-push', label: '消息推送', keywords: ['推送', '企业微信', 'bark', 'pushplus'] },
+    { id: 'settings-proxy', label: '网络代理', keywords: ['代理', 'proxy'] },
+    { id: 'settings-hdhive', label: '影巢资源', keywords: ['影巢', 'hdhive'] },
+    { id: 'settings-custom-push', label: '自定义推送', keywords: ['自定义推送', 'webhook'] },
+    { id: 'settings-regex', label: '正则预设', keywords: ['正则', 'regex'] },
+  ];
+  const [visibleSectionIds, setVisibleSectionIds] = useState<string[] | null>(null);
   const [settings, setSettings] = useState<SettingsData>(initialSettings);
   const [accounts, setAccounts] = useState<{id: number, username: string, alias?: string}[]>([]);
   const [loading, setLoading] = useState(true);
@@ -610,9 +622,11 @@ const SettingsTab: React.FC = () => {
   const selectedAccount = accounts.find(a => String(a.id) === settings.task.autoCreate.accountId);
 
   return (
-    <div className="max-w-4xl space-y-8">
+    <div className="max-w-4xl space-y-8 pb-8">
+      <SettingsNav items={settingsNavItems} onVisibleChange={setVisibleSectionIds} />
+
       {/* System Credentials */}
-      <section className="space-y-4">
+      <section id="settings-auth" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-auth')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Shield size={24} className="text-[#0b57d0]" /> 访问认证
         </h3>
@@ -660,7 +674,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* Task Settings */}
-      <section className="space-y-4">
+      <section id="settings-task" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-task')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Database size={24} className="text-[#0b57d0]" /> 任务设置
         </h3>
@@ -908,7 +922,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* Telegram Bot Settings */}
-      <section className="space-y-4">
+      <section id="settings-telegram" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-telegram')}>
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
             <Send size={24} className="text-[#0b57d0]" /> Telegram 机器人
@@ -1040,7 +1054,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* Push Notifications */}
-      <section className="space-y-4">
+      <section id="settings-push" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-push')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Bell size={24} className="text-[#b3261e]" /> 消息推送
         </h3>
@@ -1211,7 +1225,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* Network Proxy */}
-      <section className="space-y-4">
+      <section id="settings-proxy" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-proxy')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Globe size={24} className="text-[#0b57d0]" /> 网络代理
         </h3>
@@ -1282,7 +1296,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* HDHive */}
-      <section className="space-y-4">
+      <section id="settings-hdhive" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-hdhive')}>
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
             <Search size={24} className="text-[#0b57d0]" /> 影巢资源
@@ -1462,7 +1476,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* Custom Push Management */}
-      <section className="space-y-4">
+      <section id="settings-custom-push" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-custom-push')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Bell size={24} className="text-[#b3261e]" /> 自定义推送列表
         </h3>
@@ -1532,7 +1546,7 @@ const SettingsTab: React.FC = () => {
       </section>
 
       {/* Regex Presets Management */}
-      <section className="space-y-4">
+      <section id="settings-regex" className="space-y-4 scroll-mt-24" hidden={visibleSectionIds != null && !visibleSectionIds.includes('settings-regex')}>
         <h3 className="text-xl font-medium text-slate-900 flex items-center gap-3">
           <Cpu size={24} className="text-[#0b57d0]" /> 正则预设列表
         </h3>
@@ -1606,7 +1620,7 @@ const SettingsTab: React.FC = () => {
         </div>
       </section>
 
-      <div className="flex justify-end pt-4 gap-4 sticky bottom-8 z-10">
+      <div className="flex justify-end pt-4 gap-4 sticky bottom-8 z-10 pr-20 md:pr-24">
         <button 
           type="button"
           onClick={loadSettings}
