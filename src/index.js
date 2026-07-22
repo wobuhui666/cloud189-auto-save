@@ -8,6 +8,7 @@ const { Cloud189Service } = require('./services/cloud189');
 const { MessageUtil } = require('./services/message');
 const { CacheManager } = require('./services/CacheManager')
 const ConfigService = require('./services/ConfigService');
+const PasswordCrypto = require('./utils/passwordCrypto');
 const packageJson = require('../package.json');
 const session = require('express-session');
 const FileStore = require('session-file-store')(session);
@@ -300,76 +301,133 @@ const prepareSettingsForSave = async (settings) => {
     return settings;
 };
 
+const getByPath = (obj, path) => {
+    if (!obj || !path) return undefined;
+    return String(path).split('.').reduce((cur, key) => (cur == null ? undefined : cur[key]), obj);
+};
+
+const setByPath = (obj, path, value) => {
+    const keys = String(path).split('.');
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+        const key = keys[i];
+        if (cur[key] == null || typeof cur[key] !== 'object') {
+            cur[key] = {};
+        }
+        cur = cur[key];
+    }
+    cur[keys[keys.length - 1]] = value;
+};
+
+// value 清空 + 可选 has 标记；omit 表示前端根本不需要该字段
+const SENSITIVE_SETTING_FIELDS = [
+    { path: 'system.password', clear: true },
+    { path: 'system.apiKey', has: 'system.hasApiKey' },
+    { path: 'system.sessionSecret', omit: true },
+    { path: 'system.streamProxySecret', omit: true },
+    { path: 'system.passwordEncryptionKey', omit: true },
+    { path: 'telegram.bot.botToken', has: 'telegram.bot.hasBotToken' },
+    { path: 'telegram.botToken', has: 'telegram.hasBotToken' },
+    { path: 'proxy.password', has: 'proxy.hasPassword' },
+    { path: 'bark.key', has: 'bark.hasKey' },
+    { path: 'pushplus.token', has: 'pushplus.hasToken' },
+    { path: 'wecom.webhook', has: 'wecom.hasWebhook' },
+    { path: 'wxpusher.spt', has: 'wxpusher.hasSpt' },
+    { path: 'pt.downloader.password', has: 'pt.downloader.hasPassword' },
+    { path: 'openai.apiKey', has: 'openai.hasApiKey' },
+    { path: 'emby.apiKey', has: 'emby.hasApiKey' },
+    { path: 'emby.webhookSecret', has: 'emby.hasWebhookSecret' },
+    { path: 'cloudSaver.password', has: 'cloudSaver.hasPassword' },
+    { path: 'alist.apiKey', has: 'alist.hasApiKey' },
+    { path: 'tmdb.apiKey', has: 'tmdb.hasApiKey' },
+    { path: 'tmdb.tmdbApiKey', has: 'tmdb.hasTmdbApiKey' },
+    { path: 'hdhive.cookie', has: 'hdhive.hasCookie' },
+    { path: 'hdhive.password', has: 'hdhive.hasPassword' },
+    { path: 'hdhive.apiKey', has: 'hdhive.hasApiKey' },
+    { path: 'hdhive.accessToken', has: 'hdhive.hasAccessToken' },
+    { path: 'hdhive.refreshToken', has: 'hdhive.hasRefreshToken' },
+    { path: 'hdhive.browserBridge.token', has: 'hdhive.browserBridge.hasToken' },
+];
+
 const redactSettingsForClient = (settings = {}) => {
     const redacted = JSON.parse(JSON.stringify(settings || {}));
-    if (redacted.system?.password) {
-        redacted.system.password = '';
-    }
-    if (redacted.hdhive?.cookie) {
-        redacted.hdhive.cookie = '';
-        redacted.hdhive.hasCookie = true;
-    } else if (redacted.hdhive) {
-        redacted.hdhive.hasCookie = false;
-    }
-    if (redacted.hdhive?.password) {
-        redacted.hdhive.password = '';
-        redacted.hdhive.hasPassword = true;
-    } else if (redacted.hdhive) {
-        redacted.hdhive.hasPassword = false;
-    }
-    if (redacted.hdhive?.apiKey) {
-        redacted.hdhive.apiKey = '';
-        redacted.hdhive.hasApiKey = true;
-    } else if (redacted.hdhive) {
-        redacted.hdhive.hasApiKey = false;
-    }
-    if (redacted.hdhive?.browserBridge?.token) {
-        redacted.hdhive.browserBridge.token = '';
-        redacted.hdhive.browserBridge.hasToken = true;
-    } else if (redacted.hdhive?.browserBridge) {
-        redacted.hdhive.browserBridge.hasToken = false;
-    }
-    if (redacted.emby?.webhookSecret) {
-        redacted.emby.webhookSecret = '';
-        redacted.emby.hasWebhookSecret = true;
-    } else if (redacted.emby) {
-        redacted.emby.hasWebhookSecret = false;
+    for (const field of SENSITIVE_SETTING_FIELDS) {
+        const value = getByPath(redacted, field.path);
+        const hasValue = value != null && String(value).trim() !== '';
+        if (field.omit) {
+            const keys = field.path.split('.');
+            let cur = redacted;
+            for (let i = 0; i < keys.length - 1; i++) {
+                if (!cur?.[keys[i]]) {
+                    cur = null;
+                    break;
+                }
+                cur = cur[keys[i]];
+            }
+            if (cur && Object.prototype.hasOwnProperty.call(cur, keys[keys.length - 1])) {
+                delete cur[keys[keys.length - 1]];
+            }
+            continue;
+        }
+        // 仅当父对象存在时写 has 标记，避免凭空造出配置节点
+        const parentPath = field.path.includes('.')
+            ? field.path.slice(0, field.path.lastIndexOf('.'))
+            : null;
+        const parentExists = !parentPath || getByPath(redacted, parentPath) != null;
+        if (parentExists && field.has) {
+            setByPath(redacted, field.has, hasValue);
+        }
+        if (parentExists) {
+            setByPath(redacted, field.path, '');
+        }
     }
     return redacted;
 };
 
-const preserveHdhiveSensitiveOnEmptyInput = (settings = {}) => {
-    if (settings.hdhive) {
-        const currentHdhive = ConfigService.getConfigValue('hdhive', {}) || {};
-        const nextCookie = String(settings.hdhive.cookie || '').trim();
-        const nextApiKey = String(settings.hdhive.apiKey || '').trim();
-        const nextPassword = String(settings.hdhive.password || '').trim();
-        const nextBridgeToken = String(settings.hdhive.browserBridge?.token || '').trim();
-        settings.hdhive = {
-            ...currentHdhive,
-            ...settings.hdhive,
-            cookie: nextCookie || ConfigService.getConfigValue('hdhive.cookie', ''),
-            apiKey: nextApiKey || ConfigService.getConfigValue('hdhive.apiKey', ''),
-            password: nextPassword || ConfigService.getConfigValue('hdhive.password', ''),
-            browserBridge: {
-                ...(currentHdhive.browserBridge || {}),
-                ...(settings.hdhive.browserBridge || {}),
-                token: nextBridgeToken || ConfigService.getConfigValue('hdhive.browserBridge.token', '')
-            }
-        };
+// 请求体敏感字段为空时保留服务端已有值，避免前端脱敏后回写把密钥抹掉
+// 注意 ConfigService.setConfig 是浅合并：settings.system 整对象替换时，
+// 必须把 sessionSecret 等 omit 字段写回请求体，否则会被冲掉
+const preserveSensitiveOnEmptyInput = (settings = {}) => {
+    if (!settings || typeof settings !== 'object') {
+        return settings;
     }
-    return settings;
-};
-
-const preserveEmbySensitiveOnEmptyInput = (settings = {}) => {
-    if (settings.emby) {
-        const currentEmby = ConfigService.getConfigValue('emby', {}) || {};
-        const nextWebhookSecret = String(settings.emby.webhookSecret || '').trim();
-        settings.emby = {
-            ...currentEmby,
-            ...settings.emby,
-            webhookSecret: nextWebhookSecret || ConfigService.getConfigValue('emby.webhookSecret', '')
-        };
+    for (const field of SENSITIVE_SETTING_FIELDS) {
+        const parentPath = field.path.includes('.')
+            ? field.path.slice(0, field.path.lastIndexOf('.'))
+            : null;
+        // 仅当请求体带了该父节点时才处理，避免无端展开
+        if (parentPath && getByPath(settings, parentPath) == null) {
+            continue;
+        }
+        if (field.omit) {
+            // sessionSecret / streamProxySecret / passwordEncryptionKey 仅服务端持有
+            const current = ConfigService.getConfigValue(field.path, '');
+            if (current != null && current !== '') {
+                setByPath(settings, field.path, current);
+            } else {
+                const keys = field.path.split('.');
+                let cur = settings;
+                for (let i = 0; i < keys.length - 1; i++) {
+                    if (!cur?.[keys[i]]) {
+                        cur = null;
+                        break;
+                    }
+                    cur = cur[keys[i]];
+                }
+                if (cur && Object.prototype.hasOwnProperty.call(cur, keys[keys.length - 1])) {
+                    delete cur[keys[keys.length - 1]];
+                }
+            }
+            continue;
+        }
+        const incoming = getByPath(settings, field.path);
+        if (incoming != null && String(incoming).trim() !== '') {
+            continue;
+        }
+        const current = ConfigService.getConfigValue(field.path, '');
+        if (current != null && current !== '') {
+            setByPath(settings, field.path, current);
+        }
     }
     return settings;
 };
@@ -888,13 +946,32 @@ AppDataSource.initialize().then(async () => {
         if (process.getuid && process.getuid() === 0) {
             await fs.chown(strmBaseDir, parseInt(process.env.PUID || 0), parseInt(process.env.PGID || 0));
         }
-        await fs.chmod(strmBaseDir, 0o777);
+        await fs.chmod(strmBaseDir, 0o755);
         console.log('STRM目录权限初始化完成');
     } catch (error) {
         console.error('STRM目录权限初始化失败:', error);
     }
 
     const accountRepo = AppDataSource.getRepository(Account);
+    // 仅将库中仍为明文的 password/cookies 经 transformer 加密写回
+    try {
+        const rawRows = await AppDataSource.query('SELECT id, password, cookies FROM account');
+        let upgraded = 0;
+        for (const row of rawRows || []) {
+            const needsPassword = row.password && !PasswordCrypto.isEncrypted(row.password);
+            const needsCookies = row.cookies && !PasswordCrypto.isEncrypted(row.cookies);
+            if (!needsPassword && !needsCookies) continue;
+            const account = await accountRepo.findOneBy({ id: row.id });
+            if (!account) continue;
+            await accountRepo.save(account);
+            upgraded++;
+        }
+        if (upgraded > 0) {
+            console.log(`账号凭据加密规范化完成: ${upgraded} 条`);
+        }
+    } catch (error) {
+        console.warn('账号凭据加密规范化跳过:', error.message);
+    }
     const taskRepo = AppDataSource.getRepository(Task);
     const commonFolderRepo = AppDataSource.getRepository(CommonFolder);
     const subscriptionRepo = AppDataSource.getRepository(Subscription);
@@ -971,7 +1048,7 @@ AppDataSource.initialize().then(async () => {
         const accounts = await accountRepo.find();
         // 获取容量
         for (const account of accounts) {
-            
+
             account.capacity = {
                 cloudCapacityInfo: {usedSize:0,totalSize:0},
                 familyCapacityInfo: {usedSize:0,totalSize:0}
@@ -991,6 +1068,11 @@ AppDataSource.initialize().then(async () => {
             account.driveLabel = account.accountType === 'family' ? '家庭云' : '个人云';
             // username脱敏
             account.username = maskUsername(account.username);
+            // 凭据不得下发前端
+            account.hasPassword = !!account.password;
+            account.hasCookies = !!account.cookies;
+            delete account.password;
+            delete account.cookies;
         }
         res.json({ success: true, data: accounts });
     });
@@ -1142,16 +1224,52 @@ AppDataSource.initialize().then(async () => {
 
     app.post('/api/accounts', async (req, res) => {
         try {
-            const account = accountRepo.create(req.body);
+            const body = req.body || {};
+            const accountId = body.id != null && body.id !== '' ? Number(body.id) : null;
+            const isUpdate = Number.isInteger(accountId) && accountId > 0;
+            let existing = null;
+            if (isUpdate) {
+                existing = await accountRepo.findOneBy({ id: accountId });
+                if (!existing) {
+                    return res.json({ success: false, error: '账号不存在' });
+                }
+            }
+
+            const incomingPassword = body.password != null ? String(body.password) : '';
+            const incomingCookies = body.cookies != null ? String(body.cookies) : '';
+            const password = incomingPassword.trim()
+                ? incomingPassword
+                : (isUpdate ? (existing.password || '') : '');
+            const cookies = incomingCookies.trim()
+                ? incomingCookies
+                : (isUpdate ? (existing.cookies || '') : '');
+
+            if (!isUpdate && !password && !cookies) {
+                return res.json({ success: false, error: '密码和Cookie不能同时为空' });
+            }
+
+            const account = isUpdate
+                ? accountRepo.merge(existing, {
+                    ...body,
+                    id: existing.id,
+                    password,
+                    cookies,
+                })
+                : accountRepo.create({
+                    ...body,
+                    password,
+                    cookies,
+                });
+
             account.accountType = account.accountType || 'personal';
             account.familyId = account.accountType === 'family' ? (account.familyId || '') : null;
-            account.familyFolderId = account.accountType === 'family' ? (req.body.familyFolderId || account.familyFolderId || '') : '';
+            account.familyFolderId = account.accountType === 'family' ? (body.familyFolderId || account.familyFolderId || '') : '';
             Cloud189Service.invalidateByUsername(account.username);
             // 尝试登录, 登录成功写入store, 如果需要验证码, 则返回用户验证码图片
-            if (!account.username.startsWith('n_') && account.password) {
-                // 尝试登录
+            if (!account.username.startsWith('n_') && account.password && incomingPassword.trim()) {
+                // 仅当本次提交了新密码时尝试登录，避免「留空不改」误触发
                 const cloud189 = Cloud189Service.getInstance(account);
-                const loginResult = await cloud189.login(account.username, account.password, req.body.validateCode);
+                const loginResult = await cloud189.login(account.username, account.password, body.validateCode);
                 if (!loginResult.success) {
                     if (loginResult.code == "NEED_CAPTCHA") {
                         res.json({
@@ -2294,10 +2412,8 @@ AppDataSource.initialize().then(async () => {
     })
 
     app.post('/api/settings', async (req, res) => {
-        const settings = preserveEmbySensitiveOnEmptyInput(
-            preserveHdhiveSensitiveOnEmptyInput(
-                await prepareSettingsForSave(normalizeTelegramSettings(req.body))
-            )
+        const settings = preserveSensitiveOnEmptyInput(
+            await prepareSettingsForSave(normalizeTelegramSettings(req.body))
         );
         SchedulerService.handleScheduleTasks(settings,taskService);
         ConfigService.setConfig(settings)
@@ -2353,9 +2469,7 @@ AppDataSource.initialize().then(async () => {
     // 保存媒体配置
     app.post('/api/settings/media', async (req, res) => {
         try {
-            const settings = preserveEmbySensitiveOnEmptyInput(
-                preserveHdhiveSensitiveOnEmptyInput(req.body || {})
-            );
+            const settings = preserveSensitiveOnEmptyInput(req.body || {});
             // 如果cloudSaver的配置变更 就清空cstoken.json
             if (settings.cloudSaver?.baseUrl != ConfigService.getConfigValue('cloudSaver.baseUrl')
             || settings.cloudSaver?.username != ConfigService.getConfigValue('cloudSaver.username')

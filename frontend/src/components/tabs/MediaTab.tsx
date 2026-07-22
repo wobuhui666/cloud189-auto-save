@@ -31,6 +31,7 @@ interface MediaSettings {
     enable: boolean;
     serverUrl: string;
     apiKey: string;
+    hasApiKey?: boolean;
     webhookSecret: string;
     hasWebhookSecret?: boolean;
     allowUnauthenticatedWebhook: boolean;
@@ -48,6 +49,7 @@ interface MediaSettings {
     baseUrl: string;
     username: string;
     password: string;
+    hasPassword?: boolean;
   };
   hdhive: {
     enabled: boolean;
@@ -58,11 +60,13 @@ interface MediaSettings {
   tmdb: {
     enableScraper: boolean;
     tmdbApiKey: string;
+    hasTmdbApiKey?: boolean;
   };
   openai: {
     enable: boolean;
     baseUrl: string;
     apiKey: string;
+    hasApiKey?: boolean;
     model: string;
     flowControlEnabled: boolean;
     rename: {
@@ -74,6 +78,7 @@ interface MediaSettings {
     enable: boolean;
     baseUrl: string;
     apiKey: string;
+    hasApiKey?: boolean;
   };
   organizer: {
     categories: {
@@ -108,24 +113,26 @@ const initialSettings: MediaSettings = {
     enable: false,
     serverUrl: '',
     apiKey: '',
+    hasApiKey: false,
     webhookSecret: '',
     hasWebhookSecret: false,
     allowUnauthenticatedWebhook: false,
     proxy: { enable: false, port: 8097 },
     prewarm: { enable: false, sessionPollIntervalMs: 30000, dedupeTtlMs: 300000 }
   },
-  cloudSaver: { baseUrl: '', username: '', password: '' },
+  cloudSaver: { baseUrl: '', username: '', password: '', hasPassword: false },
   hdhive: { enabled: false, baseUrl: 'https://hdhive.com', cookie: '', hasCookie: false },
-  tmdb: { enableScraper: false, tmdbApiKey: '' },
-  openai: { 
-    enable: false, 
-    baseUrl: '', 
-    apiKey: '', 
-    model: '', 
+  tmdb: { enableScraper: false, tmdbApiKey: '', hasTmdbApiKey: false },
+  openai: {
+    enable: false,
+    baseUrl: '',
+    apiKey: '',
+    hasApiKey: false,
+    model: '',
     flowControlEnabled: false,
-    rename: { template: '{name} - {se}{ext}', movieTemplate: '{name} ({year}){ext}' } 
+    rename: { template: '{name} - {se}{ext}', movieTemplate: '{name} ({year}){ext}' }
   },
-  alist: { enable: false, baseUrl: '', apiKey: '' },
+  alist: { enable: false, baseUrl: '', apiKey: '', hasApiKey: false },
   organizer: {
     categories: {
       tv: '电视剧',
@@ -181,19 +188,38 @@ const MediaTab: React.FC = () => {
           emby: {
             ...initialSettings.emby,
             ...fetched.emby,
+            apiKey: '',
+            hasApiKey: !!fetched.emby?.hasApiKey,
             webhookSecret: '',
             proxy: { ...initialSettings.emby.proxy, ...fetched.emby?.proxy },
             prewarm: { ...initialSettings.emby.prewarm, ...fetched.emby?.prewarm }
           },
-          cloudSaver: { ...initialSettings.cloudSaver, ...fetched.cloudSaver },
+          cloudSaver: {
+            ...initialSettings.cloudSaver,
+            ...fetched.cloudSaver,
+            password: '',
+            hasPassword: !!fetched.cloudSaver?.hasPassword,
+          },
           hdhive: { ...initialSettings.hdhive, ...fetched.hdhive, cookie: '' },
-          tmdb: { ...initialSettings.tmdb, ...fetched.tmdb },
+          tmdb: {
+            ...initialSettings.tmdb,
+            ...fetched.tmdb,
+            tmdbApiKey: '',
+            hasTmdbApiKey: !!(fetched.tmdb?.hasTmdbApiKey || fetched.tmdb?.hasApiKey),
+          },
           openai: {
             ...initialSettings.openai,
             ...fetched.openai,
+            apiKey: '',
+            hasApiKey: !!fetched.openai?.hasApiKey,
             rename: { ...initialSettings.openai.rename, ...fetched.openai?.rename }
           },
-          alist: { ...initialSettings.alist, ...fetched.alist },
+          alist: {
+            ...initialSettings.alist,
+            ...fetched.alist,
+            apiKey: '',
+            hasApiKey: !!fetched.alist?.hasApiKey,
+          },
           organizer: {
             ...initialSettings.organizer,
             ...fetched.organizer,
@@ -377,11 +403,11 @@ const MediaTab: React.FC = () => {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-700">API Key</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={settings.openai.apiKey}
                 onChange={e => updateSetting('openai.apiKey', e.target.value)}
-                placeholder="sk-..."
+                placeholder={settings.openai.hasApiKey ? '已保存 API Key；留空不覆盖' : 'sk-...'}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -571,6 +597,7 @@ const MediaTab: React.FC = () => {
                 type="password"
                 value={settings.emby.apiKey}
                 onChange={e => updateSetting('emby.apiKey', e.target.value)}
+                placeholder={settings.emby.hasApiKey ? '已保存 API Key；留空不覆盖' : 'Emby API Key'}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -703,6 +730,7 @@ const MediaTab: React.FC = () => {
                 type="password"
                 value={settings.cloudSaver.password}
                 onChange={e => updateSetting('cloudSaver.password', e.target.value)}
+                placeholder={settings.cloudSaver.hasPassword ? '已保存密码；留空不覆盖' : 'CloudSaver 密码'}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -773,10 +801,11 @@ const MediaTab: React.FC = () => {
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-500 block">Token</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={settings.alist.apiKey}
                 onChange={e => updateSetting('alist.apiKey', e.target.value)}
+                placeholder={settings.alist.hasApiKey ? '已保存 Token；留空不覆盖' : 'Alist Token'}
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -793,10 +822,11 @@ const MediaTab: React.FC = () => {
           <div className={`bg-white rounded-3xl border border-slate-200/60 p-6 space-y-4 shadow-sm transition-opacity ${!settings.tmdb.enableScraper && 'opacity-60 pointer-events-none'}`}>
             <div className="space-y-1">
               <label className="text-xs font-medium text-slate-500 block">TMDB API Key</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 value={settings.tmdb.tmdbApiKey}
                 onChange={e => updateSetting('tmdb.tmdbApiKey', e.target.value)}
+                placeholder={settings.tmdb.hasTmdbApiKey ? '已保存 API Key；留空不覆盖' : 'TMDB API Key'}
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>

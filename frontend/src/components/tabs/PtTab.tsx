@@ -88,6 +88,7 @@ interface DownloaderSettings {
   baseUrl: string;
   username: string;
   password: string;
+  hasPassword?: boolean;
   categoryPrefix: string;
   tagPrefix: string;
   insecureSkipTlsVerify: boolean;
@@ -342,7 +343,8 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           type: pt.downloader?.type || 'qbittorrent',
           baseUrl: pt.downloader?.baseUrl || '',
           username: pt.downloader?.username || '',
-          password: pt.downloader?.password || '',
+          password: '',
+          hasPassword: !!pt.downloader?.hasPassword,
           categoryPrefix: pt.downloader?.categoryPrefix || 'pt-sub-',
           tagPrefix: pt.downloader?.tagPrefix || 'pt-rel-',
           insecureSkipTlsVerify: !!pt.downloader?.insecureSkipTlsVerify
@@ -1342,8 +1344,13 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs text-slate-500">密码</label>
-                  <input type="password" value={settings.downloader.password} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, password: e.target.value } })}
-                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
+                  <input
+                    type="password"
+                    value={settings.downloader.password}
+                    onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, password: e.target.value } })}
+                    placeholder={settings.downloader.hasPassword ? '已保存密码；留空不覆盖' : 'qBittorrent 密码'}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none"
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs text-slate-500">分类前缀</label>
