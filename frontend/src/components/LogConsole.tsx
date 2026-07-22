@@ -232,7 +232,7 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
       onClose={onClose}
       title="系统实时日志"
       maxWidthClass="max-w-5xl"
-      contentClassName="px-5 md:px-8 pb-6 max-h-[70vh] overflow-y-auto custom-scrollbar"
+      contentClassName="px-5 md:px-8 pb-6 flex flex-col min-h-0 max-h-[min(70vh,640px)] overflow-hidden"
       footer={
         <div className="px-5 md:px-8 py-4 flex flex-col gap-4 border-t border-[var(--modal-border)] bg-white/70 dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between">
           <Checkbox
@@ -261,8 +261,8 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
         </div>
       }
     >
-      <div className="space-y-4 pt-5">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="space-y-4 pt-5 flex flex-col min-h-0 flex-1">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 shrink-0">
           <div className="rounded-2xl border border-[var(--modal-border)] bg-white px-4 py-3 dark:bg-slate-900/60">
             <div className="text-xs text-[var(--text-secondary)]">连接状态</div>
             <div className="mt-2 flex items-center gap-2 text-sm font-medium text-[var(--text-primary)]">
@@ -286,7 +286,7 @@ const LogConsole: React.FC<LogConsoleProps> = ({ isOpen, onClose }) => {
 
         <div
           ref={scrollRef}
-          className="h-[430px] overflow-y-auto rounded-2xl border border-[var(--modal-border)] bg-white p-3 custom-scrollbar dark:bg-slate-950/40"
+          className="h-[min(430px,50vh)] flex-1 min-h-[200px] overflow-y-auto rounded-2xl border border-[var(--modal-border)] bg-white p-3 custom-scrollbar dark:bg-slate-950/40"
         >
           {logs.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center text-center text-[var(--text-secondary)]">

@@ -118,7 +118,7 @@ export const ToastProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       {children}
       {typeof document !== 'undefined' &&
         createPortal(
-          <div className="fixed inset-x-0 bottom-6 z-[300] flex flex-col items-center gap-2 pointer-events-none px-4">
+          <div className="fixed inset-x-0 bottom-28 z-[500] flex flex-col items-center gap-2 pointer-events-none px-4">
             <AnimatePresence initial={false}>
               {toasts.map((toast) => {
                 const Icon = iconMap[toast.variant];

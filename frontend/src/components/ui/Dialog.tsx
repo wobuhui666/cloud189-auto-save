@@ -1,9 +1,9 @@
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState, ReactNode, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { AlertTriangle, HelpCircle, Info, AlertOctagon } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Info, AlertOctagon } from 'lucide-react';
 import { lockBodyScroll, unlockBodyScroll } from '../../lib/bodyScrollLock';
-import { pushOverlay, popOverlay, updateOverlay } from '../../lib/overlayStack';
+import { pushOverlay, popOverlay, updateOverlay, getOverlayZIndex } from '../../lib/overlayStack';
 
 export type DialogTone = 'info' | 'danger' | 'warning' | 'success';
 
@@ -45,7 +45,7 @@ const toneIconMap: Record<DialogTone, typeof AlertTriangle> = {
   info: Info,
   warning: AlertTriangle,
   danger: AlertOctagon,
-  success: HelpCircle,
+  success: CheckCircle2 as typeof AlertTriangle,
 };
 
 const toneStyleMap: Record<DialogTone, { iconBg: string; iconColor: string; confirmBg: string }> = {
@@ -173,6 +173,9 @@ const DialogRenderer: React.FC<RendererProps> = ({ dialog, onClose }) => {
     }
   }, [type]);
 
+  const overlayIdRef = useRef<number | null>(null);
+  const [z, setZ] = useState({ backdrop: 400, panel: 401 });
+
   useEffect(() => {
     lockBodyScroll();
     const overlayId = pushOverlay({
@@ -180,18 +183,23 @@ const DialogRenderer: React.FC<RendererProps> = ({ dialog, onClose }) => {
       onEscape: handleCancel,
       onEnter: type === 'prompt' && options.multiline ? undefined : handleConfirm,
     });
+    overlayIdRef.current = overlayId;
+    setZ(getOverlayZIndex(overlayId, 'dialog'));
 
     return () => {
       popOverlay(overlayId);
       unlockBodyScroll();
+      overlayIdRef.current = null;
     };
   }, [handleCancel, handleConfirm, type, options.multiline]);
 
   useEffect(() => {
-    // keep handlers fresh for stack top without re-register churn beyond deps above
-  }, []);
-
-  void updateOverlay;
+    if (overlayIdRef.current == null) return;
+    updateOverlay(overlayIdRef.current, {
+      onEscape: handleCancel,
+      onEnter: type === 'prompt' && options.multiline ? undefined : handleConfirm,
+    });
+  }, [handleCancel, handleConfirm, type, options.multiline]);
 
   const confirmText = options.confirmText ?? (type === 'prompt' ? '确定' : type === 'alert' ? '知道了' : '确认');
   const cancelText = options.cancelText ?? '取消';
@@ -203,7 +211,8 @@ const DialogRenderer: React.FC<RendererProps> = ({ dialog, onClose }) => {
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={handleCancel}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[400]"
+        style={{ zIndex: z.backdrop }}
+        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm"
       />
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -212,7 +221,8 @@ const DialogRenderer: React.FC<RendererProps> = ({ dialog, onClose }) => {
         transition={{ type: 'spring', stiffness: 380, damping: 30 }}
         role="dialog"
         aria-modal="true"
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] max-w-md rounded-[28px] border border-[var(--modal-border)] bg-[var(--modal-bg)] text-[var(--text-primary)] shadow-2xl z-[401] overflow-hidden"
+        style={{ zIndex: z.panel }}
+        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] max-w-md rounded-[28px] border border-[var(--modal-border)] bg-[var(--modal-bg)] text-[var(--text-primary)] shadow-2xl overflow-hidden"
       >
         <div className="px-6 pt-6 pb-2 flex items-start gap-4">
           {options.icon !== null && (

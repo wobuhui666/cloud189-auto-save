@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
 import { lockBodyScroll, unlockBodyScroll } from '../lib/bodyScrollLock';
-import { pushOverlay, popOverlay } from '../lib/overlayStack';
+import { pushOverlay, popOverlay, getOverlayZIndex } from '../lib/overlayStack';
 
 interface ModalProps {
   isOpen: boolean;
@@ -25,25 +26,41 @@ const Modal: React.FC<ModalProps> = ({
 }) => {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const [overlayId, setOverlayId] = useState<number | null>(null);
+  const [z, setZ] = useState({ backdrop: 200, panel: 201 });
 
   useEffect(() => {
     if (!isOpen) {
+      setOverlayId(null);
       return;
     }
 
     lockBodyScroll();
-    const overlayId = pushOverlay({
+    const id = pushOverlay({
       kind: 'modal',
       onEscape: () => onCloseRef.current()
     });
+    setOverlayId(id);
+    setZ(getOverlayZIndex(id, 'modal'));
 
     return () => {
-      popOverlay(overlayId);
+      popOverlay(id);
       unlockBodyScroll();
+      setOverlayId(null);
     };
   }, [isOpen]);
 
-  return (
+  // refresh z when stack depth changes after sibling opens
+  useEffect(() => {
+    if (overlayId == null) return;
+    setZ(getOverlayZIndex(overlayId, 'modal'));
+  }, [overlayId, isOpen]);
+
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
         <>
@@ -52,7 +69,8 @@ const Modal: React.FC<ModalProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200]"
+            style={{ zIndex: z.backdrop }}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm"
           />
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -60,7 +78,8 @@ const Modal: React.FC<ModalProps> = ({
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             role="dialog"
             aria-modal="true"
-            className={`fixed left-1/2 top-1/2 flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col ${maxWidthClass} rounded-[28px] border border-[var(--modal-border)] bg-[var(--modal-bg)] text-[var(--text-primary)] shadow-2xl z-[201] overflow-hidden`}
+            style={{ zIndex: z.panel }}
+            className={`fixed left-1/2 top-1/2 flex max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col ${maxWidthClass} rounded-[28px] border border-[var(--modal-border)] bg-[var(--modal-bg)] text-[var(--text-primary)] shadow-2xl overflow-hidden`}
           >
             <div className="px-8 py-6 flex shrink-0 items-center justify-between border-b border-[var(--modal-border)]">
               <h3 className="text-2xl font-normal text-[var(--text-primary)]">{title}</h3>
@@ -101,7 +120,8 @@ const Modal: React.FC<ModalProps> = ({
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 };
 

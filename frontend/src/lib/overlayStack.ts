@@ -1,4 +1,4 @@
-type OverlayKind = 'modal' | 'dialog';
+type OverlayKind = 'modal' | 'dialog' | 'drawer';
 
 interface OverlayEntry {
   id: number;
@@ -11,6 +11,13 @@ let nextId = 1;
 const stack: OverlayEntry[] = [];
 let listening = false;
 
+/** Base z-index for stack layers (backdrop = base + index*10, panel = +1) */
+const Z_BASE: Record<OverlayKind, number> = {
+  drawer: 150,
+  modal: 200,
+  dialog: 400,
+};
+
 const handleKeyDown = (event: KeyboardEvent) => {
   const top = stack[stack.length - 1];
   if (!top) {
@@ -19,6 +26,7 @@ const handleKeyDown = (event: KeyboardEvent) => {
 
   if (event.key === 'Escape') {
     event.preventDefault();
+    event.stopPropagation();
     top.onEscape();
     return;
   }
@@ -38,7 +46,8 @@ const ensureListener = () => {
   if (listening || typeof window === 'undefined') {
     return;
   }
-  window.addEventListener('keydown', handleKeyDown);
+  // capture phase so we win over App-level document listeners
+  window.addEventListener('keydown', handleKeyDown, true);
   listening = true;
 };
 
@@ -46,7 +55,7 @@ const maybeRemoveListener = () => {
   if (!listening || stack.length > 0 || typeof window === 'undefined') {
     return;
   }
-  window.removeEventListener('keydown', handleKeyDown);
+  window.removeEventListener('keydown', handleKeyDown, true);
   listening = false;
 };
 
@@ -79,4 +88,20 @@ export function updateOverlay(
   if (patch.onEnter !== undefined) {
     target.onEnter = patch.onEnter;
   }
+}
+
+/** Stack depth of this overlay (0-based among same/all); used for z-index stacking */
+export function getOverlayDepth(id: number): number {
+  return stack.findIndex((item) => item.id === id);
+}
+
+export function getOverlayZIndex(id: number, kind: OverlayKind = 'modal'): { backdrop: number; panel: number } {
+  const depth = Math.max(0, getOverlayDepth(id));
+  // each nested layer +10 so later modals sit above earlier ones
+  const base = Z_BASE[kind] + depth * 10;
+  return { backdrop: base, panel: base + 1 };
+}
+
+export function getStackSize(): number {
+  return stack.length;
 }
