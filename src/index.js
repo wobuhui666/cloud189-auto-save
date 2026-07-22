@@ -1490,21 +1490,34 @@ AppDataSource.initialize().then(async () => {
         }
     });
     // 任务相关API
-    app.get('/api/tasks', async (req, res) => {
-        const { status } = req.query;
-        const search = String(req.query.search || '').trim().slice(0, 100);
-        const shouldPaginate = req.query.page != null || req.query.pageSize != null || req.query.limit != null;
-        const page = parsePaginationInt(req.query.page, 1, Number.MAX_SAFE_INTEGER);
-        const pageSize = parsePaginationInt(req.query.pageSize || req.query.limit, 50, 200);
-        let whereClause = { }; // 用于构建最终的 where 条件
+    // feature 标签 → Task 布尔字段（与前端 TASK_FEATURE_FILTERS 对齐）
+    const TASK_FEATURE_FIELD_MAP = {
+        'lazy-strm': 'enableLazyStrm',
+        'cron': 'enableCron',
+        'organizer': 'enableOrganizer',
+        'keep-cas': 'keepCasAfterRestore'
+    };
 
-        // 基础条件（AND）
+    const buildTaskListWhere = ({ status, search, features, taskGroup }) => {
+        let whereClause = {};
         if (status && status !== 'all') {
             whereClause.status = status;
         }
         whereClause.enableSystemProxy = Or(IsNull(), false);
 
-        // 添加搜索过滤
+        const featureList = Array.isArray(features) ? features : [];
+        for (const feature of featureList) {
+            const field = TASK_FEATURE_FIELD_MAP[feature];
+            if (field) {
+                whereClause[field] = true;
+            }
+        }
+
+        const groupName = String(taskGroup || '').trim();
+        if (groupName) {
+            whereClause.taskGroup = groupName;
+        }
+
         if (search) {
             const searchConditions = [
                 { resourceName: Like(`%${search}%`) },
@@ -1515,14 +1528,30 @@ AppDataSource.initialize().then(async () => {
                 { account: { username: Like(`%${search}%`) } }
             ];
             if (Object.keys(whereClause).length > 0) {
-                whereClause = searchConditions.map(searchCond => ({
-                    ...whereClause, // 包含基础条件 (如 status)
-                    ...searchCond   // 包含一个搜索条件
+                whereClause = searchConditions.map((searchCond) => ({
+                    ...whereClause,
+                    ...searchCond
                 }));
-            }else{
+            } else {
                 whereClause = searchConditions;
             }
         }
+        return whereClause;
+    };
+
+    app.get('/api/tasks', async (req, res) => {
+        const { status } = req.query;
+        const search = String(req.query.search || '').trim().slice(0, 100);
+        const taskGroup = String(req.query.taskGroup || '').trim().slice(0, 100);
+        const features = String(req.query.features || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+        const shouldPaginate = req.query.page != null || req.query.pageSize != null || req.query.limit != null;
+        const page = parsePaginationInt(req.query.page, 1, Number.MAX_SAFE_INTEGER);
+        const pageSize = parsePaginationInt(req.query.pageSize || req.query.limit, 50, 200);
+        const whereClause = buildTaskListWhere({ status, search, features, taskGroup });
+
         const findOptions = {
             order: { id: 'DESC' },
             relations: {
@@ -1565,6 +1594,31 @@ AppDataSource.initialize().then(async () => {
                 }
             } : {})
         });
+    });
+
+    // 标签芯片：固定 feature + 全库出现过的 taskGroup（不受分页限制）
+    app.get('/api/tasks/filter-options', async (req, res) => {
+        try {
+            const rows = await taskRepo
+                .createQueryBuilder('task')
+                .select('DISTINCT task.taskGroup', 'taskGroup')
+                .where("task.taskGroup IS NOT NULL AND task.taskGroup != ''")
+                .andWhere('(task.enableSystemProxy IS NULL OR task.enableSystemProxy = 0)')
+                .orderBy('task.taskGroup', 'ASC')
+                .getRawMany();
+            const groups = rows
+                .map((r) => String(r.taskGroup || '').trim())
+                .filter(Boolean);
+            res.json({
+                success: true,
+                data: {
+                    features: Object.keys(TASK_FEATURE_FIELD_MAP),
+                    groups
+                }
+            });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
     });
 
     app.get('/api/organizer/tasks', async (req, res) => {

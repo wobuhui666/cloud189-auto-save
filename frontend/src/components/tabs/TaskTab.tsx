@@ -77,23 +77,6 @@ const TASK_FEATURE_FILTERS: Array<{
   { key: 'feature:keep-cas', label: '保留CAS', matches: (task) => Boolean(task.keepCasAfterRestore) }
 ];
 
-const getTaskFilterKeys = (task: Task) => {
-  const filterKeys: string[] = [];
-  const groupName = task.taskGroup?.trim();
-
-  if (groupName) {
-    filterKeys.push(`group:${groupName}`);
-  }
-
-  TASK_FEATURE_FILTERS.forEach((filterTag) => {
-    if (filterTag.matches(task)) {
-      filterKeys.push(filterTag.key);
-    }
-  });
-
-  return filterKeys;
-};
-
 const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const toast = useToast();
   const dialog = useDialog();
@@ -118,6 +101,8 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const [dropdownPos, setDropdownPos] = useState<{ top: number; right: number } | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
+  const [filterGroups, setFilterGroups] = useState<string[]>([]);
+
   const fetchTasks = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
@@ -128,6 +113,21 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       });
       if (debouncedSearchTerm) {
         params.set('search', debouncedSearchTerm);
+      }
+      const featureKeys = activeTagFilters
+        .filter((key) => key.startsWith('feature:'))
+        .map((key) => key.slice('feature:'.length));
+      const groupKeys = activeTagFilters
+        .filter((key) => key.startsWith('group:'))
+        .map((key) => key.slice('group:'.length));
+      if (featureKeys.length > 0) {
+        params.set('features', featureKeys.join(','));
+      }
+      // 多分组时取第一个精确匹配（UI 芯片为 AND；多 group 罕见，用 search 补）
+      if (groupKeys.length === 1) {
+        params.set('taskGroup', groupKeys[0]);
+      } else if (groupKeys.length > 1) {
+        params.set('taskGroup', groupKeys[0]);
       }
       const response = await fetch(`/api/tasks?${params.toString()}`, { signal });
       const data = await response.json();
@@ -152,7 +152,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         setLoading(false);
       }
     }
-  }, [statusFilter, debouncedSearchTerm, page]);
+  }, [statusFilter, debouncedSearchTerm, page, activeTagFilters]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -163,13 +163,31 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, debouncedSearchTerm]);
+  }, [statusFilter, debouncedSearchTerm, activeTagFilters]);
 
   useEffect(() => {
     const controller = new AbortController();
     fetchTasks(controller.signal);
     return () => controller.abort();
   }, [fetchTasks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/tasks/filter-options');
+        const data = await res.json();
+        if (!cancelled && data.success) {
+          setFilterGroups(Array.isArray(data.data?.groups) ? data.data.groups : []);
+        }
+      } catch {
+        // ignore — chips 仍可用固定 feature
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -209,37 +227,22 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
     }
   }, [openTaskMenuId]);
 
+  // feature 固定展示；group 来自全库 filter-options（不再仅当前页）
   const availableTagFilters: TaskFilterTag[] = [
-    ...TASK_FEATURE_FILTERS
-      .filter((filterTag) => tasks.some((task) => filterTag.matches(task)))
-      .map((filterTag) => ({
-        key: filterTag.key,
-        label: filterTag.label,
-        tone: 'feature' as const
-      })),
-    ...Array.from(
-      new Set(
-        tasks
-          .map((task) => task.taskGroup?.trim())
-          .filter((taskGroup): taskGroup is string => Boolean(taskGroup))
-      )
-    )
-      .sort((left, right) => left.localeCompare(right, 'zh-CN'))
-      .map((taskGroup) => ({
-        key: `group:${taskGroup}`,
-        label: taskGroup,
-        tone: 'group' as const
-      }))
+    ...TASK_FEATURE_FILTERS.map((filterTag) => ({
+      key: filterTag.key,
+      label: filterTag.label,
+      tone: 'feature' as const
+    })),
+    ...filterGroups.map((taskGroup) => ({
+      key: `group:${taskGroup}`,
+      label: taskGroup,
+      tone: 'group' as const
+    }))
   ];
 
-  const filteredTasks = tasks.filter((task) => {
-    if (activeTagFilters.length === 0) {
-      return true;
-    }
-
-    const taskFilterKeys = new Set(getTaskFilterKeys(task));
-    return activeTagFilters.every((filterKey) => taskFilterKeys.has(filterKey));
-  });
+  // 服务端已按标签筛选，列表直接用 tasks
+  const filteredTasks = tasks;
 
   const allVisibleSelected =
     filteredTasks.length > 0 &&
