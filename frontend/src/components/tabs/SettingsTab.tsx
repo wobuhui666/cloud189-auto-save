@@ -7,6 +7,12 @@ import Switch from '../ui/Switch';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
 
+const parseIntOr = (raw: string, fallback: number) => {
+  if (raw === '' || raw === '-' ) return fallback;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+};
+
 interface CustomPushConfig {
   name: string;
   description: string;
@@ -665,7 +671,7 @@ const SettingsTab: React.FC = () => {
               <input 
                 type="number" 
                 value={settings.task.taskExpireDays}
-                onChange={(e) => updateSettings('task.taskExpireDays', parseInt(e.target.value))}
+                onChange={(e) => updateSettings('task.taskExpireDays', parseIntOr(e.target.value, 15))}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -674,7 +680,7 @@ const SettingsTab: React.FC = () => {
               <input 
                 type="number" 
                 value={settings.task.maxRetries}
-                onChange={(e) => updateSettings('task.maxRetries', parseInt(e.target.value))}
+                onChange={(e) => updateSettings('task.maxRetries', parseIntOr(e.target.value, 3))}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -683,7 +689,7 @@ const SettingsTab: React.FC = () => {
               <input 
                 type="number" 
                 value={settings.task.retryInterval}
-                onChange={(e) => updateSettings('task.retryInterval', parseInt(e.target.value))}
+                onChange={(e) => updateSettings('task.retryInterval', parseIntOr(e.target.value, 5))}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -730,7 +736,7 @@ const SettingsTab: React.FC = () => {
               <input 
                 type="number" 
                 value={settings.task.lazyFileRetentionHours}
-                onChange={(e) => updateSettings('task.lazyFileRetentionHours', parseInt(e.target.value))}
+                onChange={(e) => updateSettings('task.lazyFileRetentionHours', parseIntOr(e.target.value, 24))}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
@@ -1226,7 +1232,7 @@ const SettingsTab: React.FC = () => {
               <input 
                 type="number" 
                 value={settings.proxy.port}
-                onChange={(e) => updateSettings('proxy.port', parseInt(e.target.value))}
+                onChange={(e) => updateSettings('proxy.port', parseIntOr(e.target.value, 0))}
                 placeholder="7890"
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />

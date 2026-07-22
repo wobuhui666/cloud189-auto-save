@@ -470,6 +470,40 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
     if (submitting) {
       return;
     }
+
+    if (!formData.accountId) {
+      toast.warning('请先选择账号');
+      return;
+    }
+    if (isEditing) {
+      if (!formData.taskName.trim()) {
+        toast.warning('请填写任务名称');
+        return;
+      }
+      if (!formData.targetFolderId) {
+        toast.warning('请选择保存目录');
+        return;
+      }
+    } else if (isBatchMode) {
+      if (!formData.batchShareLinks.trim()) {
+        toast.warning('请填写批量分享链接（每行一条）');
+        return;
+      }
+      if (!formData.targetFolderId) {
+        toast.warning('请选择保存目录');
+        return;
+      }
+    } else {
+      if (!formData.shareLink.trim()) {
+        toast.warning('请填写分享链接');
+        return;
+      }
+      if (!formData.targetFolderId) {
+        toast.warning('请选择保存目录');
+        return;
+      }
+    }
+
     setSubmitting(true);
 
     try {
@@ -562,6 +596,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
             lastTargetFolderName: formData.targetFolder
           })
         );
+        toast.success(isEditing ? '任务已保存' : isBatchMode ? '批量任务已提交' : '任务已创建');
         onSuccess();
         onClose();
       } else {
@@ -578,9 +613,36 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
   const selectedAccount = accounts.find(account => String(account.id) === formData.accountId);
   const modalTitle = isEditing ? '修改任务' : (isBatchMode ? '批量创建任务' : '创建任务');
 
+  const formFooter = (
+    <div className="px-8 py-4 flex shrink-0 justify-end gap-3 border-t border-[var(--modal-border)] bg-[var(--modal-bg)]">
+      <button
+        type="button"
+        onClick={onClose}
+        className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-full font-medium hover:bg-slate-50 transition-all dark:bg-slate-800 dark:border-slate-600 dark:text-slate-100"
+      >
+        取消
+      </button>
+      <button
+        type="submit"
+        form="create-task-form"
+        disabled={submitting}
+        className="px-10 py-3 bg-[#0b57d0] text-white rounded-full font-medium shadow-lg hover:bg-[#0b57d0]/90 transition-all flex items-center gap-2 disabled:opacity-70"
+      >
+        {submitting ? <RefreshCw size={20} className="animate-spin" /> : <Check size={20} />}
+        {isEditing ? '保存修改' : (isBatchMode ? '开始批量创建' : '创建任务')}
+      </button>
+    </div>
+  );
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={null}>
-      <form onSubmit={handleSubmit} className="space-y-6">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={modalTitle}
+      footer={formFooter}
+      contentClassName="px-8 pb-6 max-h-[min(70vh,640px)] overflow-y-auto custom-scrollbar"
+    >
+      <form id="create-task-form" onSubmit={handleSubmit} className="space-y-6">
         {!isEditing && (
           <div className="flex items-center justify-between bg-slate-50 p-1 rounded-2xl border border-slate-200">
             <button
@@ -967,23 +1029,6 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 pt-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-6 py-3 bg-white border border-slate-300 text-slate-700 rounded-full font-medium hover:bg-slate-50 transition-all"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-10 py-3 bg-[#0b57d0] text-white rounded-full font-medium shadow-lg hover:bg-[#0b57d0]/90 transition-all flex items-center gap-2 disabled:opacity-70"
-          >
-            {submitting ? <RefreshCw size={20} className="animate-spin" /> : <Check size={20} />}
-            {isEditing ? '保存修改' : (isBatchMode ? '开始批量创建' : '创建任务')}
-          </button>
-        </div>
       </form>
 
       <FolderSelector

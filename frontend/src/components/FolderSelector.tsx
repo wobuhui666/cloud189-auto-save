@@ -97,9 +97,14 @@ const FolderSelector: React.FC<FolderSelectorProps> = ({
       const data = await response.json();
       if (data.success) {
         setFolderEntries((data.data.entries || []).filter((e: any) => e.isFolder));
+      } else {
+        setFolderEntries([]);
+        toast.error(data.error || '加载目录失败');
       }
     } catch (error) {
       console.error('Failed to fetch folders:', error);
+      setFolderEntries([]);
+      toast.error('加载目录失败');
     } finally {
       setLoading(false);
     }

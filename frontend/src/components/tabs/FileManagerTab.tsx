@@ -356,17 +356,28 @@ const FileManagerTab: React.FC = () => {
     setSelectedIds(newSelected);
   };
 
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedIds(new Set(visibleEntries.map(e => e.id)));
-    } else {
-      setSelectedIds(new Set());
-    }
-  };
-
   const visibleEntries = entries.filter(e =>
     e.name.toLowerCase().includes(filterKeyword.toLowerCase())
   );
+  const visibleSelectedCount = visibleEntries.filter((e) => selectedIds.has(e.id)).length;
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      // 并入可见项，保留筛选外已选
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        visibleEntries.forEach((e) => next.add(e.id));
+        return next;
+      });
+    } else {
+      // 只取消当前可见项
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        visibleEntries.forEach((e) => next.delete(e.id));
+        return next;
+      });
+    }
+  };
 
   const selectedEntries = entries.filter(e => selectedIds.has(e.id));
   const selectedFolders = selectedEntries.filter((entry) => entry.isFolder);
@@ -546,8 +557,8 @@ const FileManagerTab: React.FC = () => {
                   <Checkbox
                     size="sm"
                     onChange={handleSelectAll}
-                    checked={visibleEntries.length > 0 && selectedIds.size === visibleEntries.length}
-                    indeterminate={selectedIds.size > 0 && selectedIds.size < visibleEntries.length}
+                    checked={visibleEntries.length > 0 && visibleSelectedCount === visibleEntries.length}
+                    indeterminate={visibleSelectedCount > 0 && visibleSelectedCount < visibleEntries.length}
                   />
                 </th>
                 <th className="px-6 py-4 font-medium text-slate-500">名称</th>
