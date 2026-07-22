@@ -508,10 +508,12 @@ const MediaTab: React.FC = () => {
         </h3>
         <div className="bg-white rounded-3xl border border-slate-200/60 p-8 space-y-6 shadow-sm">
           <div className="flex flex-col gap-4">
-            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+            <label
+              className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
+              onClick={() => updateSetting('cas.enableFamilyTransit', !settings.cas.enableFamilyTransit)}
+            >
               <div
-                onClick={() => updateSetting('cas.enableFamilyTransit', !settings.cas.enableFamilyTransit)}
-                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all shrink-0 ${
                   settings.cas.enableFamilyTransit ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
                 }`}
               >
@@ -522,10 +524,12 @@ const MediaTab: React.FC = () => {
                 <p className="text-[10px] text-slate-400">秒传时通过家庭云中转，规避个人云风控</p>
               </div>
             </label>
-            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+            <label
+              className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
+              onClick={() => updateSetting('cas.familyTransitFirst', !settings.cas.familyTransitFirst)}
+            >
               <div
-                onClick={() => updateSetting('cas.familyTransitFirst', !settings.cas.familyTransitFirst)}
-                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all shrink-0 ${
                   settings.cas.familyTransitFirst ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
                 }`}
               >
@@ -536,10 +540,12 @@ const MediaTab: React.FC = () => {
                 <p className="text-[10px] text-slate-400">默认先尝试家庭云秒传，失败再回退个人云</p>
               </div>
             </label>
-            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+            <label
+              className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
+              onClick={() => updateSetting('cas.deleteCasAfterRestore', !settings.cas.deleteCasAfterRestore)}
+            >
               <div
-                onClick={() => updateSetting('cas.deleteCasAfterRestore', !settings.cas.deleteCasAfterRestore)}
-                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all shrink-0 ${
                   settings.cas.deleteCasAfterRestore ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
                 }`}
               >
@@ -550,10 +556,12 @@ const MediaTab: React.FC = () => {
                 <p className="text-[10px] text-slate-400">秒传恢复成功后自动删除 .cas 存根文件</p>
               </div>
             </label>
-            <label className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+            <label
+              className="flex items-center gap-3 cursor-pointer group p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors"
+              onClick={() => updateSetting('cas.deleteSourceAfterGenerate', !settings.cas.deleteSourceAfterGenerate)}
+            >
               <div
-                onClick={() => updateSetting('cas.deleteSourceAfterGenerate', !settings.cas.deleteSourceAfterGenerate)}
-                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all ${
+                className={`w-6 h-6 rounded-lg border flex items-center justify-center transition-all shrink-0 ${
                   settings.cas.deleteSourceAfterGenerate ? 'bg-[#0b57d0] border-[#0b57d0]' : 'border-slate-300 bg-white'
                 }`}
               >

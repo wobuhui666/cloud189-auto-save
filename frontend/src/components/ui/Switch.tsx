@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useId } from 'react';
 
 interface SwitchProps {
   checked: boolean;
@@ -33,38 +33,53 @@ export const Switch = ({
   className = '',
 }: SwitchProps) => {
   const { track, knob } = sizeMap[size];
+  const id = useId();
 
   const trackEl = (
-    <label
-      className={`relative inline-flex items-center ${
+    <span
+      className={`relative inline-flex items-center shrink-0 ${
         disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-      } ${className}`}
+      }`}
     >
       <input
+        id={id}
         type="checkbox"
         className="sr-only peer"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
-      <div
+      <span
         className={`${track} bg-slate-200 dark:bg-slate-700 peer-focus-visible:ring-2 peer-focus-visible:ring-[#0b57d0]/30 peer-focus-visible:ring-offset-2 rounded-full peer transition-colors after:content-[''] after:absolute after:bg-white after:rounded-full after:shadow-sm after:transition-all peer-checked:after:translate-x-full peer-checked:bg-[#0b57d0] ${knob}`}
       />
-    </label>
+    </span>
   );
 
-  if (!label && !description) return trackEl;
+  if (!label && !description) {
+    return (
+      <label className={`relative inline-flex items-center ${className}`}>
+        {trackEl}
+      </label>
+    );
+  }
 
   return (
-    <div className={`flex items-center gap-3 ${labelPosition === 'right' ? 'flex-row' : 'flex-row-reverse justify-between'}`}>
+    <label
+      htmlFor={id}
+      className={`flex items-center gap-3 cursor-pointer ${
+        disabled ? 'cursor-not-allowed opacity-60' : ''
+      } ${labelPosition === 'right' ? 'flex-row' : 'flex-row-reverse justify-between'} ${className}`}
+    >
       {trackEl}
-      <div className="flex flex-col gap-0.5 select-none">
-        {label && <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{label}</span>}
-        {description && (
-          <span className="text-xs text-slate-500 leading-relaxed">{description}</span>
+      <span className="flex flex-col gap-0.5 select-none min-w-0">
+        {label && (
+          <span className="text-sm font-medium text-[var(--text-primary)]">{label}</span>
         )}
-      </div>
-    </div>
+        {description && (
+          <span className="text-xs text-[var(--text-secondary)] leading-relaxed">{description}</span>
+        )}
+      </span>
+    </label>
   );
 };
 

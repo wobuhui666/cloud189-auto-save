@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, PlayCircle, RefreshCw, AlertCircle, CheckCircle2, X, ArrowLeft, Check } from 'lucide-react';
+import { Plus, PlayCircle, RefreshCw, AlertCircle, CheckCircle2, X, ArrowLeft, Check } from 'lucide-react';
 import Modal from '../Modal';
 import Checkbox from '../ui/Checkbox';
 import { useToast } from '../ui/Toast';
@@ -192,11 +192,11 @@ const AutoSeriesTab: React.FC = () => {
               </div>
             ) : (
               <p className="text-red-600 text-sm mt-1">
-                请先到“系统”页配置自动追剧默认账号和默认保存目录。
+                请先到「系统 → 任务设置」配置自动追剧默认账号和默认保存目录。
               </p>
             )}
           </div>
-          <button 
+          <button
             onClick={fetchData}
             className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500"
           >
@@ -205,39 +205,32 @@ const AutoSeriesTab: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex items-center justify-between">
-        <button 
+      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+        <button
           onClick={() => setIsModalOpen(true)}
-          className="bg-[#0b57d0] text-white px-8 py-3 rounded-full text-sm font-medium hover:bg-[#0b57d0]/90 transition-all shadow-lg hover:shadow-xl flex items-center gap-2"
+          disabled={!isConfigured}
+          className="bg-[#0b57d0] text-white px-8 py-3 rounded-full text-sm font-medium hover:bg-[#0b57d0]/90 transition-all shadow-lg hover:shadow-xl flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus size={20} /> 添加追剧
         </button>
-        <div className="relative w-72">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder="搜索剧集..." 
-            className="pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-full text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 w-full shadow-sm"
-          />
-        </div>
+        <p className="text-sm text-slate-500 flex items-center gap-2">
+          <AlertCircle size={16} className="shrink-0 text-slate-400" />
+          本页仅提供快速创建入口；已创建的任务请到「任务」页管理。
+        </p>
       </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Placeholder cards to show design */}
-        <div className="bg-white rounded-3xl border border-slate-200/60 p-8 shadow-sm group hover:shadow-md transition-all">
-          <div className="flex items-start justify-between mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-[#d3e3fd] flex items-center justify-center text-[#0b57d0] group-hover:scale-110 transition-transform">
-              <PlayCircle size={32} />
-            </div>
-            <span className="px-4 py-1.5 bg-[#c4eed0] text-[#0d4f1f] rounded-full text-xs font-bold uppercase tracking-wider">自动追剧中</span>
+
+      <div className="bg-white rounded-3xl border border-slate-200/60 p-8 shadow-sm">
+        <div className="flex items-start gap-5">
+          <div className="w-14 h-14 rounded-2xl bg-[#d3e3fd] flex items-center justify-center text-[#0b57d0] shrink-0">
+            <PlayCircle size={28} />
           </div>
-          <h3 className="font-bold text-slate-900 text-xl mb-1">通过添加任务启动</h3>
-          <p className="text-sm text-slate-500">点击上方按钮，输入想追的剧名</p>
-          <div className="mt-8 pt-6 border-t border-slate-100">
-            <div className="flex items-center gap-2 text-slate-400 text-xs">
-              <AlertCircle size={14} />
-              <span>本页仅提供快速创建功能</span>
-            </div>
+          <div className="min-w-0 space-y-2">
+            <h3 className="font-bold text-slate-900 text-lg">如何自动追剧</h3>
+            <ol className="text-sm text-slate-600 space-y-1.5 list-decimal list-inside leading-relaxed">
+              <li>在「系统 → 任务设置」填好默认账号与保存目录</li>
+              <li>点击上方「添加追剧」，搜索并选定资源</li>
+              <li>确认后会创建转存任务，后续追更在「任务」页查看</li>
+            </ol>
           </div>
         </div>
       </div>

@@ -75,6 +75,7 @@ const StrmConfigTab: React.FC = () => {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -171,6 +172,18 @@ const StrmConfigTab: React.FC = () => {
     fetchAccounts();
     fetchSubscriptions();
   }, []);
+
+  useEffect(() => {
+    if (openMenuId == null) return;
+    const onDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest('[data-strm-menu]')) {
+        setOpenMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openMenuId]);
 
   useEffect(() => {
     if (formData.subscriptionId) {
@@ -524,32 +537,52 @@ const StrmConfigTab: React.FC = () => {
                       >
                         <Edit2 size={18} />
                       </button>
-                      <div className="relative group/menu">
-                        <button className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors">
+                      <div className="relative" data-strm-menu>
+                        <button
+                          type="button"
+                          onClick={() => setOpenMenuId((prev) => (prev === config.id ? null : config.id))}
+                          className="p-2 hover:bg-slate-100 rounded-full text-slate-500 transition-colors"
+                          aria-label="更多操作"
+                          aria-expanded={openMenuId === config.id}
+                        >
                           <MoreVertical size={18} />
                         </button>
-                        <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-xl shadow-lg border border-slate-100 py-1 hidden group-hover/menu:block z-[210]">
-                          <button 
-                            onClick={() => handleToggleConfig(config)}
-                            className={`w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 ${config.enabled ? 'text-orange-600' : 'text-green-600'}`}
-                          >
-                            {config.enabled ? '停用' : '启用'}
-                          </button>
-                          {config.type === 'subscription' && (
-                            <button 
-                              onClick={() => handleResetTime(config.id)}
-                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+                        {openMenuId === config.id && (
+                          <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-xl shadow-lg border border-slate-100 py-1 z-[210] dark:bg-slate-900 dark:border-slate-700">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                handleToggleConfig(config);
+                              }}
+                              className={`w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 ${config.enabled ? 'text-orange-600' : 'text-green-600'}`}
                             >
-                              <RefreshCw size={14} /> 重置时间
+                              {config.enabled ? '停用' : '启用'}
                             </button>
-                          )}
-                          <button 
-                            onClick={() => handleDeleteConfig(config.id)}
-                            className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 text-red-600"
-                          >
-                            <Trash2 size={14} /> 删除
-                          </button>
-                        </div>
+                            {config.type === 'subscription' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  handleResetTime(config.id);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-slate-700 dark:text-slate-200"
+                              >
+                                <RefreshCw size={14} /> 重置时间
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenMenuId(null);
+                                handleDeleteConfig(config.id);
+                              }}
+                              className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2 text-red-600"
+                            >
+                              <Trash2 size={14} /> 删除
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </td>

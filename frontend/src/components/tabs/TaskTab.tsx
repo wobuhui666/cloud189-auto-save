@@ -308,8 +308,10 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
   const handleDeleteTask = async (id: number) => {
     const ok = await dialog.confirm({
       title: '删除任务',
-      message: deleteCloud ? '确定要删除这个任务并且从网盘中也删除吗？' : '确定要删除这个任务吗？',
-      confirmText: '删除',
+      message: deleteCloud
+        ? '确定删除这个任务，并同步从网盘删除对应文件？此操作不可恢复。'
+        : '确定删除这个任务记录吗？（默认只删任务，不删网盘。如需同步删网盘，请先勾选工具条「同步删除网盘」。）',
+      confirmText: deleteCloud ? '删除任务和网盘' : '删除',
       tone: 'danger',
     });
     if (!ok) return;
@@ -321,10 +323,14 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       });
       const data = await response.json();
       if (data.success) {
+        toast.success(deleteCloud ? '任务已删除（含网盘）' : '任务已删除');
         fetchTasks();
+      } else {
+        toast.error(data.error || '删除失败');
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
+      toast.error('删除失败');
     }
   };
 
@@ -437,10 +443,13 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
   const handleBatchDelete = async () => {
     if (selectedTaskIds.length === 0) return;
+    const count = selectedTaskIds.length;
     const ok = await dialog.confirm({
       title: '批量删除任务',
-      message: deleteCloud ? '确定要删除选中任务并且从网盘中也删除吗？' : '确定要删除选中的任务吗？',
-      confirmText: '删除',
+      message: deleteCloud
+        ? `确定删除选中的 ${count} 个任务，并同步从网盘删除对应文件？此操作不可恢复。`
+        : `确定删除选中的 ${count} 个任务记录吗？（默认只删任务。如需同步删网盘，请先勾选「同步删除网盘」。）`,
+      confirmText: deleteCloud ? '删除任务和网盘' : '删除',
       tone: 'danger',
     });
     if (!ok) return;
@@ -452,11 +461,15 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       });
       const data = await response.json();
       if (data.success) {
+        toast.success(deleteCloud ? `已删除 ${count} 个任务（含网盘）` : `已删除 ${count} 个任务`);
         setSelectedTaskIds([]);
         fetchTasks();
+      } else {
+        toast.error(data.error || '批量删除失败');
       }
     } catch (error) {
       console.error('Failed to batch delete tasks:', error);
+      toast.error('批量删除失败');
     }
   };
 
@@ -472,12 +485,14 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
       });
       const data = await response.json();
       if (data.success) {
+        toast.success(`已更新 ${selectedTaskIds.length} 个任务状态`);
         fetchTasks();
       } else {
         toast.error(data.error || '批量更新状态失败');
       }
     } catch (error) {
       console.error('Failed to batch update task status:', error);
+      toast.error('批量更新状态失败');
     } finally {
       setIsBatchUpdatingStatus(false);
     }
@@ -777,9 +792,15 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           </div>
         )}
 
-        <label className="flex items-center gap-2 cursor-pointer group">
+        <label
+          className={`flex items-center gap-2 cursor-pointer group select-none rounded-full px-3 py-1.5 border transition-colors ${
+            deleteCloud
+              ? 'border-red-300 bg-red-50 text-red-700'
+              : 'border-transparent text-slate-600'
+          }`}
+          onClick={() => setDeleteCloud((prev) => !prev)}
+        >
           <div
-            onClick={() => setDeleteCloud(!deleteCloud)}
             className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
               deleteCloud
                 ? 'bg-red-500 border-red-500'
@@ -788,7 +809,9 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           >
             {deleteCloud && <div className="w-2 h-2 bg-white rounded-sm" />}
           </div>
-          <span className="text-sm font-medium text-slate-600">同步删除网盘</span>
+          <span className="text-sm font-medium">
+            {deleteCloud ? '已开启：删除任务将同步删网盘' : '同步删除网盘'}
+          </span>
         </label>
       </div>
 

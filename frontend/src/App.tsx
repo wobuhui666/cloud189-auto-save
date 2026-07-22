@@ -45,6 +45,8 @@ import PtTab, { type PtPrefillData } from './components/tabs/PtTab';
 import PosterWallTab from './components/tabs/PosterWallTab';
 import HdhiveTab, { type HdhivePrefillData } from './components/tabs/HdhiveTab';
 import { useDialog } from './components/ui/Dialog';
+import { lockBodyScroll, unlockBodyScroll } from './lib/bodyScrollLock';
+import { pushOverlay, popOverlay, getOverlayZIndex } from './lib/overlayStack';
 
 // --- Types ---
 export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'hdhive' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'posterWall' | 'settings';
@@ -90,6 +92,7 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [ptPrefill, setPtPrefill] = useState<PtPrefillData | null>(null);
   const [hdhivePrefill, setHdhivePrefill] = useState<HdhivePrefillData | null>(null);
+  const [mobileDrawerZ, setMobileDrawerZ] = useState({ backdrop: 150, panel: 151 });
 
   const resolvedTheme = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -129,8 +132,9 @@ export default function App() {
       }
     };
 
+    // Esc for theme menu only — drawer/modal Esc 走 overlayStack（capture）
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && isThemeMenuOpen) {
         setIsThemeMenuOpen(false);
       }
     };
@@ -142,7 +146,26 @@ export default function App() {
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [isThemeMenuOpen]);
+
+  // 移动端抽屉：锁滚动 + 接入 overlay 栈（Esc / 层高）
+  useEffect(() => {
+    if (!isMobileMenuOpen) {
+      return;
+    }
+
+    lockBodyScroll();
+    const id = pushOverlay({
+      kind: 'drawer',
+      onEscape: () => setIsMobileMenuOpen(false),
+    });
+    setMobileDrawerZ(getOverlayZIndex(id, 'drawer'));
+
+    return () => {
+      popOverlay(id);
+      unlockBodyScroll();
+    };
+  }, [isMobileMenuOpen]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -255,14 +278,16 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 md:hidden dark:bg-slate-950/70"
+              style={{ zIndex: mobileDrawerZ.backdrop }}
+              className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm md:hidden dark:bg-slate-950/70"
             />
             <motion.nav
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', bounce: 0, duration: 0.4 }}
-              className="fixed inset-y-0 left-0 w-72 bg-[var(--bg-surface)] flex flex-col z-50 md:hidden shadow-2xl border-r border-[var(--border-color)]"
+              style={{ zIndex: mobileDrawerZ.panel }}
+              className="fixed inset-y-0 left-0 w-72 bg-[var(--bg-surface)] flex flex-col md:hidden shadow-2xl border-r border-[var(--border-color)]"
             >
               <div className="px-6 py-8 border-b border-[var(--border-color)]">
                 <h1 className="text-2xl font-medium text-[var(--text-primary)]">天翼自动转存</h1>
@@ -363,7 +388,7 @@ export default function App() {
               <motion.button
                 type="button"
                 onClick={() => setIsThemeMenuOpen((currentState) => !currentState)}
-                whileHover={{ scale: 1.05, rotate: 15 }}
+                whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-200 text-[var(--text-primary)]"
                 title={currentThemeLabel}
@@ -500,7 +525,7 @@ export default function App() {
           </div>
         </div>
 
-        <FloatingActions onAction={handleFloatingAction} />
+        {!isMobileMenuOpen && <FloatingActions onAction={handleFloatingAction} />}
       </main>
 
       {/* Modals */}

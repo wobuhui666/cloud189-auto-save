@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Send, Trash2, User } from 'lucide-react';
 import Modal from './Modal';
+import { useDialog } from './ui/Dialog';
 
 interface Message {
   id: number;
@@ -14,6 +15,7 @@ interface AIChatProps {
 }
 
 const AIChat: React.FC<AIChatProps> = ({ isOpen, onClose }) => {
+  const dialog = useDialog();
   const messageIdRef = useRef(1);
   const [messages, setMessages] = useState<Message[]>([
     { id: messageIdRef.current, role: 'assistant', content: '你好！我是天翼自动转存助理。你可以问我关于任务状态、账号容量或者如何配置订阅的问题。' }
@@ -150,7 +152,15 @@ const AIChat: React.FC<AIChatProps> = ({ isOpen, onClose }) => {
     };
   }, [isOpen]);
 
-  const resetChat = () => {
+  const resetChat = async () => {
+    if (messages.length <= 1) return;
+    const ok = await dialog.confirm({
+      title: '清空对话',
+      message: '确定清空当前对话记录吗？此操作不可恢复。',
+      confirmText: '清空',
+      tone: 'warning',
+    });
+    if (!ok) return;
     isStreamingRef.current = false;
     hasAssistantPlaceholderRef.current = false;
     setLoading(false);

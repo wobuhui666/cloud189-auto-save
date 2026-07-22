@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import type { TabType } from '../../App';
+import { useDialog } from '../ui/Dialog';
+import { useToast } from '../ui/Toast';
 
 interface Account {
   id: number;
@@ -109,6 +111,17 @@ const statusClass = (status: string) => {
 };
 
 const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
+  const dialog = useDialog();
+  const toast = useToast();
+  const notify = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    if (onShowToast) {
+      onShowToast(message, type);
+      return;
+    }
+    if (type === 'success') toast.success(message);
+    else if (type === 'error') toast.error(message);
+    else toast.info(message);
+  };
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [config, setConfig] = useState<CasConfig>({
@@ -273,7 +286,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
   const handleRestore = async () => {
     if (isRestoring) return;
     if (!selectedAccountId || !casContent || !targetFolder) {
-      onShowToast?.('请选择账号、填写存根内容并选择目标目录', 'error');
+      notify('请选择账号、填写存根内容并选择目标目录', 'error');
       return;
     }
 
@@ -291,15 +304,15 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        onShowToast?.(`秒传恢复成功: ${data.data.name}`, 'success');
+        notify(`秒传恢复成功: ${data.data.name}`, 'success');
         setCasContent('');
         setRestoreName('');
         setTargetFolder(null);
       } else {
-        onShowToast?.('恢复失败: ' + (data.error || '未知错误'), 'error');
+        notify('恢复失败: ' + (data.error || '未知错误'), 'error');
       }
     } catch (e) {
-      onShowToast?.('操作过程中发生错误', 'error');
+      notify('操作过程中发生错误', 'error');
     } finally {
       setIsRestoring(false);
     }
@@ -308,7 +321,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
   const handleImport = async () => {
     if (isImporting) return;
     if (!selectedAccountId || !importFolder || !selectedFile) {
-      onShowToast?.('请选择账号、目标目录并选择 .cas/.zip/.rar 文件', 'error');
+      notify('请选择账号、目标目录并选择 .cas/.zip/.rar 文件', 'error');
       return;
     }
 
@@ -334,7 +347,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        onShowToast?.(`导入任务已创建: ${data.data.title}`, 'success');
+        notify(`导入任务已创建: ${data.data.title}`, 'success');
         setSelectedFile(null);
         setImportTitle('');
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -342,10 +355,10 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
         await fetchJobs();
         await fetchJobDetail(data.data.id);
       } else {
-        onShowToast?.('导入失败: ' + (data.error || '未知错误'), 'error');
+        notify('导入失败: ' + (data.error || '未知错误'), 'error');
       }
     } catch (e) {
-      onShowToast?.('上传过程中发生错误', 'error');
+      notify('上传过程中发生错误', 'error');
     } finally {
       setIsImporting(false);
     }
@@ -358,25 +371,42 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       const res = await fetch(`/api/cas/import/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        onShowToast?.('已开始重试失败项', 'success');
+        notify('已开始重试失败项', 'success');
         setActiveJobId(jobId);
         fetchJobs();
         fetchJobDetail(jobId);
       } else {
-        onShowToast?.(data.error || '重试失败', 'error');
+        notify(data.error || '重试失败', 'error');
       }
     } catch (e) {
-      onShowToast?.('重试失败', 'error');
+      notify('重试失败', 'error');
     } finally {
       setRetryingJobIds((ids) => ids.filter((id) => id !== jobId));
     }
   };
 
   const handleDeleteJob = async (job: ImportJobSummary) => {
-    if (!window.confirm(`确认删除导入任务「${job.title}」？`)) {
-      return;
+    const ok = await dialog.confirm({
+      title: '删除导入任务',
+      message: job.strmRoot
+        ? `确认删除导入任务「${job.title}」？\n若该任务生成过 STRM，下一步可选择是否一并删除。`
+        : `确认删除导入任务「${job.title}」？`,
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
+
+    let alsoDeleteStrm = false;
+    if (job.strmRoot) {
+      alsoDeleteStrm = await dialog.confirm({
+        title: '同时删除 STRM？',
+        message: '是否同时删除该任务生成的 STRM 目录？',
+        confirmText: '一并删除',
+        cancelText: '仅删任务',
+        tone: 'warning',
+      });
     }
-    const alsoDeleteStrm = !!job.strmRoot && window.confirm('是否同时删除该任务生成的 STRM 目录？');
+
     try {
       const res = await fetch(
         `/api/cas/import/jobs/${encodeURIComponent(job.id)}?deleteStrm=${alsoDeleteStrm ? '1' : '0'}`,
@@ -384,7 +414,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       );
       const data = await res.json();
       if (data.success) {
-        onShowToast?.('任务已删除', 'success');
+        notify('任务已删除', 'success');
         if (activeJobId === job.id) {
           setActiveJobId(null);
           setActiveJob(null);
@@ -392,10 +422,10 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
         fetchJobs();
         fetchStrmList(strmPath);
       } else {
-        onShowToast?.(data.error || '删除失败', 'error');
+        notify(data.error || '删除失败', 'error');
       }
     } catch (e) {
-      onShowToast?.('删除失败', 'error');
+      notify('删除失败', 'error');
     }
   };
 
@@ -411,22 +441,28 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        onShowToast?.(all ? '已清理全部分享缓存' : '已清理缓存', 'success');
+        notify(all ? '已清理全部分享缓存' : '已清理缓存', 'success');
         fetchShareCaches();
       } else {
-        onShowToast?.(data.error || '清理失败', 'error');
+        notify(data.error || '清理失败', 'error');
       }
     } catch (e) {
-      onShowToast?.('清理失败', 'error');
+      notify('清理失败', 'error');
     }
   };
 
   const handleDeleteStrm = async (item: StrmListItem) => {
     if (item.type !== 'directory') {
-      onShowToast?.('当前仅支持删除目录', 'info');
+      notify('当前仅支持删除目录', 'info');
       return;
     }
-    if (!window.confirm(`确认删除 STRM 目录：${item.path}？`)) return;
+    const ok = await dialog.confirm({
+      title: '删除 STRM 目录',
+      message: `确认删除 STRM 目录：${item.path}？`,
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       const res = await fetch('/api/cas/import/strm', {
         method: 'DELETE',
@@ -435,19 +471,19 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
       });
       const data = await res.json();
       if (data.success) {
-        onShowToast?.('STRM 目录已删除', 'success');
+        notify('STRM 目录已删除', 'success');
         fetchStrmList(strmPath);
       } else {
-        onShowToast?.(data.error || '删除失败', 'error');
+        notify(data.error || '删除失败', 'error');
       }
     } catch (e) {
-      onShowToast?.('删除失败', 'error');
+      notify('删除失败', 'error');
     }
   };
 
   const openFolderSelector = (mode: 'restore' | 'import') => {
     if (!selectedAccountId) {
-      onShowToast?.('请先选择账号', 'error');
+      notify('请先选择账号', 'error');
       return;
     }
     setFolderSelectorMode(mode);
@@ -580,7 +616,7 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                   }
                   const lower = file.name.toLowerCase();
                   if (!(lower.endsWith('.cas') || lower.endsWith('.zip') || lower.endsWith('.rar'))) {
-                    onShowToast?.('仅支持 .cas / .zip / .rar 文件', 'error');
+                    notify('仅支持 .cas / .zip / .rar 文件', 'error');
                     e.target.value = '';
                     setSelectedFile(null);
                     return;
@@ -916,8 +952,14 @@ const CasTab: React.FC<CasTabProps> = ({ onShowToast, onNavigate }) => {
                 刷新
               </button>
               <button
-                onClick={() => {
-                  if (window.confirm('确认清理全部分享 CAS 元数据缓存？')) {
+                onClick={async () => {
+                  const ok = await dialog.confirm({
+                    title: '清理分享缓存',
+                    message: '确认清理全部分享 CAS 元数据缓存？',
+                    confirmText: '全部清理',
+                    tone: 'danger',
+                  });
+                  if (ok) {
                     handleClearShareCache(undefined, true);
                   }
                 }}

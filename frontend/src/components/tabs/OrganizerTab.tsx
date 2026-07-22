@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Search, RefreshCw, Clock, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 
@@ -24,21 +24,36 @@ const OrganizerTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [runningTaskIds, setRunningTaskIds] = useState<number[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchTasks = useCallback(async () => {
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(searchTerm.trim());
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchTerm]);
+
+  const fetchTasks = useCallback(async (keyword = debouncedSearch) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/organizer/tasks?search=${encodeURIComponent(searchTerm)}`);
+      const response = await fetch(`/api/organizer/tasks?search=${encodeURIComponent(keyword)}`);
       const data = await response.json();
       if (data.success) {
         setTasks(data.data || []);
+      } else {
+        toast.error(data.error || '加载整理任务失败');
       }
     } catch (error) {
       console.error('Failed to fetch organizer tasks:', error);
+      toast.error('加载整理任务失败');
     } finally {
       setLoading(false);
     }
-  }, [searchTerm]);
+  }, [debouncedSearch, toast]);
 
   useEffect(() => {
     fetchTasks();
@@ -76,17 +91,22 @@ const OrganizerTab: React.FC = () => {
         <div className="flex items-center gap-3">
           <div className="relative w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input 
-              type="text" 
-              placeholder="搜索任务..." 
+            <input
+              type="text"
+              placeholder="搜索任务..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && fetchTasks()}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  if (debounceRef.current) clearTimeout(debounceRef.current);
+                  setDebouncedSearch(searchTerm.trim());
+                }
+              }}
               className="pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-full text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 w-full"
             />
           </div>
-          <button 
-            onClick={fetchTasks}
+          <button
+            onClick={() => fetchTasks()}
             className="p-2 bg-white border border-slate-300 rounded-full hover:bg-slate-50 transition-all text-slate-600 shadow-sm"
           >
             <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
@@ -120,44 +140,53 @@ const OrganizerTab: React.FC = () => {
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-500">暂无任务</td>
                 </tr>
               ) : (
-                tasks.map(task => {
-                  const taskName = task.shareFolderName ? `${task.resourceName}/${task.shareFolderName}` : task.resourceName || '未知';
+                tasks.map((task) => {
+                  const isRunning = runningTaskIds.includes(task.id);
                   return (
-                    <tr key={task.id} className="hover:bg-slate-50/50 transition-colors group">
+                    <tr key={task.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-4">
-                        <button 
-                          onClick={() => handleRunTask(task.id)} disabled={runningTaskIds.includes(task.id)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#d3e3fd] text-[#0b57d0] rounded-lg text-xs font-bold hover:bg-[#c2e7ff] transition-colors"
+                        <button
+                          onClick={() => handleRunTask(task.id)}
+                          disabled={isRunning}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-[#0b57d0] text-white hover:bg-[#0b57d0]/90 disabled:opacity-50"
                         >
-                          <Play size={14} fill="currentColor" /> 执行整理
+                          {isRunning ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+                          {isRunning ? '执行中' : '执行整理'}
                         </button>
                       </td>
-                      <td className="px-6 py-4 font-medium text-slate-900">{taskName}</td>
-                      <td className="px-6 py-4 text-slate-500">
-                        {task.account.username}
-                        <span className="ml-1 text-[10px] bg-slate-100 px-1.5 py-0.5 rounded uppercase">
-                          {task.account.accountType === 'family' ? '家庭' : '个人'}
+                      <td className="px-6 py-4 font-medium text-slate-900">
+                        <div>{task.resourceName}</div>
+                        {task.shareFolderName && (
+                          <div className="text-xs text-slate-400 mt-0.5">{task.shareFolderName}</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-slate-600">
+                        {task.account?.username || '-'}
+                        <span className="ml-1 text-xs text-slate-400">
+                          ({task.account?.accountType === 'family' ? '家庭云' : '个人云'})
                         </span>
                       </td>
                       <td className="px-6 py-4">
                         {task.enableOrganizer ? (
-                          <span className="flex items-center gap-1 text-[#146c2e]">
+                          <span className="inline-flex items-center gap-1 text-emerald-600 text-xs font-medium">
                             <CheckCircle2 size={14} /> 已启用
                           </span>
                         ) : (
-                          <span className="flex items-center gap-1 text-slate-400">
+                          <span className="inline-flex items-center gap-1 text-slate-400 text-xs font-medium">
                             <Clock size={14} /> 未启用
                           </span>
                         )}
                       </td>
-                      <td className="px-6 py-4 text-slate-500">{formatDateTime(task.lastOrganizedAt)}</td>
-                      <td className="px-6 py-4">
+                      <td className="px-6 py-4 text-slate-500 text-xs whitespace-nowrap">
+                        {formatDateTime(task.lastOrganizedAt)}
+                      </td>
+                      <td className="px-6 py-4 text-xs text-red-500 max-w-[200px] truncate" title={task.lastOrganizeError || ''}>
                         {task.lastOrganizeError ? (
-                          <span className="flex items-center gap-1 text-red-600 truncate max-w-[200px]" title={task.lastOrganizeError}>
-                            <AlertCircle size={14} /> {task.lastOrganizeError}
+                          <span className="inline-flex items-center gap-1">
+                            <AlertCircle size={12} /> {task.lastOrganizeError}
                           </span>
                         ) : (
-                          <span className="text-slate-300">-</span>
+                          <span className="text-slate-300">—</span>
                         )}
                       </td>
                     </tr>
