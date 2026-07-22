@@ -5,6 +5,7 @@ import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import Checkbox from '../ui/Checkbox';
 import Switch from '../ui/Switch';
 import { useToast } from '../ui/Toast';
+import { useDialog } from '../ui/Dialog';
 
 interface CustomPushConfig {
   name: string;
@@ -256,6 +257,7 @@ const initialSettings: SettingsData = {
 
 const SettingsTab: React.FC = () => {
   const toast = useToast();
+  const dialog = useDialog();
   const [settings, setSettings] = useState<SettingsData>(initialSettings);
   const [accounts, setAccounts] = useState<{id: number, username: string, alias?: string}[]>([]);
   const [loading, setLoading] = useState(true);
@@ -564,8 +566,14 @@ const SettingsTab: React.FC = () => {
     setIsPushModalOpen(false);
   };
 
-  const deletePushConfig = (index: number) => {
-    if (!confirm('确定删除此推送配置吗？')) return;
+  const deletePushConfig = async (index: number) => {
+    const ok = await dialog.confirm({
+      title: '删除推送配置',
+      message: '确定删除此推送配置吗？',
+      confirmText: '删除',
+      tone: 'danger',
+    });
+    if (!ok) return;
     const newConfigs = settings.customPush.filter((_, i) => i !== index);
     updateSettings('customPush', newConfigs);
   };
@@ -1569,8 +1577,14 @@ const SettingsTab: React.FC = () => {
                     </button>
                     <button 
                       type="button"
-                      onClick={() => {
-                        if (!confirm('确定删除此正则预设吗？')) return;
+                      onClick={async () => {
+                        const ok = await dialog.confirm({
+                          title: '删除正则预设',
+                          message: '确定删除此正则预设吗？',
+                          confirmText: '删除',
+                          tone: 'danger',
+                        });
+                        if (!ok) return;
                         const newPresets = settings.regexPresets!.filter((_, i) => i !== index);
                         updateSettings('regexPresets', newPresets);
                       }}
