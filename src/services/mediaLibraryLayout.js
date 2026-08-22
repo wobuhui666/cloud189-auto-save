@@ -16,7 +16,7 @@ const { renderFileName } = require('../utils/templateRenderer');
 const { logTaskEvent } = require('../utils/logUtils');
 const AIService = require('./ai');
 
-const PROMPT_VERSION = 'v2';
+const PROMPT_VERSION = 'v3-path-aware';
 
 function normalizeRelativePath(value = '') {
     return String(value || '')
@@ -229,6 +229,11 @@ class MediaLibraryLayoutService {
 
     buildFileName(file, aiFile, resourceInfo, libraryInfo) {
         const info = this.normalizeLibraryInfo(libraryInfo || {});
+        if (aiFile?.targetFileName) {
+            const requested = sanitizePathSegment(String(aiFile.targetFileName));
+            const sourceExt = path.extname(file.name || file.restoreName || '');
+            return requested && path.extname(requested) ? requested : `${requested}${sourceExt}`;
+        }
         const isMovie = (resourceInfo?.type || info.mediaType) === 'movie';
         const template = isMovie
             ? (ConfigService.getConfigValue('openai.rename.movieTemplate') || '{{name}}{% if year %} ({{year}}){% endif %}{{ext}}')
@@ -340,7 +345,13 @@ class MediaLibraryLayoutService {
             try {
                 const aiInfo = await this._analyzeWithCache(
                     titleMeta.title || resourceName || task?.resourceName || '',
-                    sortedFiles.map((f) => ({ id: String(f.id || f.entryKey || f.name), name: f.name || f.restoreName || '' }))
+                    sortedFiles.map((f) => ({
+                        id: String(f.id || f.entryKey || f.name),
+                        name: f.name || f.restoreName || '',
+                        relativePath: normalizeRelativePath(f.relativePath || (
+                            f.relativeDir ? path.posix.join(String(f.relativeDir).replace(/\\/g, '/'), f.name || f.restoreName || '') : (f.name || f.restoreName || '')
+                        ))
+                    }))
                 );
                 if (aiInfo?.name) {
                     resourceInfo = {
@@ -653,7 +664,11 @@ class MediaLibraryLayoutService {
         const keyBasis = JSON.stringify({
             v: PROMPT_VERSION,
             resourcePath: String(resourcePath || ''),
-            files: sorted.map((f) => ({ id: String(f.id || ''), name: String(f.name || '') }))
+            files: sorted.map((f) => ({
+                id: String(f.id || ''),
+                name: String(f.name || ''),
+                relativePath: normalizeRelativePath(f.relativePath || f.name || '')
+            }))
         });
         const hash = crypto.createHash('sha1').update(keyBasis).digest('hex');
         const cachePath = path.join(this.cacheDir, `${hash}.json`);

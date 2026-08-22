@@ -16,8 +16,8 @@ const getEncryptionKey = (): Buffer => {
     return Buffer.from(configKey, 'hex');
 };
 
-// password / cookies 共用：读时解密，写时加密；已是 iv:hex 则跳过防双重加密
-const credentialTransformer = {
+// 服务端敏感文本共用：读时解密，写时加密；已是 iv:hex 则跳过防双重加密
+const encryptedTextTransformer = {
     from: (value: string | null) => {
         if (!value) return value;
         if (!PasswordCrypto.isEncrypted(value)) {
@@ -54,13 +54,13 @@ export class Account {
 
     @Column('text', {
         nullable: true,
-        transformer: credentialTransformer
+        transformer: encryptedTextTransformer
     })
     password!: string;
 
     @Column('text', {
         nullable: true,
-        transformer: credentialTransformer
+        transformer: encryptedTextTransformer
     })
     cookies!: string;
 
@@ -303,6 +303,20 @@ export class Task {
     // 锁定的媒体库布局 JSON：{categoryName,resourceFolderName,mediaType,year,canonicalTitle,tmdbId,...}
     @Column('text', { nullable: true })
     libraryLayout!: string;
+
+    // 自动追剧多来源任务允许处理的季度/集数范围 JSON
+    @Column('text', { nullable: true, default: '' })
+    coverageScopeJson!: string;
+
+    // 版本化人工/Agent 元数据覆盖，以及最近一次实际应用的快照
+    @Column('text', { nullable: true, default: '' })
+    metadataOverrideJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataAppliedOverrideJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    autoSeriesIntentId!: string;
 
     @Column({ nullable: true })
     enableSystemProxy!: boolean; // 是否启用系统代理
@@ -615,6 +629,7 @@ export class StrmConfig {
 }
 
 @Entity()
+@Index('idx_workflow_run_type_status_updated', ['type', 'status', 'updatedAt'])
 export class WorkflowRun {
     @Column('text', { primary: true })
     id!: string;
@@ -643,6 +658,18 @@ export class WorkflowRun {
     @Column('text', { nullable: true })
     chatId!: string | null;
 
+    @Column('text', { nullable: true, default: '' })
+    subjectType!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    subjectId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    protocol!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    summary!: string;
+
     @CreateDateColumn({
         transformer: {
             from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
@@ -657,6 +684,317 @@ export class WorkflowRun {
             to: (date: Date) => date
         }
     })
+    updatedAt!: Date;
+}
+
+@Entity()
+@Index('idx_audit_run_started_module_status', ['startedAt', 'module', 'status'])
+@Index('idx_audit_run_subject_started', ['subjectType', 'subjectId', 'startedAt'])
+@Index('idx_audit_run_correlation_started', ['correlationId', 'startedAt'])
+@Index('idx_audit_run_account_started', ['accountId', 'startedAt'])
+@Index('uq_audit_run_legacy_key', ['legacyKey'], { unique: true })
+export class AuditRun {
+    @Column('text', { primary: true })
+    id!: string;
+
+    @Column('text')
+    correlationId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    parentRunId!: string;
+
+    @Column('text')
+    module!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    trigger!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    subjectType!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    subjectId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    subjectName!: string;
+
+    @Column('integer', { nullable: true })
+    accountId!: number | null;
+
+    @Column('text')
+    status!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    summary!: string;
+
+    @Column('integer', { default: 0 })
+    changeCount!: number;
+
+    @Column('integer', { default: 0 })
+    failureCount!: number;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataJson!: string;
+
+    @Column('text', { nullable: true })
+    legacyKey!: string | null;
+
+    @Column('datetime')
+    startedAt!: Date;
+
+    @Column('datetime', { nullable: true })
+    finishedAt!: Date | null;
+
+    @CreateDateColumn()
+    createdAt!: Date;
+
+    @UpdateDateColumn()
+    updatedAt!: Date;
+}
+
+@Entity()
+@Index('idx_audit_event_run_sequence', ['runId', 'sequence'])
+@Index('idx_audit_event_type_created', ['type', 'createdAt'])
+export class AuditEvent {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    runId!: string;
+
+    @Column('integer')
+    sequence!: number;
+
+    @Column('text')
+    type!: string;
+
+    @Column('text', { nullable: true, default: 'info' })
+    level!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    phase!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    message!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    dataJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    error!: string;
+
+    @CreateDateColumn()
+    createdAt!: Date;
+}
+
+@Entity()
+@Index('idx_audit_operation_run_sequence', ['runId', 'sequence'])
+@Index('idx_audit_operation_action_status_created', ['action', 'status', 'createdAt'])
+export class AuditOperation {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    runId!: string;
+
+    @Column('integer')
+    sequence!: number;
+
+    @Column('text')
+    action!: string;
+
+    @Column('text')
+    status!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    sourcePath!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    targetPath!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    beforeJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    afterJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    reason!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    decisionSource!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    verificationJson!: string;
+
+    @Column('integer', { default: 1 })
+    attempts!: number;
+
+    @Column('text', { nullable: true, default: '' })
+    error!: string;
+
+    @CreateDateColumn()
+    createdAt!: Date;
+
+    @Column('datetime', { nullable: true })
+    completedAt!: Date | null;
+}
+
+@Entity()
+@Index('idx_invalid_resource_hash_active', ['resourceHash', 'expiresAt', 'releasedAt'])
+@Index('idx_invalid_resource_source_type', ['source', 'resourceType'])
+export class InvalidResource {
+    @PrimaryGeneratedColumn()
+    id!: number;
+
+    @Column('text')
+    resourceHash!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    resourceType!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    source!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    errorCategory!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    errorCode!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    reason!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataJson!: string;
+
+    @Column('datetime', { nullable: true })
+    expiresAt!: Date | null;
+
+    @Column('datetime', { nullable: true })
+    releasedAt!: Date | null;
+
+    @Column('text', { nullable: true, default: '' })
+    releasedBy!: string;
+
+    @CreateDateColumn()
+    createdAt!: Date;
+
+    @UpdateDateColumn()
+    updatedAt!: Date;
+}
+
+@Entity()
+@Index('idx_auto_series_intent_status_next', ['status', 'nextRunAt'])
+@Index('idx_auto_series_intent_task', ['taskId'])
+@Index('idx_auto_series_intent_pt', ['ptSubscriptionId'])
+export class AutoSeriesIntent {
+    @Column('text', { primary: true })
+    id!: string;
+
+    @Column('text')
+    title!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    year!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    tmdbId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    tmdbJson!: string;
+
+    @Column('integer')
+    accountId!: number;
+
+    @Column('text')
+    targetFolderId!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    targetFolder!: string;
+
+    @Column('text', { default: 'lazy' })
+    mode!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    sourcePreferencesJson!: string;
+
+    @Column('boolean', { default: false })
+    agentEnabled!: boolean;
+
+    @Column('text', { default: 'auto' })
+    toolCallMode!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    agentBudgetJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    mediaPreferenceJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    selectedSource!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    selectedResourceId!: string;
+
+    @Column('text', { nullable: true, default: '', transformer: encryptedTextTransformer })
+    selectedShareLink!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    selectedResourceTitle!: string;
+
+    @Column('boolean', { default: false })
+    allowHdhivePoints!: boolean;
+
+    @Column('integer', { default: 0 })
+    hdhiveMaxPoints!: number;
+
+    @Column('boolean', { default: false })
+    keepCasAfterRestore!: boolean;
+
+    @Column('integer', { nullable: true })
+    taskId!: number | null;
+
+    @Column('integer', { nullable: true })
+    ptSubscriptionId!: number | null;
+
+    @Column('text', { nullable: true, default: '' })
+    taskIdsJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    ptSubscriptionIdsJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    coverageJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataTemplateJson!: string;
+
+    @Column('text', { default: 'pending' })
+    status!: string;
+
+    @Column('boolean', { default: false })
+    degraded!: boolean;
+
+    @Column('integer', { default: 0 })
+    failureCount!: number;
+
+    @Column('datetime', { nullable: true })
+    lastRunAt!: Date | null;
+
+    @Column('datetime', { nullable: true })
+    nextRunAt!: Date | null;
+
+    @Column('text', { nullable: true, default: '' })
+    lastError!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    lastWorkflowRunId!: string;
+
+    @CreateDateColumn()
+    createdAt!: Date;
+
+    @UpdateDateColumn()
     updatedAt!: Date;
 }
 
@@ -815,6 +1153,24 @@ export class PtSubscription {
     @Column('boolean', { default: true })
     globalExclude!: boolean;
 
+    @Column('text', { nullable: true, default: 'manual' })
+    filterManagedBy!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    filterValidationHash!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    mediaPreferenceJson!: string;
+
+    @Column('text', { nullable: true, default: 'none' })
+    upgradePolicy!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataTemplateJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    autoSeriesIntentId!: string;
+
     @Column('integer')
     accountId!: number;
 
@@ -911,6 +1267,15 @@ export class PtRelease {
     @Column('text', { nullable: true, default: '' })
     releaseTagsJson!: string;
 
+    @Column('integer', { nullable: true, default: 0 })
+    qualityScore!: number;
+
+    @Column('integer', { nullable: true })
+    upgradeFromReleaseId!: number | null;
+
+    @Column('boolean', { default: true })
+    activeVersion!: boolean;
+
     @Column('text', { nullable: true, default: '' })
     magnetUrl!: string;
 
@@ -971,6 +1336,16 @@ export class PtRelease {
     @Column('text', { nullable: true, default: '' })
     torrentFilesJson!: string;
 
+    // 创建 release 时复制订阅模板；之后 release 的审计结果独立保存
+    @Column('text', { nullable: true, default: '' })
+    metadataTemplateSnapshotJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataOverrideJson!: string;
+
+    @Column('text', { nullable: true, default: '' })
+    metadataAppliedOverrideJson!: string;
+
     @Column('text', { nullable: true, default: '' })
     cloudFolderId!: string;
 
@@ -997,4 +1372,4 @@ export class PtRelease {
     updatedAt!: Date;
 }
 
-export default { Account, Task, TaskProcessedFile, CommonFolder, Subscription, SubscriptionResource, StrmConfig, WorkflowRun, TmdbCache, PtSubscription, PtRelease };
+export default { Account, Task, TaskProcessedFile, CommonFolder, Subscription, SubscriptionResource, StrmConfig, WorkflowRun, AuditRun, AuditEvent, AuditOperation, InvalidResource, AutoSeriesIntent, SystemLog, TmdbCache, PtSubscription, PtRelease };

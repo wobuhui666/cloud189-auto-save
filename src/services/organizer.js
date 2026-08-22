@@ -7,12 +7,16 @@ const { logTaskEvent } = require('../utils/logUtils');
 const { MediaLibraryLayoutService, normalizeRelativePath } = require('./mediaLibraryLayout');
 const { CasService } = require('./casService');
 const { CasArchiveService } = require('./casArchiveService');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
+const { mergeMetadataOverrides, parseJson } = require('./metadataOverride');
+const { auditService } = require('./auditService');
 
 class OrganizerService {
     constructor(taskService, taskRepo = null) {
         this.taskService = taskService || null;
         this.taskRepo = taskRepo || (taskService && taskService.taskRepo) || null;
         this.tmdbService = new TMDBService();
+        this.mutationExecutor = new CloudMutationExecutor();
         this.layoutService = new MediaLibraryLayoutService({
             taskService: this.taskService,
             tmdbService: this.tmdbService
@@ -42,6 +46,9 @@ class OrganizerService {
             task.account = account;
         }
         if (!task.enableOrganizer && !options.force) {
+            await auditService.recordOperation('skip', 'skipped', {
+                reason: '任务未启用整理器', decisionSource: 'task_config'
+            });
             return {
                 message: `任务[${task.resourceName}]未启用整理器，跳过`,
                 files: await this.taskService.getFilesByTask(task)
@@ -68,21 +75,50 @@ class OrganizerService {
             throw new Error('当前任务目录没有可整理的文件');
         }
 
+        const metadataOverride = mergeMetadataOverrides({
+            [parseJson(task.metadataOverrideJson, {})?.source === 'agent' ? 'agent' : 'user']: parseJson(task.metadataOverrideJson, null)
+        });
+
         logTaskEvent(`任务[${task.resourceName}]开始执行整理器`);
         this.layoutService.taskService = this.taskService;
-        const libraryInfo = await this.layoutService.resolveLibraryInfo({
+        let libraryInfo = await this.layoutService.resolveLibraryInfo({
             resourceName: task.resourceName,
             files: allFiles.map(file => ({ id: file.id, name: file.name })),
             task,
             forceRefresh: !!forceRefresh,
             useAi: true
         });
+        if (metadataOverride) {
+            libraryInfo = this._applyMetadataOverrideToLibraryInfo(libraryInfo, metadataOverride, allFiles);
+        }
         const resourceInfo = libraryInfo.resourceInfo || {
             name: libraryInfo.canonicalTitle,
             year: libraryInfo.year,
             type: libraryInfo.mediaType,
             episode: []
         };
+        await auditService.event('identified', '媒体识别完成', {
+            phase: 'identify',
+            data: {
+                source: metadataOverride?.source || libraryInfo.source || 'rules',
+                title: libraryInfo.canonicalTitle,
+                mediaType: libraryInfo.mediaType,
+                tmdbId: libraryInfo.tmdbId || '',
+                categoryName: libraryInfo.categoryName,
+                resourceFolderName: libraryInfo.resourceFolderName,
+                fileCount: allFiles.length
+            }
+        });
+        await auditService.recordOperation('identify', 'completed', {
+            before: { resourceName: task.resourceName, fileCount: allFiles.length },
+            after: {
+                title: libraryInfo.canonicalTitle,
+                mediaType: libraryInfo.mediaType,
+                tmdbId: libraryInfo.tmdbId || '',
+                category: libraryInfo.categoryName
+            },
+            decisionSource: metadataOverride?.source || libraryInfo.source || 'rules'
+        });
 
         // 锁定 layout（防 AI 漂移）
         const layoutJson = this.layoutService.serializeLibraryLayout(libraryInfo);
@@ -116,6 +152,7 @@ class OrganizerService {
             if (this.taskRepo) {
                 await this.taskRepo.update(task.id, {
                     libraryLayout: layoutJson,
+                    ...(metadataOverride ? { metadataAppliedOverrideJson: JSON.stringify(metadataOverride) } : {}),
                     lastOrganizedAt: new Date(),
                     lastOrganizeError: '',
                     ...canonicalMetadata,
@@ -129,6 +166,16 @@ class OrganizerService {
                 resourceInfo,
                 files: allFiles,
                 renameFiles: true
+            });
+            await auditService.recordOperation('classify', 'completed', {
+                before: { fileCount: allFiles.length, lazy: true },
+                after: {
+                    category: libraryInfo.categoryName,
+                    resourceFolder: libraryInfo.resourceFolderName,
+                    mappedFiles: applied.files.length
+                },
+                reason: '懒 STRM 只锁定布局，不移动网盘',
+                decisionSource: metadataOverride?.source || 'organizer'
             });
             return {
                 message: `${task.resourceName}已锁定媒体库布局 ${libraryInfo.categoryName}/${libraryInfo.resourceFolderName}（懒模式未移动网盘）`,
@@ -163,10 +210,13 @@ class OrganizerService {
             const targetFolderId = await this._ensureDirectoryPath(cloud189, resourceFolderId, targetRelativeDir, nestedFolderCache);
 
             if (file.name !== targetFileName) {
-                const renameResult = await cloud189.renameFile(file.id, targetFileName);
-                if (!renameResult || (renameResult.res_code && renameResult.res_code !== 0)) {
-                    throw new Error(`重命名失败: ${file.name} -> ${targetFileName}`);
-                }
+                await this.mutationExecutor.rename(cloud189, file.id, targetFileName, {
+                    sourcePath: file.relativePath || file.name,
+                    targetPath: targetRelativeDir ? `${targetRelativeDir}/${targetFileName}` : targetFileName,
+                    before: { fileId: file.id, name: file.name },
+                    after: { fileId: file.id, name: targetFileName },
+                    decisionSource: metadataOverride?.source || 'organizer'
+                });
                 messages.push(`├─ 重命名 ${file.name} -> ${targetFileName}`);
                 file.name = targetFileName;
             }
@@ -176,7 +226,13 @@ class OrganizerService {
                     id: file.id,
                     name: file.name,
                     isFolder: false
-                }, targetFolderId);
+                }, targetFolderId, {
+                    sourcePath: file.relativePath || file.name,
+                    targetPath: targetRelativeDir ? `${targetRelativeDir}/${file.name}` : file.name,
+                    before: { fileId: file.id, parentFolderId: file.parentFolderId || originalFolderId },
+                    after: { fileId: file.id, parentFolderId: targetFolderId },
+                    decisionSource: metadataOverride?.source || 'organizer'
+                });
                 messages.push(`├─ 移动 ${file.name} -> ${targetRelativeDir || '媒体根目录'}`);
                 file.parentFolderId = String(targetFolderId);
                 file.relativeDir = targetRelativeDir;
@@ -184,13 +240,20 @@ class OrganizerService {
             } else {
                 file.relativeDir = targetRelativeDir;
                 file.relativePath = targetRelativeDir ? `${targetRelativeDir}/${file.name}` : file.name;
+                await auditService.recordOperation('skip', 'skipped', {
+                    sourcePath: file.relativePath,
+                    targetPath: file.relativePath,
+                    reason: '文件名和目录无需调整',
+                    decisionSource: 'organizer'
+                });
             }
         }
 
         const taskUpdates = {
             lastOrganizedAt: new Date(),
             lastOrganizeError: '',
-            libraryLayout: layoutJson
+            libraryLayout: layoutJson,
+            ...(metadataOverride ? { metadataAppliedOverrideJson: JSON.stringify(metadataOverride) } : {})
         };
 
         if (String(originalFolderId) !== String(resourceFolderId) || originalFolderName !== resourceFolderPath) {
@@ -251,6 +314,43 @@ class OrganizerService {
             operations: messages,
             libraryInfo
         };
+    }
+
+    _applyMetadataOverrideToLibraryInfo(libraryInfo, override, files) {
+        const work = override.work || {};
+        const info = { ...libraryInfo };
+        if (work.title) info.canonicalTitle = work.title;
+        if (work.year) info.year = String(work.year);
+        if (work.mediaType) {
+            info.mediaType = work.mediaType;
+            info.seasonBased = work.mediaType === 'tv';
+        }
+        if (work.category) info.categoryName = work.category;
+        if (work.tmdbId) info.tmdbId = work.tmdbId;
+        if (work.seasonNumber != null) info.defaultSeason = String(work.seasonNumber).padStart(2, '0');
+        const title = work.title || info.canonicalTitle || '';
+        info.resourceFolderName = info.year && title && !title.includes(`(${info.year})`) ? `${title} (${info.year})` : (title || info.resourceFolderName);
+        const mappings = new Map((override.files || []).map(item => [item.relativePath, item]));
+        info.resourceInfo = {
+            ...(info.resourceInfo || {}),
+            name: title || info.resourceInfo?.name,
+            year: work.year || info.resourceInfo?.year,
+            type: work.mediaType || info.resourceInfo?.type,
+            episode: files.map(file => {
+                const relativePath = String(file.relativePath || (file.relativeDir ? path.posix.join(String(file.relativeDir).replace(/\\/g, '/'), file.name) : file.name) || '');
+                const mapping = mappings.get(relativePath);
+                if (!mapping) return null;
+                return {
+                    id: String(file.id || file.entryKey || file.name),
+                    name: mapping.episodeTitle || title,
+                    season: String(mapping.special ? 0 : (mapping.seasonNumber ?? work.seasonNumber ?? 1)).padStart(2, '0'),
+                    episode: mapping.episodeNumber == null ? '' : String(mapping.episodeNumber),
+                    extension: path.extname(file.name || ''),
+                    targetFileName: mapping.targetFileName || ''
+                };
+            }).filter(Boolean)
+        };
+        return info;
     }
 
     /**
@@ -395,10 +495,13 @@ class OrganizerService {
                     );
 
                     if (file.name !== targetFileName) {
-                        const renameResult = await cloud189.renameFile(file.id, targetFileName);
-                        if (!renameResult || (renameResult.res_code && renameResult.res_code !== 0)) {
-                            throw new Error(`重命名失败: ${file.name} -> ${targetFileName}`);
-                        }
+                        await this.mutationExecutor.rename(cloud189, file.id, targetFileName, {
+                            sourcePath: file.relativePath || file.name,
+                            targetPath: targetRelativeDir ? `${targetRelativeDir}/${targetFileName}` : targetFileName,
+                            before: { fileId: file.id, name: file.name },
+                            after: { fileId: file.id, name: targetFileName },
+                            decisionSource: 'organizer'
+                        });
                         operations.push(`重命名 ${file.name} -> ${targetFileName}`);
                         renamedCount += 1;
                         file.name = targetFileName;
@@ -409,7 +512,13 @@ class OrganizerService {
                             id: file.id,
                             name: file.name,
                             isFolder: false
-                        }, targetFolderId);
+                        }, targetFolderId, {
+                            sourcePath: file.relativePath || file.name,
+                            targetPath: targetRelativeDir ? `${targetRelativeDir}/${file.name}` : file.name,
+                            before: { fileId: file.id, parentFolderId: file.parentFolderId || parentFolderId },
+                            after: { fileId: file.id, parentFolderId: targetFolderId },
+                            decisionSource: 'organizer'
+                        });
                         operations.push(`移动 ${file.name} -> ${targetRelativeDir || '媒体根目录'}`);
                         movedCount += 1;
                         file.parentFolderId = String(targetFolderId);
@@ -710,7 +819,7 @@ class OrganizerService {
         const folderList = folderInfo?.fileListAO?.folderList || [];
         let folder = folderList.find(item => item.name === safeFolderName);
         if (!folder) {
-            folder = await cloud189.createFolder(safeFolderName, parentFolderId);
+            folder = (await this.mutationExecutor.createFolder(cloud189, parentFolderId, safeFolderName)).value;
             if (!folder?.id) {
                 throw new Error(`创建整理目录失败: ${safeFolderName}`);
             }

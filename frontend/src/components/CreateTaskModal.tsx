@@ -60,6 +60,16 @@ interface SelectedFolder {
   accountName: string;
 }
 
+interface ShareFolderEntry {
+  id: string;
+  name: string;
+  relativePath?: string;
+  parentId?: string;
+  depth?: number;
+  hasChildren?: boolean;
+  hasFiles?: boolean;
+}
+
 interface TaskFormData {
   accountId: string;
   shareLink: string;
@@ -258,7 +268,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
   const [submitting, setSubmitting] = useState(false);
   const [tmdbLoading, setTmdbLoading] = useState(false);
   const [parsing, setParsing] = useState(false);
-  const [shareFolders, setShareFolders] = useState<Array<{ id: string; name: string }>>([]);
+  const [shareFolders, setShareFolders] = useState<ShareFolderEntry[]>([]);
   const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
   const [tmdbResults, setTmdbResults] = useState<any[]>([]);
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -515,6 +525,10 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
         toast.warning('请填写分享链接');
         return;
       }
+      if (shareFolders.length > 0 && selectedFolders.length === 0) {
+        toast.warning('请至少选择一个要转存的目录');
+        return;
+      }
       if (!formData.targetFolderId) {
         toast.warning('请选择保存目录');
         return;
@@ -742,33 +756,45 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ isOpen, onClose, onSu
                   <label className="text-xs font-bold text-[#0b57d0] uppercase tracking-wider">
                     {isEditing ? '当前分享目录' : '选择要转存的目录'}
                   </label>
-                  <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                  <div className="max-h-48 overflow-x-auto overflow-y-auto custom-scrollbar touch-auto">
+                    <div className="min-w-max space-y-1 pr-2">
                     {shareFolders.map(folder => {
                       const checked = selectedFolders.includes(folder.id);
+                      const depth = Math.max(0, Number(folder.depth || 0));
+                      const displayPath = folder.relativePath || folder.name;
                       return (
-                        <label key={folder.id} className="flex items-center gap-3 p-2 hover:bg-white rounded-xl transition-colors cursor-pointer group">
+                        <button
+                          type="button"
+                          key={folder.id}
+                          disabled={isEditing}
+                          onClick={() => {
+                            setSelectedFolders(prev =>
+                              prev.includes(folder.id) ? prev.filter(id => id !== folder.id) : [...prev, folder.id]
+                            );
+                          }}
+                          className="flex min-w-full w-max items-center gap-3 rounded-xl p-2 pr-4 text-left hover:bg-white transition-colors group disabled:cursor-default"
+                          style={{ paddingLeft: `${8 + depth * 18}px` }}
+                          title={displayPath}
+                          role="checkbox"
+                          aria-checked={checked}
+                        >
                           <div
-                            onClick={() => {
-                              if (isEditing) {
-                                return;
-                              }
-                              setSelectedFolders(prev =>
-                                prev.includes(folder.id) ? prev.filter(id => id !== folder.id) : [...prev, folder.id]
-                              );
-                            }}
                             className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
                               checked
                                 ? 'bg-[#0b57d0] border-[#0b57d0]'
                                 : 'border-slate-300 bg-white group-hover:border-[#0b57d0]'
                             }`}
+                            aria-hidden="true"
                           >
                             {checked && <Check size={14} className="text-white" />}
                           </div>
-                          <span className="text-sm text-slate-700 truncate">{folder.name}</span>
-                        </label>
+                          <span className="whitespace-nowrap text-sm text-slate-700">{displayPath}</span>
+                        </button>
                       );
                     })}
+                    </div>
                   </div>
+                  <div className="text-[11px] text-slate-500">可上下浏览、左右滑动查看完整目录名；父目录与子目录同时选中时只转存父目录一次。</div>
                 </div>
               )}
             </>

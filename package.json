@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node dist/index.js",
     "build": "tsc",
-    "dev": "ts-node src/index.js"
+    "dev": "ts-node src/index.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "test:db-upgrade": "TYPEORM_SYNCHRONIZE=false node scripts/verify-sqlite-upgrade.js",
+    "check": "npm run build && npm run build --prefix frontend && npm test && npm run test:db-upgrade"
   },
   "dependencies": {
     "@netdrive-sdk/log": "1.0.0",

@@ -1,6 +1,7 @@
 const path = require('path');
 const { CasService } = require('./casService');
 const { logTaskEvent } = require('../utils/logUtils');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
 
 const CAS_ARCHIVE_DIR = '_cas';
 
@@ -69,6 +70,7 @@ class CasArchiveService {
 
     constructor() {
         this._folderCache = new Map();
+        this._mutationExecutor = new CloudMutationExecutor();
     }
 
     async ensureFolder(cloud189, parentFolderId, folderName) {
@@ -84,7 +86,7 @@ class CasArchiveService {
             const listing = await cloud189.listFiles(parentFolderId);
             const existing = (listing?.fileListAO?.folderList || []).find(folder => folder.name === safeName);
             const folderId = existing?.id || existing?.fileId
-                || (await cloud189.createFolder(safeName, parentFolderId))?.id;
+                || (await this._mutationExecutor.createFolder(cloud189, parentFolderId, safeName)).value?.id;
             if (!folderId) {
                 throw new Error(`创建CAS归档目录失败: ${safeName}`);
             }
@@ -182,10 +184,7 @@ class CasArchiveService {
             }
         }
         if (String(archivedFile.name || file.name || '') !== targetFileName) {
-            const renamed = await cloud189.renameFile(file.id, targetFileName);
-            if (!renamed || (renamed.res_code && renamed.res_code !== 0)) {
-                throw new Error(`重命名CAS存根失败: ${file.name}`);
-            }
+            await this._mutationExecutor.rename(cloud189, file.id, targetFileName);
             const confirmed = await this._waitForFile(cloud189, parentFolderId, file.id, targetFileName);
             if (!confirmed || confirmed.name !== targetFileName) {
                 throw new Error(`重命名CAS存根后校验失败: ${targetFileName}`);

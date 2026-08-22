@@ -1,9 +1,11 @@
 const { logTaskEvent } = require('../utils/logUtils');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
 
 class CasCleanupService {
     constructor() {
         this._cleanupQueue = [];
         this._isProcessing = false;
+        this._mutationExecutor = new CloudMutationExecutor();
     }
 
     async permanentDelete(cloud189, fileId, fileName = '', isFamily = false) {
@@ -39,7 +41,7 @@ class CasCleanupService {
     async deleteTempPreviewFile(cloud189, fileId, fileName = '', isFamily = false) {
         logTaskEvent(`[CAS清理] 删除临时预览文件: ${fileName || fileId}`);
         try {
-            await cloud189.deleteFile(fileId, fileName);
+            await this._mutationExecutor.delete(cloud189, fileId, fileName);
             return true;
         } catch (error) {
             logTaskEvent(`[CAS清理] 删除临时文件(可能已清理): ${fileName || fileId}`);

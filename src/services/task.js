@@ -20,10 +20,17 @@ const { LazyShareStrmService } = require('./lazyShareStrm');
 const { CasService } = require('./casService');
 const { CasArchiveService } = require('./casArchiveService');
 const { AppDataSource } = require('../database');
-const { TaskProcessedFile } = require('../entities');
+const { TaskProcessedFile, WorkflowRun } = require('../entities');
 const { parseMediaTitle, detectMovieCollection, resolveTitleMeta } = require('../utils/mediaTitleParser');
 const { renderFileName } = require('../utils/templateRenderer');
 const { MediaLibraryLayoutService, joinLocalStrmPath, sanitizeTitle, extractYear } = require('./mediaLibraryLayout');
+const { WorkflowRunTracker } = require('./workflowRunTracker');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
+const { auditService } = require('./auditService');
+const { classifyOperationError, calculateRetryDelayMs } = require('./operationError');
+const { InvalidResourceService } = require('./invalidResource');
+const { matchesCoverageScope, extractSeasonHint, mergeCoverageScopes } = require('./autoSeriesCoverage');
+const { buildMetadataTemplate, normalizeMetadataOverride } = require('./metadataOverride');
 
 function buildTaskTargetRelativePath(task = {}, mediaFile = {}, layout = null) {
     const mediaPath = String(mediaFile.relativePath || mediaFile.name || '')
@@ -45,19 +52,25 @@ function buildTaskTargetRelativePath(task = {}, mediaFile = {}, layout = null) {
 }
 
 class TaskService {
-    constructor(taskRepo, accountRepo, taskProcessedFileRepo) {
+    constructor(taskRepo, accountRepo, taskProcessedFileRepo, workflowRunRepo) {
         this.taskRepo = taskRepo;
         this.accountRepo = accountRepo;
         this.taskProcessedFileRepo = taskProcessedFileRepo || (AppDataSource.isInitialized
             ? AppDataSource.getRepository(TaskProcessedFile)
             : null);
         this.activeTaskExecutions = new Map();
+        this.activeTaskRuns = new Map();
         this.initialTaskExecutions = new WeakMap();
         this.activeBatchExecution = null;
         this.activeStrmJobs = new Map(); // key -> Promise 防重复生成/重建
         this.autoSeriesService = null;
         this.messageUtil = new MessageUtil();
         this.eventService = EventService.getInstance();
+        this.workflowRunTracker = new WorkflowRunTracker(workflowRunRepo || (AppDataSource.isInitialized
+            ? AppDataSource.getRepository(WorkflowRun)
+            : null));
+        this.mutationExecutor = new CloudMutationExecutor();
+        this.invalidResourceService = new InvalidResourceService();
         // 如果还没有taskComplete事件的监听器，则添加
         if (!this.eventService.hasListeners('taskComplete')) {
             const taskEventHandler = new TaskEventHandler(this.messageUtil);
@@ -173,16 +186,22 @@ class TaskService {
          const shareInfo = await cloud189.getShareInfo(shareCode);
          if (!shareInfo) throw new Error('获取分享信息失败');
          if(shareInfo.res_code == "ShareAuditWaiting") {
-            throw new Error('分享链接审核中, 请稍后再试');
+            throw classifyOperationError(new Error('分享链接审核中, 请稍后再试'), { source: 'cloud189', operation: 'inspect_share' });
          }
          return shareInfo;
     }
 
     // 创建任务的基础配置
     _createTaskConfig(taskDto, shareInfo, realFolder, resourceName, currentEpisodes = 0, shareFolderId = null, shareFolderName = "") {
-        const seasonTotalEpisodes = Number(taskDto.tmdbSeasonNumber || 0) > 0 && Number(taskDto.tmdbSeasonEpisodes || 0) > 0
-            ? Number(taskDto.tmdbSeasonEpisodes)
-            : Number(taskDto.totalEpisodes || 0);
+        const folderSeason = extractSeasonHint(shareFolderName || resourceName || '');
+        const scopedSeason = (taskDto.coverageScope?.seasons || []).find(item => Number(item.seasonNumber) === Number(folderSeason));
+        const scopedEpisodes = scopedSeason?.episodes?.length
+            || (shareFolderName ? 0 : Number(taskDto.coverageScope?.keys?.length || 0));
+        const seasonTotalEpisodes = scopedEpisodes > 0
+            ? scopedEpisodes
+            : (Number(taskDto.tmdbSeasonNumber || 0) > 0 && Number(taskDto.tmdbSeasonEpisodes || 0) > 0
+                ? Number(taskDto.tmdbSeasonEpisodes)
+                : Number(taskDto.totalEpisodes || 0));
 
         // 有 TMDB 标题时覆盖任务名（根任务保留 (根) 后缀）
         let name = resourceName;
@@ -230,6 +249,9 @@ class TaskService {
             enableLazyStrm: taskDto.enableLazyStrm,
             enableOrganizer: taskDto.enableOrganizer,
             keepCasAfterRestore: taskDto.keepCasAfterRestore,
+            coverageScopeJson: taskDto.coverageScope?.keys?.length ? JSON.stringify(taskDto.coverageScope) : '',
+            metadataOverrideJson: taskDto.metadataOverride ? JSON.stringify(taskDto.metadataOverride) : '',
+            autoSeriesIntentId: taskDto.autoSeriesIntentId || '',
             isFolder: taskDto.isFolder
         };
     }
@@ -242,6 +264,147 @@ class TaskService {
             return '';
         }
         return path.join(...validParts);
+    }
+
+    _normalizeShareFolderEntry(folder = {}) {
+        return {
+            id: String(folder.id || folder.fileId || '').trim(),
+            name: String(folder.name || folder.fileName || '').trim()
+        };
+    }
+
+    _normalizeShareRelativePath(value = '') {
+        return String(value || '')
+            .replace(/\\/g, '/')
+            .split('/')
+            .map(segment => segment.trim())
+            .filter(segment => segment && segment !== '.' && segment !== '..')
+            .join('/');
+    }
+
+    _buildAiFileInput(file = {}) {
+        const name = String(file.name || file.fileName || file.restoreName || '').trim();
+        const relativePath = this._normalizeShareRelativePath(file.relativePath || (
+            file.relativeDir ? path.posix.join(String(file.relativeDir).replace(/\\/g, '/'), name) : name
+        ));
+        return {
+            id: String(file.id || file.fileId || file.entryKey || name),
+            name,
+            relativePath: relativePath || name
+        };
+    }
+
+    async _collectShareFolderTree(cloud189, shareInfo, accessCode, rootResult, options = {}) {
+        const visited = options.visited || new Set();
+        const maxDepth = Number(options.maxDepth || 32);
+        const maxFolders = Number(options.maxFolders || 2000);
+
+        const visit = async (dirResult, parentId, parentRelativePath, depth) => {
+            if (!dirResult?.fileListAO || depth > maxDepth) {
+                return [];
+            }
+            const folders = dirResult.fileListAO.folderList || [];
+            const groups = await this._mapWithConcurrency(folders, 4, async rawFolder => {
+                const folder = this._normalizeShareFolderEntry(rawFolder);
+                if (!folder.id || !folder.name || visited.has(folder.id)) {
+                    return [];
+                }
+                if (visited.size >= maxFolders) {
+                    throw new Error(`分享目录数量超过上限 ${maxFolders}`);
+                }
+                visited.add(folder.id);
+
+                const relativePath = this._normalizeShareRelativePath(
+                    path.posix.join(parentRelativePath || '', folder.name)
+                );
+                let childResult = null;
+                let childNodes = [];
+                if (depth < maxDepth) {
+                    childResult = await cloud189.listShareDir(
+                        shareInfo.shareId,
+                        folder.id,
+                        shareInfo.shareMode,
+                        accessCode,
+                        true
+                    );
+                    childNodes = await visit(childResult, folder.id, relativePath, depth + 1);
+                }
+                const directFileCount = childResult?.fileListAO?.fileList?.length || 0;
+                const hasChildren = (childResult?.fileListAO?.folderList?.length || 0) > 0;
+                const node = {
+                    id: folder.id,
+                    name: folder.name,
+                    relativePath,
+                    parentId: String(parentId || ''),
+                    depth,
+                    directFileCount,
+                    hasChildren,
+                    hasFiles: directFileCount > 0 || childNodes.some(child => child.hasFiles)
+                };
+                return [node, ...childNodes];
+            });
+            return groups.flat();
+        };
+
+        return await visit(rootResult, String(shareInfo.fileId || ''), '', 1);
+    }
+
+    _filterSelectedShareFolderNodes(nodes = [], taskDto = {}) {
+        const selectedIds = new Set(
+            (Array.isArray(taskDto.selectedFolders) ? taskDto.selectedFolders : [])
+                .map(id => String(id || '').trim())
+                .filter(Boolean)
+        );
+        if (selectedIds.size === 0 || taskDto.tgbot) {
+            return nodes.filter(node => Number(node.depth) === 1);
+        }
+        const selectedPaths = [];
+        return nodes.filter(node => {
+            if (!selectedIds.has(String(node.id))) {
+                return false;
+            }
+            const relativePath = this._normalizeShareRelativePath(node.relativePath);
+            if (selectedPaths.some(parentPath => relativePath.startsWith(`${parentPath}/`))) {
+                return false;
+            }
+            selectedPaths.push(relativePath);
+            return true;
+        });
+    }
+
+    async _ensureTargetSubfolderPath(cloud189, rootFolder, relativePath) {
+        const segments = this._normalizeShareRelativePath(relativePath).split('/').filter(Boolean);
+        let currentFolder = {
+            ...rootFolder,
+            id: String(rootFolder.id || rootFolder.fileId || ''),
+            name: String(rootFolder.name || rootFolder.fileName || '')
+        };
+
+        for (const segment of segments) {
+            const folderInfo = await cloud189.listFiles(currentFolder.id);
+            if (!folderInfo?.fileListAO) {
+                throw new Error(`读取目标目录失败: ${currentFolder.name || currentFolder.id}`);
+            }
+            const existing = (folderInfo.fileListAO.folderList || []).find(item =>
+                String(item.name || item.fileName || '') === segment
+            );
+            let childFolder = existing;
+            if (!childFolder) {
+                childFolder = (await this.mutationExecutor.createFolder(cloud189, currentFolder.id, segment)).value;
+            }
+            const childId = String(childFolder?.id || childFolder?.fileId || '').trim();
+            if (!childId) {
+                throw new Error(`创建目标子目录失败: ${segment}`);
+            }
+            currentFolder = {
+                ...childFolder,
+                id: childId,
+                name: this._safeJoinPath(currentFolder.name, segment),
+                oldFolder: Boolean(existing)
+            };
+        }
+
+        return currentFolder;
     }
 
     async _ensureTaskNotExists(taskDto, shareInfo) {
@@ -262,7 +425,21 @@ class TaskService {
         });
 
         if (!existingTasks.length) {
-            return;
+            return [];
+        }
+
+        if (taskDto.coverageScope?.keys?.length) {
+            const managedTasks = existingTasks.filter(task => String(task.taskGroup || '') === '自动追剧');
+            if (!managedTasks.length) {
+                throw new Error('目标位置存在同分享的非自动追剧任务，无法安全合并覆盖范围');
+            }
+            for (const task of managedTasks) {
+                let currentScope = null;
+                try { currentScope = JSON.parse(task.coverageScopeJson || ''); } catch (_) {}
+                task.coverageScopeJson = JSON.stringify(mergeCoverageScopes(currentScope, taskDto.coverageScope));
+                await this.taskRepo.save(task);
+            }
+            return managedTasks;
         }
 
         const hasRootTask = existingTasks.some(task => String(task.shareFolderId || task.shareFileId || '').trim() === rootShareFolderId);
@@ -277,6 +454,7 @@ class TaskService {
                 throw new Error('任务已存在，需删除后重新订阅');
             }
         }
+        return [];
     }
 
     _buildTaskTitleContext(task) {
@@ -555,7 +733,7 @@ class TaskService {
         }
         // 检查目标文件夹是否存在
         await this.checkFolderExists(cloud189, taskDto.targetFolderId, shareInfo.fileName, taskDto.overwriteFolder);
-        const targetFolder = await cloud189.createFolder(shareInfo.fileName, taskDto.targetFolderId);
+        const targetFolder = (await this.mutationExecutor.createFolder(cloud189, taskDto.targetFolderId, shareInfo.fileName)).value;
         if (!targetFolder || !targetFolder.id) throw new Error('创建目录失败');
         if (!rootSelected) {
             targetFolder.oldFolder = true;
@@ -568,9 +746,9 @@ class TaskService {
         const result = await cloud189.listShareDir(shareInfo.shareId, shareInfo.fileId, shareInfo.shareMode, taskDto.accessCode);
         if (!result?.fileListAO) return;
         const { fileList: rootFiles = [], folderList: subFolders = [] } = result.fileListAO;
-        const selectedSubFolders = subFolders.filter(folder => this.checkFolderInList(taskDto, folder.id));
+        const rootSelected = this.checkFolderInList(taskDto, '-1');
         // 处理根目录文件 如果用户选择了根目录, 则生成根目录任务
-        if (rootFiles.length > 0) {
+        if (rootSelected && rootFiles.length > 0) {
             const enableOnlySaveMedia = ConfigService.getConfigValue('task.enableOnlySaveMedia');
             // mediaSuffixs转为小写
             const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase())
@@ -595,41 +773,47 @@ class TaskService {
         }
         if (subFolders.length > 0) {
             taskDto.realRootFolderId = rootFolder.id;
-            // 如果启用了 AI 分析，分析子文件夹
-            if (this._isAiAdvancedMode() && subFolders.length > 0) {
+            const folderTree = await this._collectShareFolderTree(
+                cloud189,
+                shareInfo,
+                taskDto.accessCode,
+                result
+            );
+            // AI 读取完整套娃目录树；仅用分析结果补充媒体语义，选择与转存仍以稳定 ID/原始路径为准。
+            if (this._isAiAdvancedMode() && folderTree.length > 0) {
                 try {
-                    const resourceInfo = await this._analyzeResourceInfo(
+                    await this._analyzeResourceInfo(
                         shareInfo.fileName,
-                        subFolders.map(f => ({ id:f.id, name: f.name })),
+                        folderTree.map(folder => ({
+                            id: folder.id,
+                            name: folder.name,
+                            relativePath: folder.relativePath,
+                            parentId: folder.parentId,
+                            depth: folder.depth,
+                            directFileCount: folder.directFileCount,
+                            hasFiles: folder.hasFiles
+                        })),
                         'folder'
                     );
-                    // 遍历子文件夹，使用 AI 分析结果更新文件夹名称
-                    const aiFolders = Array.isArray(resourceInfo?.folders) ? resourceInfo.folders : [];
-                    for (const folder of subFolders) {
-                        // 在 AI 分析结果中查找对应的文件夹
-                        const aiFolder = aiFolders.find(f => f.id === folder.id);
-                        if (aiFolder) {
-                            folder.name = aiFolder.name;
-                        }
-                    }
                 } catch (error) {
-                    logTaskEvent('子文件夹 AI 分析失败，使用原始文件名: ' + error.message, 'error', 'transfer');
+                    logTaskEvent('套娃目录 AI 分析失败，使用原始目录结构: ' + error.message, 'error', 'transfer');
                 }
+            }
+            const selectedSubFolders = this._filterSelectedShareFolderNodes(folderTree, taskDto);
+            const hasExplicitSelection = Array.isArray(taskDto.selectedFolders) && taskDto.selectedFolders.length > 0;
+            if (hasExplicitSelection && !rootSelected && selectedSubFolders.length === 0) {
+                throw new Error('选择的分享目录不存在或已失效，请重新解析后选择');
             }
             const shouldReuseRootFolder = selectedSubFolders.length === 1
                 && !this.checkFolderInList(taskDto, '-1')
-                && String(rootFolder.name || '').trim() === String(selectedSubFolders[0]?.name || '').trim();
+                && !selectedSubFolders[0].relativePath.includes('/')
+                && String(path.basename(rootFolder.name || '')).trim() === String(selectedSubFolders[0]?.name || '').trim();
 
              // 处理子文件夹
-            for (const folder of subFolders) {
-                if (!selectedSubFolders.some(item => item.id === folder.id)) {
-                    continue;
-                }
-                const subFolderContent = await cloud189.listShareDir(shareInfo.shareId, folder.id, shareInfo.shareMode, taskDto.accessCode);
-                const hasFiles = subFolderContent?.fileListAO?.fileList?.length > 0;
-                if (!hasFiles) {
+            for (const folder of selectedSubFolders) {
+                if (!folder.hasFiles) {
                     logTaskEvent(`子文件夹 "${folder.name}" (ID: ${folder.id}) 为空，跳过目录。`, 'warn', 'transfer');
-                    continue; // 跳到下一个子文件夹
+                    continue;
                 }
                 let realFolder;
                 if (shouldReuseRootFolder) {
@@ -638,15 +822,11 @@ class TaskService {
                         name: rootFolder.name
                     };
                 } else {
-                    await this.checkFolderExists(cloud189, rootFolder.id, folder.fileName, taskDto.overwriteFolder);
-                    realFolder = await cloud189.createFolder(folder.name, rootFolder.id);
-                    if (!realFolder?.id) throw new Error('创建目录失败');
-                    realFolder.name = this._safeJoinPath(rootFolder.name, realFolder.name);
+                    realFolder = await this._ensureTargetSubfolderPath(cloud189, rootFolder, folder.relativePath);
                 }
                 const subTask = this.taskRepo.create(
                     this._createTaskConfig(
-                        taskDto,
-                        shareInfo, realFolder, shareInfo.fileName, 0, folder.id, folder.name
+                        taskDto, shareInfo, realFolder, shareInfo.fileName, 0, folder.id, folder.relativePath
                     )
                 );
                 tasks.push(await this.taskRepo.save(subTask));
@@ -706,7 +886,6 @@ class TaskService {
         const shareCode = cloud189Utils.parseShareCode(taskDto.shareLink);
         const shareInfo = await this.getShareInfo(cloud189, shareCode);
         await logTaskEvent(`分享信息解析完成: shareId=${shareInfo.shareId || ''}, fileId=${shareInfo.fileId || ''}, fileName=${shareInfo.fileName || ''}, isFolder=${!!shareInfo.isFolder}, shareMode=${shareInfo.shareMode}`, 'info', 'task');
-        await this._ensureTaskNotExists(taskDto, shareInfo);
         // 如果分享链接是加密链接, 且没有提供访问码, 则抛出错误
         if (shareInfo.shareMode == 1 ) {
             if (!taskDto.accessCode) {
@@ -724,6 +903,15 @@ class TaskService {
         }
         if (!shareInfo.shareId) {
             throw new Error('获取分享信息失败');
+        }
+        const existingCoverageTasks = await this._ensureTaskNotExists(taskDto, shareInfo);
+        if (existingCoverageTasks.length) {
+            for (const task of existingCoverageTasks) {
+                const execution = this.processTask(task);
+                this.initialTaskExecutions.set(task, execution);
+                execution.catch(error => logTaskEvent(`任务[${task.resourceName || ''}]扩展覆盖后执行失败: ${error.message}`, 'error', 'transfer'));
+            }
+            return existingCoverageTasks;
         }
         // 如果启用了 AI 分析 如果任务名和分享名相同, 则使用AI分析结果更新任务名称
         if (this._isAiAdvancedMode() && taskDto.taskName == shareInfo.fileName) {
@@ -993,6 +1181,29 @@ class TaskService {
         task.manualTmdbBound = true;
         task.manualSeason = Number.isInteger(manualSeason) && manualSeason > 0 ? manualSeason : null;
         task.tmdbContent = JSON.stringify(detail);
+        task.metadataOverrideJson = JSON.stringify(normalizeMetadataOverride({
+            ...buildMetadataTemplate({
+                ...detail,
+                id: tmdbId,
+                title: params.title || detail.title || '',
+                type: videoType,
+                seasonNumber: Number.isInteger(manualSeason) && manualSeason >= 0 ? manualSeason : null,
+                seasonName: params.seasonName || '',
+                totalEpisodes: seasonEpisodes || Number(detail.totalEpisodes || 0)
+            }, 'user'),
+            source: 'user',
+            work: {
+                tmdbId,
+                title: params.title || detail.title || '',
+                year: detail.releaseDate ? String(new Date(detail.releaseDate).getFullYear()) : '',
+                mediaType: videoType,
+                category: params.category || '',
+                seasonNumber: Number.isInteger(manualSeason) && manualSeason >= 0 ? manualSeason : null,
+                seasonName: params.seasonName || '',
+                totalEpisodes: seasonEpisodes || Number(detail.totalEpisodes || 0),
+                locks: { '*': true }
+            }
+        }, { source: 'user' }));
         // 手动绑定后重建并锁定媒体库布局：否则此前误判（如电影被当成电视剧）
         // 锁定的旧 libraryLayout 会在重新生成 STRM 时继续生效，导致分类/命名错误。
         try {
@@ -1307,7 +1518,7 @@ class TaskService {
                 // 不要用 resourceName（已被 TMDB 标题覆盖）。
                 const rootFolderName = String(task.realFolderName || task.resourceName || '').replace('(根)', '').split('/')[0].trim();
                 logTaskEvent(`正在创建根目录: ${rootFolderName}`, 'info', 'transfer');
-                const rootFolder = await cloud189.createFolder(rootFolderName, task.targetFolderId);
+                const rootFolder = (await this.mutationExecutor.createFolder(cloud189, task.targetFolderId, rootFolderName)).value;
                 if (!rootFolder?.id) throw new Error('创建根目录失败');
                 task.realRootFolderId = rootFolder.id;
                 logTaskEvent(`根目录创建成功: ${rootFolderName}`, 'info', 'transfer');
@@ -1322,9 +1533,13 @@ class TaskService {
         // 但 shareFolderName 为空，此时不能再尝试创建空名称目录。
         if (hasSubFolder && task.realRootFolderId !== task.realFolderId) {
             logTaskEvent(`正在创建子目录: ${shareFolderName}`, 'info', 'transfer');
-            const subFolder = await cloud189.createFolder(shareFolderName, task.realRootFolderId);
-            if (!subFolder?.id) throw new Error('创建子目录失败');
+            const subFolder = await this._ensureTargetSubfolderPath(
+                cloud189,
+                { id: task.realRootFolderId, name: String(task.realFolderName || task.resourceName || '').split('/')[0] },
+                shareFolderName
+            );
             task.realFolderId = subFolder.id;
+            task.realFolderName = subFolder.name;
             logTaskEvent(`子目录创建成功: ${shareFolderName}`, 'info', 'transfer');
         } else {
             // 根目录任务或缺少子目录名时，直接将 realFolderId 指向根目录。
@@ -1410,6 +1625,12 @@ class TaskService {
             return;
         }
 
+        await auditService.event('cas_restore_started', '开始恢复 CAS 文件', {
+            phase: 'cas', data: { fileCount: casFiles.length, targetFolderId: task.realFolderId }
+        });
+        let restoredCount = 0;
+        let failedCount = 0;
+
         for (const casFile of casFiles) {
             try {
                 const transferredCasFile = await this._waitForFileByName(cloud189, task.realFolderId, casFile.name);
@@ -1427,6 +1648,14 @@ class TaskService {
                     throw new Error(`CAS恢复后未找到目标文件: ${restoreName}`);
                 }
 
+                await auditService.recordOperation('upload', 'completed', {
+                    sourcePath: casFile.name,
+                    targetPath: restoreName,
+                    after: { restoredFileId: restoredFile.id, targetFolderId: task.realFolderId },
+                    verification: { exists: true }, decisionSource: 'cas_restore'
+                });
+                restoredCount++;
+
                 await this._saveProcessedFileRecord(task, casFile, 'done', '', {
                     transferredCasFileId: String(transferredCasFile.id),
                     casSourceFolderId: String(task.realFolderId),
@@ -1441,17 +1670,25 @@ class TaskService {
                     continue;
                 }
                 try {
-                    await cloud189.deleteFile(transferredCasFile.id, transferredCasFile.name);
+                    await this.mutationExecutor.delete(cloud189, transferredCasFile.id, transferredCasFile.name);
                     logTaskEvent(`普通任务已删除CAS文件: ${transferredCasFile.name}`, 'info', 'transfer');
                 } catch (deleteError) {
                     logTaskEvent(`[警告] 清理CAS临时文件失败: ${transferredCasFile.name}, 错误: ${deleteError.message}`, 'warn', 'transfer');
                 }
             } catch (error) {
+                failedCount++;
+                await auditService.recordOperation('upload', 'failed', {
+                    sourcePath: casFile.name, reason: 'CAS 恢复失败',
+                    decisionSource: 'cas_restore', error: error.message
+                });
                 await this._saveProcessedFileRecord(task, casFile, 'failed', error.message);
                 logTaskEvent(`普通任务恢复CAS文件失败: ${casFile.name}, 错误: ${error.message}`, 'error', 'transfer');
                 throw error;
             }
         }
+        await auditService.event('cas_restore_finished', 'CAS 文件恢复完成', {
+            phase: 'cas', data: { total: casFiles.length, restored: restoredCount, failed: failedCount }
+        });
     }
 
     async _waitForFileByName(cloud189, folderId, fileName, maxAttempts = 120, intervalMs = 1000) {
@@ -1497,6 +1734,10 @@ class TaskService {
         let failed = 0;
         let pending = 0;
 
+        await auditService.event('cas_archive_started', '开始归档 CAS 文件', {
+            phase: 'cas', data: { fileCount: pendingRecords.length, targetFolderId: task.targetFolderId }
+        });
+
         for (const record of pendingRecords) {
             const mediaFile = mediaFiles.find(file =>
                 String(file.id || '') === String(record.restoredCloudFileId || '')
@@ -1524,15 +1765,28 @@ class TaskService {
                 record.casArchiveFileId = result.fileId;
                 record.casArchiveError = '';
                 archived++;
+                await auditService.recordOperation('move', 'completed', {
+                    sourcePath: record.sourceFileName,
+                    targetPath: result.relativePath,
+                    after: { fileId: result.fileId, parentFolderId: result.parentFolderId },
+                    verification: { archived: true }, decisionSource: 'cas_archive'
+                });
                 logTaskEvent(`CAS已归档: ${result.relativePath}`, 'info', 'transfer');
             } catch (error) {
                 record.casArchiveStatus = 'archive_failed';
                 record.casArchiveError = String(error.message || error).slice(0, 500);
                 failed++;
+                await auditService.recordOperation('move', 'failed', {
+                    sourcePath: record.sourceFileName, reason: 'CAS 归档失败',
+                    decisionSource: 'cas_archive', error: error.message
+                });
                 logTaskEvent(`CAS归档失败，保留源存根等待重试: ${record.sourceFileName} - ${error.message}`, 'warn', 'transfer');
             }
             await repo.save(record);
         }
+        await auditService.event('cas_archive_finished', 'CAS 文件归档完成', {
+            phase: 'cas', data: { total: pendingRecords.length, archived, failed, pending }
+        });
         return { archived, failed, pending };
     }
 
@@ -1557,8 +1811,18 @@ class TaskService {
             !file.isFolder
             && this._checkFileSuffix(file, true, mediaSuffixs)
             && (aiFiltered || this._handleMatchMode(task, file))
+            && this._matchesTaskCoverageScope(task, file)
             && !this.isHarmonized(file)
         );
+    }
+
+    _matchesTaskCoverageScope(task, file) {
+        let scope = null;
+        try { scope = JSON.parse(task?.coverageScopeJson || ''); } catch (_) {}
+        return matchesCoverageScope(file, scope, {
+            defaultSeason: Number(task?.tmdbSeasonNumber || 0)
+                || extractSeasonHint(task?.shareFolderName || task?.realFolderName || task?.resourceName || '')
+        });
     }
 
     // 使用 AI 过滤文件列表
@@ -1596,8 +1860,8 @@ class TaskService {
         logTaskEvent(`任务 ${task.id}: 生成 AI 过滤描述: "${filterDescription}"`, 'info', 'transfer');
 
 
-        // 2. 准备给 AI 的文件列表 (仅含 id 和 name)
-        const filesForAI = fileList.map(f => ({ id: f.id, name: f.name }));
+        // 2. 给 AI 完整相对路径，避免同名文件及套娃季度目录失去上下文。
+        const filesForAI = fileList.map(file => this._buildAiFileInput(file));
 
         // 3. 调用 AI 服务
         try {
@@ -1655,7 +1919,7 @@ class TaskService {
     async processTask(task, options = {}) {
         const taskExecutionKey = this._getTaskExecutionKey(task);
         if (!taskExecutionKey) {
-            return await this._processTaskInternal(task, options);
+            return await this._executeTaskWithTracking(task, options);
         }
 
         if (this.activeTaskExecutions.has(taskExecutionKey)) {
@@ -1663,7 +1927,7 @@ class TaskService {
             return await this.activeTaskExecutions.get(taskExecutionKey);
         }
 
-        const executionPromise = this._processTaskInternal(task, options);
+        const executionPromise = this._executeTaskWithTracking(task, options);
         this.activeTaskExecutions.set(taskExecutionKey, executionPromise);
         try {
             return await executionPromise;
@@ -1674,8 +1938,77 @@ class TaskService {
         }
     }
 
+    async _executeTaskWithTracking(task, options = {}) {
+        const taskExecutionKey = this._getTaskExecutionKey(task);
+        let run = null;
+        if (this.workflowRunTracker?.startTaskRun) {
+            try {
+                run = await this.workflowRunTracker.startTaskRun(task, options);
+            } catch (error) {
+                console.warn(`WorkflowRun 创建失败，任务继续执行: ${error.message}`);
+            }
+        }
+        if (taskExecutionKey && run && this.activeTaskRuns) {
+            this.activeTaskRuns.set(taskExecutionKey, run);
+        }
+
+        const execute = async () => {
+            const result = await this._processTaskInternal(task, options);
+            const finalStatus = task?.status === 'failed'
+                ? 'failed'
+                : (task?.status === 'pending' && task?.nextRetryTime ? 'retrying' : 'completed');
+            await this._finishTaskRun(task, finalStatus, {
+                taskStatus: task?.status || '',
+                retryCount: Number(task?.retryCount || 0),
+                ...(task?.lastError ? { error: task.lastError } : {})
+            });
+            return result;
+        };
+
+        try {
+            return run?._auditRun
+                ? await auditService.runInContext(run._auditRun, execute)
+                : await execute();
+        } catch (error) {
+            await this._finishTaskRun(task, 'failed', { error: error.message || String(error) });
+            throw error;
+        } finally {
+            if (taskExecutionKey && this.activeTaskRuns) {
+                this.activeTaskRuns.delete(taskExecutionKey);
+            }
+        }
+    }
+
+    async _trackTaskPhase(task, phase, activity, details = {}) {
+        const taskExecutionKey = this._getTaskExecutionKey(task);
+        const run = taskExecutionKey && this.activeTaskRuns ? this.activeTaskRuns.get(taskExecutionKey) : null;
+        if (!run || !this.workflowRunTracker?.update) {
+            return;
+        }
+        try {
+            await this.workflowRunTracker.update(run, phase, activity, details);
+        } catch (error) {
+            console.warn(`WorkflowRun 阶段更新失败，任务继续执行: ${error.message}`);
+        }
+    }
+
+    async _finishTaskRun(task, status, details = {}) {
+        const taskExecutionKey = this._getTaskExecutionKey(task);
+        const run = taskExecutionKey && this.activeTaskRuns ? this.activeTaskRuns.get(taskExecutionKey) : null;
+        if (!run || !this.workflowRunTracker?.finish) {
+            return;
+        }
+        try {
+            await this.workflowRunTracker.finish(run, status, details);
+        } catch (error) {
+            console.warn(`WorkflowRun 完成状态写入失败，任务结果不受影响: ${error.message}`);
+        }
+    }
+
     async _processTaskInternal(task, options = {}) {
         const { allowSourceRefresh = true } = options;
+
+        await this._trackTaskPhase(task, 'metadata', '正在同步媒体元数据');
 
         // 增强：转存开始的同时，自动尝试通过 TMDB 获取总集数
         if (task && (!task.totalEpisodes || task.totalEpisodes === 0)) {
@@ -1700,8 +2033,10 @@ class TaskService {
                 throw new Error('账号不存在');
             }
             task.account = account;
+            await this._trackTaskPhase(task, 'account', '账号验证完成');
             const cloud189 = Cloud189Service.getInstance(account);
              // 获取分享文件列表并进行增量转存
+             await this._trackTaskPhase(task, 'inspect_share', '正在读取分享目录');
              const shareDir = await cloud189.listShareDir(task.shareId, task.shareFolderId, task.shareMode,task.accessCode, task.isFolder);
              if(shareDir.res_code == "ShareAuditWaiting") {
                 logTaskEvent("分享链接审核中, 等待下次执行", 'info', 'transfer')
@@ -1767,6 +2102,7 @@ class TaskService {
                 return saveResults.join('\n');
             }
 
+            await this._trackTaskPhase(task, 'inspect_target', '正在读取目标目录');
             let folderFiles = await this.getAllFolderFiles(cloud189, task);
             if (task.keepCasAfterRestore) {
                 await this.archivePendingCasFiles(task, cloud189);
@@ -1805,6 +2141,7 @@ class TaskService {
                 }
             }
             const doneProcessedIds = await this._getDoneProcessedSourceFileIds(task.id);
+            await this._trackTaskPhase(task, 'compare', '正在计算增量文件');
             
             const newFiles = shareFiles
                 .filter(file => {
@@ -1813,6 +2150,7 @@ class TaskService {
                     }
                     if (!this._checkFileSuffix(file, enableOnlySaveMedia, mediaSuffixs)
                         || !(aiFiltered || this._handleMatchMode(task, file))
+                        || !this._matchesTaskCoverageScope(task, file)
                         || this.isHarmonized(file)) {
                         return false;
                     }
@@ -1827,7 +2165,13 @@ class TaskService {
 
             // 处理新文件并保存到数据库和云盘
             if (newFiles.length > 0) {
+                await this._trackTaskPhase(task, 'transfer', `正在转存 ${newFiles.length} 个新增文件`, {
+                    fileCount: newFiles.length
+                });
                 const { fileNameList, fileCount, effectiveNewFiles } = await this._handleNewFiles(task, newFiles, cloud189, mediaSuffixs);
+                await this._trackTaskPhase(task, 'verify', '转存完成，正在核对任务结果', {
+                    fileCount: effectiveNewFiles.length
+                });
                 const resourceName = task.shareFolderName? `${task.resourceName}/${task.shareFolderName}` : task.resourceName;
                 saveResults.push(`${resourceName}追更${fileCount}集: \n${fileNameList.join('\n')}`);
                 const firstExecution = !task.lastFileUpdateTime;
@@ -1871,6 +2215,7 @@ class TaskService {
             }
 
             task.lastCheckTime = new Date();
+            await this._trackTaskPhase(task, 'finalize', '正在保存任务状态');
             await this.taskRepo.save(task);
             return saveResults.join('\n');
         } catch (error) {
@@ -2061,7 +2406,7 @@ class TaskService {
             }
         }
         // 只允许更新特定字段
-        const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'manualTmdbBound', 'manualSeason', 'tmdbTitle', 'videoType', 'tmdbContent', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer', 'keepCasAfterRestore'];
+        const allowedFields = ['resourceName', 'targetFolderId', 'targetFolderName', 'organizerTargetFolderId', 'organizerTargetFolderName', 'realFolderId', 'currentEpisodes', 'totalEpisodes', 'status','realFolderName', 'shareFolderName', 'shareFolderId', 'sourceRegex', 'targetRegex', 'matchPattern','matchOperator','matchValue','remark', 'taskGroup', 'tmdbId', 'tmdbSeasonNumber', 'tmdbSeasonName', 'tmdbSeasonEpisodes', 'manualTmdbBound', 'manualSeason', 'tmdbTitle', 'videoType', 'tmdbContent', 'enableCron', 'cronExpression', 'enableTaskScraper', 'enableLazyStrm', 'enableOrganizer', 'keepCasAfterRestore', 'coverageScopeJson', 'metadataOverrideJson'];
         for (const field of allowedFields) {
             if (updates[field] !== undefined) {
                 task[field] = updates[field];
@@ -2171,13 +2516,24 @@ class TaskService {
         let nextShareFolderName = '';
         if (task.shareFolderName) {
             const shareDir = await cloud189.listShareDir(shareInfo.shareId, shareInfo.fileId, shareInfo.shareMode, nextAccessCode || '');
-            const folderList = shareDir?.fileListAO?.folderList || [];
-            const matchedFolder = folderList.find(folder => String(folder.name || '').trim() === String(task.shareFolderName || '').trim());
+            const folderTree = await this._collectShareFolderTree(
+                cloud189,
+                shareInfo,
+                nextAccessCode || '',
+                shareDir
+            );
+            const expectedPath = this._normalizeShareRelativePath(task.shareFolderName);
+            let matchedFolder = folderTree.find(folder => folder.relativePath === expectedPath);
+            if (!matchedFolder) {
+                const leafName = expectedPath.split('/').pop();
+                const leafMatches = folderTree.filter(folder => folder.name === leafName);
+                matchedFolder = leafMatches.length === 1 ? leafMatches[0] : null;
+            }
             if (!matchedFolder?.id) {
                 throw new Error(`新分享链接中未找到目录: ${task.shareFolderName}`);
             }
             nextShareFolderId = matchedFolder.id;
-            nextShareFolderName = matchedFolder.name;
+            nextShareFolderName = matchedFolder.relativePath;
         }
 
         task.shareLink = parsedShareLink;
@@ -2230,7 +2586,7 @@ class TaskService {
                 try {
                     const resourceInfo = await this._analyzeResourceInfo(
                         task.resourceName,
-                        files.map(f => ({ id: f.id, name: f.name })),
+                        files.map(file => this._buildAiFileInput(file)),
                         'file'
                     );
                     await this._processRename(cloud189, task, files, resourceInfo, message, newFiles);
@@ -2246,7 +2602,7 @@ class TaskService {
                     try {
                         const aiResourceInfo = await this._analyzeResourceInfo(
                             task.resourceName,
-                            files.map(f => ({ id: f.id, name: f.name })),
+                            files.map(file => this._buildAiFileInput(file)),
                             'file'
                         );
                         message = [];
@@ -2405,7 +2761,8 @@ class TaskService {
         if (task.enableSystemProxy) {
             throw new Error('系统代理模式已移除');
         } else {
-            renameResult = await cloud189.renameFile(file.id, newName);
+            const mutation = await this.mutationExecutor.rename(cloud189, file.id, newName);
+            renameResult = mutation.response || { res_code: 0 };
         }
 
         if (!task.enableSystemProxy && (!renameResult || renameResult.res_code != 0)) {
@@ -2633,13 +2990,15 @@ class TaskService {
     async _handleTaskFailure(task, error) {
         logTaskEvent(error, 'error', 'transfer');
         const maxRetries = ConfigService.getConfigValue('task.maxRetries');
-        let retryInterval = ConfigService.getConfigValue('task.retryInterval');
+        const operationError = classifyOperationError(error, { source: 'task', operation: 'process_task' });
+        const configuredBaseMs = Math.max(1000, Number(ConfigService.getConfigValue('task.retryInterval') || 60) * 1000);
         
         // 如果是流量超限错误，增加重试间隔（至少600秒）
         const isTrafficLimit = /UserDayFlowOverLimited|data flow is out|FlowOverLimited|流量超限/i.test(error.message);
         if (isTrafficLimit) {
-            retryInterval = Math.max(retryInterval, 600);
-            logTaskEvent(`检测到流量超限，将增加重试间隔至 ${retryInterval} 秒`, 'warn', 'transfer');
+            operationError.retryAfterMs = Math.max(Number(operationError.retryAfterMs || 0), 600_000);
+            operationError.retryable = true;
+            logTaskEvent('检测到流量超限，将增加重试间隔', 'warn', 'transfer');
         }
 
         // 初始化重试次数
@@ -2649,15 +3008,26 @@ class TaskService {
         
         const errorMsg = error.message || String(error);
 
-        if (task.retryCount < maxRetries) {
+        if (operationError.resourceDisposition !== 'none' && task.shareLink) {
+            await this.invalidResourceService.record(task.shareLink, {
+                resourceType: 'cloud_share',
+                source: 'task',
+                operation: 'process_task',
+                error: operationError,
+                metadata: { taskId: task.id }
+            }).catch(cacheError => logTaskEvent(`失效资源记录失败: ${cacheError.message}`, 'warn', 'transfer'));
+        }
+
+        if (operationError.retryable && task.retryCount < maxRetries) {
             task.retryCount++;
             await this._syncTaskDetailRecordsWithActualFiles(task);
             task.status = 'pending';
             task.lastError = `${errorMsg} (重试 ${task.retryCount}/${maxRetries})`;
             // 设置下次重试时间
-            task.nextRetryTime = new Date(Date.now() + retryInterval * 1000);
+            const retryDelayMs = operationError.retryAfterMs || calculateRetryDelayMs(task.retryCount, { baseMs: configuredBaseMs });
+            task.nextRetryTime = new Date(Date.now() + retryDelayMs);
             
-            const retryLog = `任务将在 ${retryInterval} 秒后重试 (${task.retryCount}/${maxRetries})`;
+            const retryLog = `任务将在 ${Math.ceil(retryDelayMs / 1000)} 秒后重试 (${task.retryCount}/${maxRetries})`;
             logTaskEvent(retryLog, 'info', 'transfer');
 
             // 推送失败重试日志
@@ -2684,8 +3054,12 @@ class TaskService {
 
             await this._syncTaskDetailRecordsWithActualFiles(task);
             task.status = 'failed';
-            task.lastError = `${errorMsg} (已达到最大重试次数 ${maxRetries})`;
-            logTaskEvent(`任务达到最大重试次数 ${maxRetries}，标记为失败`, 'error', 'transfer');
+            task.lastError = operationError.retryable
+                ? `${errorMsg} (已达到最大重试次数 ${maxRetries})`
+                : `${errorMsg} (不可重试错误: ${operationError.category})`;
+            logTaskEvent(operationError.retryable
+                ? `任务达到最大重试次数 ${maxRetries}，标记为失败`
+                : `任务遇到不可重试错误 ${operationError.category}，标记为失败`, 'error', 'transfer');
 
             // 推送最终失败日志
             const pushMsg = `🚨 任务彻底失败: ${task.resourceName}\n原因: ${errorMsg}\n已重试 ${maxRetries} 次，停止重试。`;
@@ -3003,11 +3377,15 @@ class TaskService {
             type: 'DELETE',
             targetFolderId: ''
         });
-        await this.createBatchTask(cloud189, batchTaskDto)
+        await this.createBatchTask(cloud189, batchTaskDto);
+        for (const item of taskInfos) {
+            const info = await cloud189.getFileInfo(item.fileId).catch(() => null);
+            if (info) throw new Error(`删除写后验证失败: ${item.fileName}`);
+        }
     }
 
     // 移动网盘文件
-    async moveCloudFile(cloud189, file, targetFolderId) {
+    async moveCloudFile(cloud189, file, targetFolderId, audit = {}) {
         if (!file) return;
         if (!targetFolderId) {
             throw new Error('目标目录不能为空');
@@ -3034,7 +3412,34 @@ class TaskService {
             type: 'MOVE',
             targetFolderId
         });
-        await this.createBatchTask(cloud189, batchTaskDto);
+        const first = Array.isArray(file) ? file[0] : file;
+        const sourceParentId = String(first?.parentId || first?.parentFolderId || '');
+        if (sourceParentId) {
+            await this.mutationExecutor.move(
+                cloud189,
+                sourceParentId,
+                targetFolderId,
+                file,
+                () => this.createBatchTask(cloud189, batchTaskDto),
+                audit
+            );
+        } else {
+            await this.createBatchTask(cloud189, batchTaskDto);
+            const targetItems = await cloud189.listFiles(targetFolderId);
+            const targetIds = new Set([
+                ...(targetItems?.fileListAO?.folderList || []),
+                ...(targetItems?.fileListAO?.fileList || [])
+            ].map(item => String(item.id || item.fileId || '')));
+            const moved = taskInfos.every(item => targetIds.has(String(item.fileId)));
+            if (!moved) throw new Error('移动写后验证失败');
+            await auditService.recordOperation('move', 'completed', {
+                ...audit,
+                before: audit.before || { sourceParentId, itemIds: taskInfos.map(item => item.fileId) },
+                after: audit.after || { targetFolderId },
+                verification: { moved: true },
+                decisionSource: audit.decisionSource || 'cloud_mutation'
+            });
+        }
     }
 
     // 根据任务创建STRM文件
@@ -3225,16 +3630,30 @@ class TaskService {
         }
         const folders = []
         // 根目录为分享链接的名称
-        folders.push({id: -1 ,name: shareInfo.fileName})
+        folders.push({
+            id: '-1',
+            name: shareInfo.fileName,
+            relativePath: '',
+            parentId: '',
+            depth: 0,
+            hasChildren: false,
+            hasFiles: !shareInfo.isFolder
+        })
         if (!shareInfo.isFolder) {
             return folders;
         }
-        // 遍历分享链接的目录
+        // 递归遍历分享目录，允许选择任意层级的套娃文件夹。
         const result = await cloud189.listShareDir(shareInfo.shareId, shareInfo.fileId, shareInfo.shareMode, accessCode);
         if (!result?.fileListAO) return folders;
-        const { folderList: subFolders = [] } = result.fileListAO;
-        subFolders.forEach(folder => {
-            folders.push({id: folder.id, name: path.join(shareInfo.fileName, folder.name)});
+        const folderTree = await this._collectShareFolderTree(cloud189, shareInfo, accessCode, result);
+        folders[0].hasChildren = folderTree.some(folder => folder.depth === 1);
+        folders[0].hasFiles = (result.fileListAO.fileList?.length || 0) > 0
+            || folderTree.some(folder => folder.hasFiles);
+        folderTree.forEach(folder => {
+            folders.push({
+                ...folder,
+                name: path.posix.join(shareInfo.fileName, folder.relativePath)
+            });
         });
         return folders;
     }

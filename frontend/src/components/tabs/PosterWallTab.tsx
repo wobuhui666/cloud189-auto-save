@@ -17,9 +17,13 @@ import {
   Trash2,
   Play,
   Search,
+  Users,
+  SlidersHorizontal,
+  X,
 } from 'lucide-react';
 import { getDoubanHotMovies, getDoubanHotTV, searchDouban } from '../../lib/douban.client';
 import { getBangumiToday, getBangumiByWeekday, getBangumiRanking } from '../../lib/bangumi.client';
+import { getAniListAnime } from '../../lib/anilist.client';
 import Checkbox from '../ui/Checkbox';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
@@ -33,12 +37,15 @@ interface MediaItem {
   poster: string;
   rate: string;
   year: string;
-  type: 'movie' | 'tv' | 'anime' | 'variety';
-  source: 'douban' | 'tmdb' | 'bangumi';
+  type: 'movie' | 'tv' | 'anime' | 'variety' | 'person';
+  source: 'douban' | 'tmdb' | 'bangumi' | 'anilist' | 'actor' | 'streaming';
   overview?: string;
+  provider?: string;
+  genres?: string[];
+  knownFor?: string;
 }
 
-type MediaSource = 'douban' | 'tmdb' | 'bangumi';
+type MediaSource = 'tmdb' | 'douban' | 'anilist' | 'bangumi' | 'actor' | 'streaming';
 
 interface SourcePreset {
   key: string;
@@ -46,11 +53,25 @@ interface SourcePreset {
 }
 
 // === 来源徽章配色 ===
-const SOURCE_BADGE: Record<MediaSource, { label: string; cls: string }> = {
+const SOURCE_BADGE: Record<string, { label: string; cls: string }> = {
   douban: { label: '豆瓣', cls: 'bg-[#0b57d0]/85 text-white' },
   tmdb: { label: 'TMDB', cls: 'bg-[#0b57d0]/85 text-white' },
   bangumi: { label: '番组', cls: 'bg-[#0b57d0]/85 text-white' },
+  anilist: { label: 'AniList', cls: 'bg-[#3b82f6]/85 text-white' },
+  actor: { label: '演员', cls: 'bg-[#7c3aed]/85 text-white' },
+  streaming: { label: '流媒体', cls: 'bg-[#059669]/85 text-white' },
 };
+
+const STREAMING_PROVIDERS = [
+  { key: 'netflix', label: 'Netflix' },
+  { key: 'hbo', label: 'HBO' },
+  { key: 'apple', label: 'Apple TV+' },
+  { key: 'disney', label: 'Disney+' },
+  { key: 'crunchyroll', label: 'Crunchyroll' },
+  { key: 'prime', label: 'Amazon Prime' },
+  { key: 'amazon', label: 'Amazon' },
+  { key: 'hulu', label: 'Hulu' },
+] as const;
 
 // === PosterCard 组件 ===
 interface PosterCardProps {
@@ -300,7 +321,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
               )}
               <span className="inline-flex items-center gap-1 text-xs font-medium bg-[#d3e3fd] dark:bg-[#0b57d0]/20 text-[#0b57d0] dark:text-[#8ab4f8] px-2.5 py-1 rounded-full">
                 <Globe className="w-3.5 h-3.5" />
-                {item.source === 'douban' ? '豆瓣' : item.source === 'tmdb' ? 'TMDB' : '番组计划'}
+                {item.provider || (item.source === 'douban' ? '豆瓣' : item.source === 'tmdb' ? 'TMDB' : item.source === 'bangumi' ? '番组计划' : item.source === 'anilist' ? 'AniList' : '热门演员')}
               </span>
             </div>
             {item.overview && (
@@ -309,7 +330,16 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
           </div>
         </div>
 
-        {/* 操作按钮 */}
+        {item.type === 'person' ? (
+          <div className="pt-4 border-t border-slate-200 dark:border-slate-700 text-sm text-slate-600 dark:text-slate-400">
+            <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-medium mb-2">
+              <Users className="w-4 h-4 text-[#7c3aed]" />
+              {item.knownFor || '热门演员'}
+            </div>
+            {item.overview || '暂无代表作品信息'}
+          </div>
+        ) : (
+        /* 操作按钮 */
         <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-200 dark:border-slate-700">
           <button
             onClick={() => onAddAutoSeries(item)}
@@ -334,6 +364,7 @@ const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
             搜索下载
           </button>
         </div>
+        )}
       </div>
     </Modal>
   );
@@ -346,13 +377,16 @@ interface SourceTabProps {
 }
 
 const SOURCE_TABS: Array<{ id: MediaSource; label: string; icon: any }> = [
-  { id: 'douban', label: '豆瓣', icon: Film },
   { id: 'tmdb', label: 'TMDB', icon: Tv },
+  { id: 'douban', label: '豆瓣', icon: Film },
+  { id: 'anilist', label: 'AniList 动漫', icon: Clapperboard },
   { id: 'bangumi', label: '番组计划', icon: Calendar },
+  { id: 'actor', label: '热门演员', icon: Users },
+  { id: 'streaming', label: '流媒体榜单', icon: Play },
 ];
 
 const SourceTabs: React.FC<SourceTabProps> = ({ active, onChange }) => (
-  <div className="inline-flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-full">
+  <div className="flex flex-wrap gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl max-w-full">
     {SOURCE_TABS.map((tab) => {
       const Icon = tab.icon;
       const isActive = active === tab.id;
@@ -408,18 +442,45 @@ interface PosterWallTabProps {
 
 const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, onSearchHdhive }) => {
   const toast = useToast();
-  const [activeSource, setActiveSource] = useState<MediaSource>('douban');
+  const [activeSource, setActiveSource] = useState<MediaSource>('tmdb');
   const [loading, setLoading] = useState(false);
 
   // 豆瓣数据
   const [doubanHotMovies, setDoubanHotMovies] = useState<MediaItem[]>([]);
   const [doubanHotTV, setDoubanHotTV] = useState<MediaItem[]>([]);
   const [doubanTag, setDoubanTag] = useState('热门');
+  const [doubanType, setDoubanType] = useState<'all' | 'movie' | 'tv'>('all');
+  const [doubanMinRate, setDoubanMinRate] = useState('');
 
   // TMDB 数据 - 拆分为电影 / 剧集两行（同一分类下分别加载）
   const [tmdbMovies, setTmdbMovies] = useState<MediaItem[]>([]);
   const [tmdbTV, setTmdbTV] = useState<MediaItem[]>([]);
   const [tmdbCategory, setTmdbCategory] = useState('trending');
+  const [tmdbType, setTmdbType] = useState<'all' | 'movie' | 'tv'>('all');
+  const [tmdbYear, setTmdbYear] = useState('');
+  const [tmdbMinRate, setTmdbMinRate] = useState('');
+
+  // AniList 动漫
+  const [aniListItems, setAniListItems] = useState<MediaItem[]>([]);
+  const [aniListSort, setAniListSort] = useState<'TRENDING_DESC' | 'POPULARITY_DESC' | 'SCORE_DESC' | 'START_DATE_DESC'>('TRENDING_DESC');
+  const [aniListFormat, setAniListFormat] = useState('');
+  const [aniListGenre, setAniListGenre] = useState('');
+  const [aniListYear, setAniListYear] = useState('');
+  const [aniListSearch, setAniListSearch] = useState('');
+
+  // 热门演员
+  const [actors, setActors] = useState<MediaItem[]>([]);
+  const [actorPage, setActorPage] = useState(1);
+
+  // 流媒体榜单
+  const [streamingProvider, setStreamingProvider] = useState<string>('netflix');
+  const [streamingItems, setStreamingItems] = useState<MediaItem[]>([]);
+  const [streamingType, setStreamingType] = useState<'all' | 'movie' | 'tv'>('all');
+  const [streamingRegion, setStreamingRegion] = useState('US');
+  const [streamingSort, setStreamingSort] = useState('popularity.desc');
+  const [streamingGenre, setStreamingGenre] = useState('');
+  const [streamingYear, setStreamingYear] = useState('');
+  const [streamingMinRate, setStreamingMinRate] = useState('');
 
   // Bangumi 数据
   const [bangumiToday, setBangumiToday] = useState<MediaItem[]>([]);
@@ -476,7 +537,7 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
     const dateStr: string = item.releaseDate || item.release_date || item.first_air_date || '';
     const yearMatch = dateStr.match(/(\d{4})/);
     const rawType = item.type || item.media_type || fallbackType || 'movie';
-    const type: MediaItem['type'] = rawType === 'tv' ? 'tv' : 'movie';
+    const type: MediaItem['type'] = rawType === 'tv' ? 'tv' : rawType === 'person' ? 'person' : 'movie';
     return {
       id: String(item.id),
       title: item.title || item.name || '未知标题',
@@ -489,13 +550,25 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
             : '',
       year: yearMatch ? yearMatch[1] : '',
       type,
-      source: 'tmdb',
+      source: item.source || 'tmdb',
       overview: item.overview || '',
+      provider: item.provider || '',
+      knownFor: item.knownFor || '',
     };
   };
 
+  const applyMediaFilters = (items: MediaItem[], filters: { type?: string; year?: string; minRate?: string }) => {
+    const minRate = filters.minRate ? Number(filters.minRate) : 0;
+    return items.filter((item) => {
+      if (filters.type && filters.type !== 'all' && item.type !== filters.type) return false;
+      if (filters.year && item.year !== filters.year) return false;
+      if (minRate && (!item.rate || Number(item.rate) < minRate)) return false;
+      return true;
+    });
+  };
+
   // 加载豆瓣数据（按 tag 真实切换）
-  const loadDoubanData = useCallback(async (tag: string) => {
+  const loadDoubanData = useCallback(async (tag: string, filters: { type?: string; minRate?: string } = {}) => {
     setLoading(true);
     try {
       let movies: MediaItem[];
@@ -509,8 +582,9 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
           searchDouban(tag, 'tv'),
         ]);
       }
-      setDoubanHotMovies(movies);
-      setDoubanHotTV(tv);
+      const items = applyMediaFilters([...movies, ...tv], filters);
+      setDoubanHotMovies(items.filter((item) => item.type === 'movie'));
+      setDoubanHotTV(items.filter((item) => item.type === 'tv'));
     } catch (e) {
       console.error('加载豆瓣数据失败:', e);
     } finally {
@@ -520,7 +594,7 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
 
   // 加载 TMDB 数据（根据 category 决定走哪个接口）
   const loadTMDBData = useCallback(
-    async (categoryKey: string) => {
+    async (categoryKey: string, filters: { type?: string; year?: string; minRate?: string } = {}) => {
       setLoading(true);
       try {
         const cat = tmdbCategories.find((c) => c.key === categoryKey) || tmdbCategories[0];
@@ -540,7 +614,7 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
             fetch('/api/tmdb/trending/all/week?page=2').then((r) => r.json()).catch(() => null),
           ]);
           const all = [...pickResults(p1), ...pickResults(p2)];
-          const items = all.map((x) => normalizeTMDBItem(x));
+          const items = applyMediaFilters(all.map((x) => normalizeTMDBItem(x)), filters);
           setTmdbMovies(items.filter((x) => x.type === 'movie'));
           setTmdbTV(items.filter((x) => x.type === 'tv'));
         } else if (cat.key === 'top_rated') {
@@ -552,8 +626,8 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
           ]);
           const mList = [...pickResults(m1), ...pickResults(m2)];
           const tList = [...pickResults(t1), ...pickResults(t2)];
-          setTmdbMovies(mList.map((x) => normalizeTMDBItem(x, 'movie')));
-          setTmdbTV(tList.map((x) => normalizeTMDBItem(x, 'tv')));
+          setTmdbMovies(applyMediaFilters(mList.map((x) => normalizeTMDBItem(x, 'movie')), filters));
+          setTmdbTV(applyMediaFilters(tList.map((x) => normalizeTMDBItem(x, 'tv')), filters));
         } else {
           // 分类：discover，电影 + 剧集 各取两页
           const movieFetch = (page: number) =>
@@ -571,8 +645,8 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
           const [m1, m2, t1, t2] = await Promise.all([movieFetch(1), movieFetch(2), tvFetch(1), tvFetch(2)]);
           const mList = [...pickResults(m1), ...pickResults(m2)];
           const tList = [...pickResults(t1), ...pickResults(t2)];
-          setTmdbMovies(mList.map((x) => normalizeTMDBItem(x, 'movie')));
-          setTmdbTV(tList.map((x) => normalizeTMDBItem(x, 'tv')));
+          setTmdbMovies(applyMediaFilters(mList.map((x) => normalizeTMDBItem(x, 'movie')), filters));
+          setTmdbTV(applyMediaFilters(tList.map((x) => normalizeTMDBItem(x, 'tv')), filters));
         }
       } catch (e) {
         console.error('加载 TMDB 数据失败:', e);
@@ -586,6 +660,66 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
+
+  const loadAniListData = useCallback(async (query: Record<string, string>) => {
+    setLoading(true);
+    try {
+      setAniListItems(await getAniListAnime({
+        sort: query.sort as any,
+        format: query.format,
+        genre: query.genre,
+        seasonYear: query.seasonYear,
+        search: query.search,
+        limit: 40,
+      }));
+    } catch (e) {
+      console.error('加载 AniList 数据失败:', e);
+      setAniListItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadActors = useCallback(async (page: number) => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/tmdb/people/popular?page=${page}`);
+      const json = await response.json();
+      const items = json?.success && Array.isArray(json.data?.results) ? json.data.results : [];
+      setActors(items.map((item: any): MediaItem => ({
+        id: String(item.id),
+        title: item.title || '未命名演员',
+        poster: item.posterPath || '',
+        rate: '',
+        year: '',
+        type: 'person',
+        source: 'actor',
+        overview: item.overview || '',
+        knownFor: item.knownFor || '演员',
+      })));
+    } catch (e) {
+      console.error('加载热门演员失败:', e);
+      setActors([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadStreaming = useCallback(async (provider: string, filters: Record<string, string>) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams(filters);
+      const response = await fetch(`/api/tmdb/streaming/${provider}?${params.toString()}`);
+      const json = await response.json();
+      const items = json?.success && Array.isArray(json.data?.results) ? json.data.results : [];
+      setStreamingItems(items.map((item: any) => normalizeTMDBItem({ ...item, source: 'streaming' })));
+    } catch (e) {
+      console.error('加载流媒体榜单失败:', e);
+      setStreamingItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // 加载 Bangumi 今日
   const loadBangumiToday = useCallback(async () => {
@@ -629,9 +763,11 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
   // 切换数据源 / 切换标签 / 切换星期 — 单一 effect 防止重复请求
   useEffect(() => {
     if (activeSource === 'douban') {
-      loadDoubanData(doubanTag);
+      loadDoubanData(doubanTag, { type: doubanType, minRate: doubanMinRate });
     } else if (activeSource === 'tmdb') {
-      loadTMDBData(tmdbCategory);
+      loadTMDBData(tmdbCategory, { type: tmdbType, year: tmdbYear, minRate: tmdbMinRate });
+    } else if (activeSource === 'anilist') {
+      loadAniListData({ sort: aniListSort, format: aniListFormat, genre: aniListGenre, seasonYear: aniListYear, search: aniListSearch });
     } else if (activeSource === 'bangumi') {
       if (bangumiCategory === 'today') {
         loadBangumiToday();
@@ -643,14 +779,47 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
           loadBangumiWeekday(weekId);
         }
       }
+    } else if (activeSource === 'actor') {
+      loadActors(actorPage);
+    } else if (activeSource === 'streaming') {
+      loadStreaming(streamingProvider, {
+        limit: '40',
+        mediaType: streamingType,
+        region: streamingRegion,
+        sortBy: streamingSort,
+        withGenres: streamingGenre,
+        year: streamingYear,
+        minRating: streamingMinRate,
+      });
     }
   }, [
     activeSource,
     doubanTag,
+    doubanType,
+    doubanMinRate,
     tmdbCategory,
+    tmdbType,
+    tmdbYear,
+    tmdbMinRate,
+    aniListSort,
+    aniListFormat,
+    aniListGenre,
+    aniListYear,
+    aniListSearch,
     bangumiCategory,
+    actorPage,
+    streamingProvider,
+    streamingType,
+    streamingRegion,
+    streamingSort,
+    streamingGenre,
+    streamingYear,
+    streamingMinRate,
     loadDoubanData,
     loadTMDBData,
+    loadAniListData,
+    loadActors,
+    loadStreaming,
     loadBangumiToday,
     loadBangumiWeekday,
     loadBangumiRanking,
@@ -712,9 +881,11 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
   // 手动刷新当前激活源
   const handleRefresh = () => {
     if (activeSource === 'douban') {
-      loadDoubanData(doubanTag);
+      loadDoubanData(doubanTag, { type: doubanType, minRate: doubanMinRate });
     } else if (activeSource === 'tmdb') {
-      loadTMDBData(tmdbCategory);
+      loadTMDBData(tmdbCategory, { type: tmdbType, year: tmdbYear, minRate: tmdbMinRate });
+    } else if (activeSource === 'anilist') {
+      loadAniListData({ sort: aniListSort, format: aniListFormat, genre: aniListGenre, seasonYear: aniListYear, search: aniListSearch });
     } else if (activeSource === 'bangumi') {
       if (bangumiCategory === 'today') loadBangumiToday();
       else if (bangumiCategory === 'ranking') loadBangumiRanking();
@@ -722,6 +893,18 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
         const weekId = parseInt(bangumiCategory, 10);
         if (!Number.isNaN(weekId)) loadBangumiWeekday(weekId);
       }
+    } else if (activeSource === 'actor') {
+      loadActors(actorPage);
+    } else if (activeSource === 'streaming') {
+      loadStreaming(streamingProvider, {
+        limit: '40',
+        mediaType: streamingType,
+        region: streamingRegion,
+        sortBy: streamingSort,
+        withGenres: streamingGenre,
+        year: streamingYear,
+        minRating: streamingMinRate,
+      });
     }
   };
 
@@ -735,6 +918,16 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
       case 'douban':
         return (
           <div className="space-y-6">
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/70 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-3">
+              <SlidersHorizontal className="w-4 h-4 text-slate-500" />
+              <select value={doubanType} onChange={(e) => setDoubanType(e.target.value as any)} className="filter-select">
+                <option value="all">全部类型</option><option value="movie">电影</option><option value="tv">剧集</option>
+              </select>
+              <select value={doubanMinRate} onChange={(e) => setDoubanMinRate(e.target.value)} className="filter-select">
+                <option value="">不限评分</option><option value="7">7 分以上</option><option value="8">8 分以上</option><option value="9">9 分以上</option>
+              </select>
+              {(doubanType !== 'all' || doubanMinRate) && <button type="button" onClick={() => { setDoubanType('all'); setDoubanMinRate(''); }} className="filter-reset"><X className="w-3.5 h-3.5" />重置</button>}
+            </div>
             {/* 豆瓣标签筛选 */}
             <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
               {doubanTags.map((tag) => (
@@ -762,6 +955,19 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
       case 'tmdb':
         return (
           <div className="space-y-6">
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/70 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-3">
+              <SlidersHorizontal className="w-4 h-4 text-slate-500" />
+              <select value={tmdbType} onChange={(e) => setTmdbType(e.target.value as any)} className="filter-select">
+                <option value="all">电影 + 剧集</option><option value="movie">仅电影</option><option value="tv">仅剧集</option>
+              </select>
+              <select value={tmdbYear} onChange={(e) => setTmdbYear(e.target.value)} className="filter-select">
+                <option value="">全部年份</option>{Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i).map((year) => <option key={year} value={String(year)}>{year}</option>)}
+              </select>
+              <select value={tmdbMinRate} onChange={(e) => setTmdbMinRate(e.target.value)} className="filter-select">
+                <option value="">不限评分</option><option value="7">7 分以上</option><option value="8">8 分以上</option><option value="9">9 分以上</option>
+              </select>
+              {(tmdbType !== 'all' || tmdbYear || tmdbMinRate) && <button type="button" onClick={() => { setTmdbType('all'); setTmdbYear(''); setTmdbMinRate(''); }} className="filter-reset"><X className="w-3.5 h-3.5" />重置</button>}
+            </div>
             {/* TMDB 分类筛选 */}
             <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
               {tmdbCategories.map((cat) => (
@@ -783,6 +989,59 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
               loading={loading}
               onSelect={handleSelect}
             />
+          </div>
+        );
+
+      case 'anilist':
+        return (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/70 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-3">
+              <SlidersHorizontal className="w-4 h-4 text-slate-500" />
+              <select value={aniListSort} onChange={(e) => setAniListSort(e.target.value as any)} className="filter-select">
+                <option value="TRENDING_DESC">趋势</option><option value="POPULARITY_DESC">人气</option><option value="SCORE_DESC">评分</option><option value="START_DATE_DESC">最新开播</option>
+              </select>
+              <select value={aniListFormat} onChange={(e) => setAniListFormat(e.target.value)} className="filter-select">
+                <option value="">全部形式</option><option value="TV">TV</option><option value="MOVIE">剧场版</option><option value="OVA">OVA</option><option value="ONA">ONA</option>
+              </select>
+              <select value={aniListGenre} onChange={(e) => setAniListGenre(e.target.value)} className="filter-select">
+                <option value="">全部题材</option><option value="Action">动作</option><option value="Comedy">喜剧</option><option value="Drama">剧情</option><option value="Fantasy">奇幻</option><option value="Romance">爱情</option><option value="Sci-Fi">科幻</option>
+              </select>
+              <select value={aniListYear} onChange={(e) => setAniListYear(e.target.value)} className="filter-select">
+                <option value="">全部年份</option>{Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i).map((year) => <option key={year} value={String(year)}>{year}</option>)}
+              </select>
+              <div className="relative min-w-[180px] flex-1 sm:flex-none"><Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" /><input value={aniListSearch} onChange={(e) => setAniListSearch(e.target.value)} placeholder="搜索动漫" className="filter-input pl-8" /></div>
+            </div>
+            <ScrollableRow title="AniList 动漫榜单" items={aniListItems} loading={loading} onSelect={handleSelect} />
+          </div>
+        );
+
+      case 'actor':
+        return (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200/70 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-3">
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><Users className="w-4 h-4 text-[#7c3aed]" />TMDB 热门演员</div>
+              <div className="flex items-center gap-2"><button type="button" onClick={() => setActorPage((page) => Math.max(1, page - 1))} disabled={actorPage <= 1} className="icon-button" aria-label="上一页" title="上一页"><ChevronLeft className="w-4 h-4" /></button><span className="text-xs text-slate-500">第 {actorPage} 页</span><button type="button" onClick={() => setActorPage((page) => page + 1)} className="icon-button" aria-label="下一页" title="下一页"><ChevronRight className="w-4 h-4" /></button></div>
+            </div>
+            <ScrollableRow title="热门演员库" items={actors} loading={loading} onSelect={handleSelect} />
+          </div>
+        );
+
+      case 'streaming':
+        return (
+          <div className="space-y-6">
+            <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+              {STREAMING_PROVIDERS.map((provider) => <Chip key={provider.key} active={streamingProvider === provider.key} onClick={() => setStreamingProvider(provider.key)}>{provider.label}</Chip>)}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200/70 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/60 p-3">
+              <SlidersHorizontal className="w-4 h-4 text-slate-500" />
+              <select value={streamingType} onChange={(e) => setStreamingType(e.target.value as any)} className="filter-select"><option value="all">电影 + 剧集</option><option value="movie">仅电影</option><option value="tv">仅剧集</option></select>
+              <select value={streamingRegion} onChange={(e) => setStreamingRegion(e.target.value)} className="filter-select"><option value="US">美国</option><option value="GB">英国</option><option value="JP">日本</option><option value="KR">韩国</option><option value="CN">中国大陆</option></select>
+              <select value={streamingSort} onChange={(e) => setStreamingSort(e.target.value)} className="filter-select"><option value="popularity.desc">热度</option><option value="vote_average.desc">评分</option><option value="first_air_date.desc">首播时间</option><option value="primary_release_date.desc">上映时间</option></select>
+              <select value={streamingGenre} onChange={(e) => setStreamingGenre(e.target.value)} className="filter-select"><option value="">全部题材</option><option value="28">动作</option><option value="35">喜剧</option><option value="18">剧情</option><option value="16">动画</option><option value="10765">科幻</option><option value="9648">悬疑</option></select>
+              <select value={streamingYear} onChange={(e) => setStreamingYear(e.target.value)} className="filter-select"><option value="">全部年份</option>{Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i).map((year) => <option key={year} value={String(year)}>{year}</option>)}</select>
+              <select value={streamingMinRate} onChange={(e) => setStreamingMinRate(e.target.value)} className="filter-select"><option value="">不限评分</option><option value="7">7 分以上</option><option value="8">8 分以上</option><option value="9">9 分以上</option></select>
+            </div>
+            <ScrollableRow title={`${STREAMING_PROVIDERS.find((item) => item.key === streamingProvider)?.label} 榜单`} items={streamingItems} loading={loading} onSelect={handleSelect} />
           </div>
         );
 
@@ -833,10 +1092,22 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
       }
       return { source: 'tmdb' as const, category, label: `TMDB · ${cat?.label || tmdbCategory}` };
     }
+    if (activeSource === 'anilist') {
+      return { source: 'anilist' as const, category: `sort:${aniListSort}`, label: `AniList · ${aniListSort === 'SCORE_DESC' ? '高分' : aniListSort === 'POPULARITY_DESC' ? '人气' : aniListSort === 'START_DATE_DESC' ? '最新' : '趋势'}` };
+    }
+    if (activeSource === 'streaming') {
+      const provider = STREAMING_PROVIDERS.find((item) => item.key === streamingProvider);
+      return { source: 'streaming' as const, category: `provider:${streamingProvider}`, label: `${provider?.label || streamingProvider} · 流媒体榜单` };
+    }
     // bangumi
-    const bcat = bangumiCategories.find((c) => c.key === bangumiCategory);
-    return { source: 'bangumi' as const, category: bangumiCategory, label: `番组计划 · ${bcat?.label || bangumiCategory}` };
+    if (activeSource === 'bangumi') {
+      const bcat = bangumiCategories.find((c) => c.key === bangumiCategory);
+      return { source: 'bangumi' as const, category: bangumiCategory, label: `番组计划 · ${bcat?.label || bangumiCategory}` };
+    }
+    return { source: 'tmdb' as const, category: 'trending', label: '热门演员' };
   })();
+
+  const subscriptionSupported = ['douban', 'tmdb', 'bangumi', 'anilist', 'streaming'].includes(activeSource);
 
   return (
     <div className="space-y-6 pb-12">
@@ -852,6 +1123,7 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
           <SourceTabs active={activeSource} onChange={setActiveSource} />
           <button
             onClick={() => setIsSubscribeOpen(true)}
+            disabled={!subscriptionSupported}
             className="p-2.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-full hover:bg-[#d3e3fd] dark:hover:bg-[#0b57d0]/15 hover:text-[#0b57d0] transition-all text-slate-600 dark:text-slate-300 shadow-sm"
             title="订阅本榜单"
             aria-label="订阅本榜单"
@@ -914,7 +1186,7 @@ const PosterWallTab: React.FC<PosterWallTabProps> = ({ onCreatePtSubscription, o
 interface ListSubscribeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentSource: 'douban' | 'tmdb' | 'bangumi';
+  currentSource: 'douban' | 'tmdb' | 'bangumi' | 'anilist' | 'streaming';
   currentCategory: string;
   currentLabel: string;
 }
@@ -923,7 +1195,7 @@ interface ListSubscription {
   id: string;
   name: string;
   enabled: boolean;
-  source: 'douban' | 'tmdb' | 'bangumi';
+  source: 'douban' | 'tmdb' | 'bangumi' | 'anilist' | 'streaming';
   category: string;
   cron: string;
   mode: 'lazy' | 'normal';

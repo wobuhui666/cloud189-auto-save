@@ -1,6 +1,6 @@
 # 海报墙与榜单订阅
 
-**海报墙** 页用于浏览 TMDB / 豆瓣 / Bangumi 等公开榜单与搜索结果，并支持把某个榜单订阅成周期性「发现 → 自动追剧 / PT」流水线。
+**海报墙** 页用于浏览 TMDB / 豆瓣 / AniList / Bangumi 动漫、热门演员和八大流媒体榜单，并支持把可订阅榜单接入周期性「发现 → 自动追剧 / PT」流水线。
 
 ---
 
@@ -10,9 +10,12 @@
 
 能力概览：
 
-- 浏览 TMDB 趋势、高分、发现分类。
+- 浏览 TMDB 趋势、高分、发现分类，并按媒体类型、年份和最低评分筛选。
 - 浏览豆瓣热门、搜索、Top250。
+- 浏览 AniList 趋势、人气、高分和最新开播动漫，可按形式、题材、年份和关键词筛选。
 - 浏览 Bangumi 放送表、排行与搜索。
+- 浏览 TMDB 热门演员库，查看演员代表作。
+- 浏览 Netflix、HBO、Apple TV+、Disney+、Crunchyroll、Amazon Prime、Amazon、Hulu 榜单，可按地区、媒体类型、排序和最低评分筛选。
 - 封面图经 `/api/image-proxy` 代理，减少跨域与防盗链问题。
 - 从条目跳转到自动追剧或创建任务流程（依赖系统默认追剧账号/目录与 TMDB 配置）。
 
@@ -27,8 +30,8 @@
 | 字段 | 说明 |
 | :--- | :--- |
 | 名称 | 订阅显示名 |
-| 来源 `source` | `douban` / `tmdb` / `bangumi` |
-| 分类 `category` | 如豆瓣关键词、`热门`；TMDB 的 `trending` / `top_rated` / `genre:...` 等 |
+| 来源 `source` | `douban` / `tmdb` / `bangumi` / `anilist` / `streaming` |
+| 分类 `category` | 如豆瓣关键词、`热门`；TMDB 的 `trending` / `top_rated` / `genre:...`；AniList 的 `sort:TRENDING_DESC`；流媒体的 `provider:netflix` 等 |
 | Cron | 拉取周期，默认 `0 8 * * *` |
 | limit | 每次拉取条数（1–100） |
 | mode | `lazy` 或 `normal`，交给自动追剧创建任务 |
@@ -60,7 +63,8 @@
 ## 3. 前置条件
 
 - **系统** 页配置好自动追剧默认账号与保存目录。
-- **媒体** 页配置 TMDB API Key，并按需启用刮削。
+- **媒体** 页配置 TMDB API Key，并按需启用刮削。流媒体榜单的地区由海报墙筛选决定，默认使用美国区可用性数据。
+- AniList 与 Bangumi 动漫榜单不需要额外 API Key；AniList 请求由服务端代理并缓存。
 - 若使用 PT 回退：配置 [[PT]] 下载器与账号。
 - 若使用 CloudSaver 追剧搜源：配置 CloudSaver。
 

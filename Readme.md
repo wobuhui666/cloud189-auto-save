@@ -91,7 +91,42 @@ docker run -d \
 > **注意**：
 > 1. 请将 `/opt/cloud189` 替换为您宿主机的实际目录。
 > 2. `8097` 端口用于 Emby/Jellyfin 的独立流代理（可选）。
-> 3. 首次访问会进入**设置登录账号**流程：自行设定用户名和密码（密码至少 6 位）。未设置 `ADMIN_PASSWORD` 时**没有**默认 `admin/admin`。
+> 3. 首次访问会进入**设置登录账号**流程：本机可直接初始化；通过服务器 IP 远程初始化时必须配置并填写高熵 `INITIAL_SETUP_TOKEN`。也可预先设置 `ADMIN_PASSWORD`，系统没有默认 `admin/admin`。
+
+### 首次初始化安全令牌
+
+从其他电脑通过服务器 IP、域名或反向代理首次打开系统时，需要使用初始化安全令牌，防止尚未设置管理员密码的实例被他人抢先接管。本机通过 `127.0.0.1` 或 `::1` 访问时可以不配置令牌。
+
+1. 在服务器上生成一个随机令牌，并妥善记录输出值：
+
+```bash
+openssl rand -hex 32
+```
+
+2. 首次启动容器时传入生成的令牌：
+
+```bash
+docker run -d \
+  --name cloud189 \
+  --restart unless-stopped \
+  -v /opt/cloud189/data:/home/data \
+  -v /opt/cloud189/strm:/home/strm \
+  -p 3000:3000 \
+  -e INITIAL_SETUP_TOKEN='替换为上一步生成的随机令牌' \
+  ghcr.io/wobuhui666/cloud189-auto-save:latest
+```
+
+使用 Docker Compose 时，在服务的 `environment` 中添加：
+
+```yaml
+environment:
+  INITIAL_SETUP_TOKEN: "替换为生成的随机令牌"
+```
+
+3. 打开 `http://服务器IP:3000`，填写要创建的管理员用户名、密码和页面中的**首次初始化安全令牌**，然后点击**创建账号**。密码至少 6 位。
+4. 初始化成功后，该令牌不能代替管理员密码登录。建议从容器环境变量或 Compose 配置中移除 `INITIAL_SETUP_TOKEN` 并重启容器，后续仅使用已创建的管理员账号登录。
+
+也可以在首次启动前设置 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 直接完成管理员初始化，此时无需使用 `INITIAL_SETUP_TOKEN`。请勿使用示例占位值或低强度固定字符串作为令牌。
 
 ### 安全提示
 - **私有化部署**：严禁将服务无保护暴露于公网。

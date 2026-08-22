@@ -97,11 +97,18 @@ class SchedulerService {
         }
     }
 
+    static initAutoSeriesIntentJobs(intentService) {
+        if (!intentService) return;
+        this.saveDefaultTaskJob('自动追剧Intent巡检', '*/5 * * * *', async () => {
+            try { await intentService.runDue(); } catch (err) { logTaskEvent(`[自动追剧] Intent巡检失败: ${err.message || err}`); }
+        });
+    }
+
     // 影巢自动签到执行体
     static async runHdhiveCheckin() {
         try {
             const hdhiveSDK = require('../sdk/hdhive/sdk').default;
-            const result = await hdhiveSDK.checkinByBridge();
+            const result = await hdhiveSDK.checkin();
             const message = result.message || (result.success ? '影巢自动签到：签到成功' : `影巢自动签到失败：${result.error || '未知错误'}`);
             logTaskEvent(`[影巢] ${message}`);
             try {

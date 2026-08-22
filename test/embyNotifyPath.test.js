@@ -44,3 +44,61 @@ test('普通任务继续使用云盘到 Emby 的路径映射', () => {
         realFolderName: 'emby/作品A'
     }), '/media/作品A');
 });
+
+test('Emby 多版本选择可从 PlaybackInfo 取得非主媒体源', async () => {
+    const service = Object.create(EmbyService.prototype);
+    const primaryPath = 'http://example.test/api/stream/primary-token';
+    const selectedPath = 'http://example.test/api/stream/selected-token';
+    service.getItemById = async () => ({
+        Id: 'episode-1',
+        MediaSources: [{ Id: 'source-primary', Path: primaryPath }]
+    });
+    service.getMediaSourceById = async (itemId, mediaSourceId) => {
+        assert.equal(itemId, 'episode-1');
+        assert.equal(mediaSourceId, 'source-selected');
+        return { Id: 'source-selected', Path: selectedPath };
+    };
+    service._resolveStreamProxyMediaUrl = async (mediaPath) => `resolved:${mediaPath}`;
+    service._findTaskByItemPath = async () => {
+        throw new Error('STRM 版本不应回退任务文件匹配');
+    };
+
+    const result = await service.resolveDirectUrlByItemId('episode-1', 'source-selected');
+
+    assert.equal(result, `resolved:${selectedPath}`);
+});
+
+test('Emby 多版本选择优先复用详情中已存在的媒体源', async () => {
+    const service = Object.create(EmbyService.prototype);
+    const selectedPath = 'http://example.test/api/stream/selected-token';
+    service.getItemById = async () => ({
+        Id: 'episode-1',
+        MediaSources: [
+            { Id: 'source-primary', Path: 'http://example.test/api/stream/primary-token' },
+            { Id: 'source-selected', Path: selectedPath }
+        ]
+    });
+    service.getMediaSourceById = async () => {
+        throw new Error('详情已含指定媒体源时不应再次请求 PlaybackInfo');
+    };
+    service._resolveStreamProxyMediaUrl = async (mediaPath) => `resolved:${mediaPath}`;
+
+    const result = await service.resolveDirectUrlByItemId('episode-1', 'source-selected');
+
+    assert.equal(result, `resolved:${selectedPath}`);
+});
+
+test('Emby 返回不匹配媒体源时不静默回退主版本', async () => {
+    const service = Object.create(EmbyService.prototype);
+    service.embyUrl = 'http://emby.test';
+    service.request = async (_url, options) => {
+        assert.equal(options.searchParams.MediaSourceId, 'source-selected');
+        return {
+            MediaSources: [{ Id: 'source-primary', Path: 'http://example.test/primary' }]
+        };
+    };
+
+    const result = await service.getMediaSourceById('episode-1', 'source-selected');
+
+    assert.equal(result, null);
+});

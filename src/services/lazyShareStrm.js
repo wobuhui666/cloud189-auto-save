@@ -9,6 +9,7 @@ const { StreamProxyService } = require('./streamProxy');
 const AIService = require('./ai');
 const { OrganizerService } = require('./organizer');
 const { CasService } = require('./casService');
+const { CAS_ARCHIVE_DIR, buildCasArchiveFileName } = require('./casArchiveService');
 const { CasMetadataCacheService } = require('./casMetadataCache');
 const {
     MediaLibraryLayoutService,
@@ -18,6 +19,7 @@ const {
 } = require('./mediaLibraryLayout');
 const { TMDBService } = require('./tmdb');
 const { AppDataSource } = require('../database');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
 
 class LazyShareStrmService {
     constructor(accountRepo, taskService) {
@@ -28,6 +30,7 @@ class LazyShareStrmService {
         this.organizerService = new OrganizerService(taskService);
         this.casService = new CasService();
         this.casMetadataCache = new CasMetadataCacheService();
+        this.mutationExecutor = new CloudMutationExecutor();
         this.layoutService = new MediaLibraryLayoutService({
             taskService,
             tmdbService: new TMDBService()
@@ -225,6 +228,7 @@ class LazyShareStrmService {
                 sourceMd5: file.sourceMd5 || file.md5 || '',
                 sourceSize: file.sourceSize || file.size || 0,
                 targetFolderId,
+                targetIdentity: this._buildTargetIdentity(task),
                 rootName: '',
                 relativeDir: file.sourceRelativeDir || file.relativeDir || '',
                 isCas: !!file.isCas,
@@ -266,6 +270,12 @@ class LazyShareStrmService {
         return await pending;
     }
 
+    isArchivedCasPlaybackPayload(payload = {}) {
+        return payload.type === 'subscription'
+            && payload.isCas === true
+            && !!String(payload.targetFolderId || '').trim();
+    }
+
     async _resolveAndCache(payload) {
         const account = await this.accountRepo.findOneBy({ id: Number(payload.accountId) });
         if (!account) {
@@ -273,13 +283,18 @@ class LazyShareStrmService {
         }
 
         const cloud189 = Cloud189Service.getInstance(account);
-        const targetFolderId = await this._resolveTransferTargetFolder(cloud189, payload);
-        let targetFile = payload.isCas
-            ? await this._findFileByName(cloud189, targetFolderId, payload.originalFileName || CasService.getOriginalFileName(payload.fileName))
-            : await this._findTransferredFile(cloud189, targetFolderId, payload);
+        let targetFile;
+        if (this.isArchivedCasPlaybackPayload(payload)) {
+            targetFile = await this._resolveArchivedCasTargetFile(cloud189, payload);
+        } else {
+            const targetFolderId = await this._resolveTransferTargetFolder(cloud189, payload);
+            targetFile = payload.isCas
+                ? await this._findFileByName(cloud189, targetFolderId, payload.originalFileName || CasService.getOriginalFileName(payload.fileName))
+                : await this._findTransferredFile(cloud189, targetFolderId, payload);
 
-        if (!targetFile) {
-            targetFile = await this._ensureTransferredFile(cloud189, payload, targetFolderId);
+            if (!targetFile) {
+                targetFile = await this._ensureTransferredFile(cloud189, payload, targetFolderId);
+            }
         }
 
         if (!targetFile) {
@@ -292,6 +307,66 @@ class LazyShareStrmService {
             expiresAt: Date.now() + this.cacheTtlMs
         });
         return latestUrl;
+    }
+
+    async _resolveArchivedCasTargetFile(cloud189, payload) {
+        const archiveRootFolderId = String(payload.targetFolderId || '').trim();
+        const archiveRoot = await this._inspectFolder(cloud189, archiveRootFolderId);
+        if (!archiveRoot.exists) {
+            throw new Error(archiveRoot.message || `PT媒体根目录不存在: ${archiveRootFolderId}`);
+        }
+
+        const restoreName = String(
+            payload.originalFileName || CasService.getOriginalFileName(payload.fileName)
+        ).trim();
+        if (!restoreName) {
+            throw new Error('PT归档播放缺少媒体文件名');
+        }
+
+        const targetFolderId = await this._ensureTargetFolder(
+            cloud189,
+            archiveRootFolderId,
+            payload.rootName,
+            payload.relativeDir
+        );
+        const existing = await this._findFileByName(cloud189, targetFolderId, restoreName);
+        if (existing) {
+            return existing;
+        }
+
+        const archiveRelativeDir = [
+            CAS_ARCHIVE_DIR,
+            payload.rootName,
+            payload.relativeDir
+        ].filter(Boolean).join('/');
+        const casFolderId = await this._findExistingFolderPath(
+            cloud189,
+            archiveRootFolderId,
+            archiveRelativeDir
+        );
+        if (!casFolderId) {
+            throw new Error(`未找到PT的CAS归档目录: ${archiveRelativeDir}`);
+        }
+
+        const casFileName = buildCasArchiveFileName(restoreName);
+        const casFile = await this._findFileByName(cloud189, casFolderId, casFileName);
+        if (!casFile) {
+            throw new Error(`未找到PT的CAS归档文件: ${archiveRelativeDir}/${casFileName}`);
+        }
+
+        logTaskEvent(`PT播放文件已删除，开始从CAS归档恢复: ${restoreName}`);
+        const casInfo = await this.casService.downloadAndParseCas(cloud189, casFile.id);
+        await this.casService.restoreFromCas(cloud189, targetFolderId, casInfo, restoreName);
+        const restoredFile = await this._waitForTransferredFile(
+            cloud189,
+            targetFolderId,
+            restoreName,
+            {},
+            30,
+            1000
+        );
+        logTaskEvent(`PT播放文件已从CAS归档恢复: ${restoreName}`);
+        return restoredFile;
     }
 
     async _resolveTransferTargetFolder(cloud189, payload) {
@@ -551,6 +626,14 @@ class LazyShareStrmService {
             .trim();
     }
 
+    _buildTargetIdentity(task = {}) {
+        return [
+            String(task.accountId || task.account?.id || '').trim(),
+            String(task.shareId || '').trim(),
+            String(task.shareFileId || task.shareFolderId || '').trim()
+        ].join(':');
+    }
+
     _getCacheKey(payload) {
         return [
             payload.accountId,
@@ -606,12 +689,49 @@ class LazyShareStrmService {
             return '';
         }
 
-        const task = await taskRepo.findOne({
+        let task = await taskRepo.findOne({
             where: {
                 realFolderId: staleFolderId,
                 enableLazyStrm: true
             }
         });
+        if (!task && payload.shareId) {
+            const tasks = await taskRepo.find({
+                where: {
+                    accountId: Number(payload.accountId),
+                    shareId: String(payload.shareId),
+                    enableLazyStrm: true
+                }
+            });
+            const currentFolderIds = new Map((tasks || []).map((candidate) => [
+                String(candidate.realFolderId || '').trim(),
+                candidate
+            ]).filter(([folderId]) => folderId));
+            const targetIdentity = String(payload.targetIdentity || '').trim();
+            const identityMatches = targetIdentity
+                ? (tasks || []).filter((candidate) => this._buildTargetIdentity(candidate) === targetIdentity)
+                : [];
+            if (identityMatches.length === 1) {
+                task = identityMatches[0];
+                const currentFolderId = String(task.realFolderId || '').trim();
+                const currentFolder = await this._inspectFolder(cloud189, currentFolderId);
+                if (currentFolder.exists) {
+                    payload.targetFolderId = currentFolderId;
+                    logTaskEvent(`懒转存令牌目录已更新: ${staleFolderId} -> ${currentFolderId}`);
+                    return currentFolderId;
+                }
+            }
+            if (currentFolderIds.size === 1) {
+                const [[currentFolderId, currentTask]] = currentFolderIds;
+                const currentFolder = await this._inspectFolder(cloud189, currentFolderId);
+                if (currentFolder.exists) {
+                    payload.targetFolderId = currentFolderId;
+                    logTaskEvent(`懒转存令牌目录已更新: ${staleFolderId} -> ${currentFolderId}`);
+                    return currentFolderId;
+                }
+                task = currentTask;
+            }
+        }
         if (!task) {
             return '';
         }
@@ -626,6 +746,7 @@ class LazyShareStrmService {
             await this.taskService._autoCreateFolder(cloud189, task);
             const recoveredFolderId = String(task.realFolderId || '').trim();
             if (recoveredFolderId) {
+                payload.targetFolderId = recoveredFolderId;
                 logTaskEvent(`懒转存目录已自动恢复: ${staleFolderId} -> ${recoveredFolderId}`);
                 return recoveredFolderId;
             }
@@ -662,16 +783,45 @@ class LazyShareStrmService {
 
     async _ensureChildFolder(cloud189, parentFolderId, folderName) {
         const folderInfo = await cloud189.listFiles(parentFolderId);
-        const folders = folderInfo?.fileListAO?.folderList || [];
-        const existFolder = folders.find((folder) => folder.name === folderName);
-        if (existFolder?.id) {
-            return String(existFolder.id);
+        if (!folderInfo?.fileListAO) {
+            const message = folderInfo?.res_msg
+                || folderInfo?.res_message
+                || folderInfo?.errorMsg
+                || `获取父目录失败: ${parentFolderId}`;
+            throw new Error(message);
         }
-        const created = await cloud189.createFolder(folderName, parentFolderId);
-        if (!created?.id) {
+        const folders = folderInfo?.fileListAO?.folderList || [];
+        const existFolder = folders.find((folder) => (folder.name || folder.fileName) === folderName);
+        const existFolderId = existFolder?.id || existFolder?.fileId;
+        if (existFolderId) {
+            return String(existFolderId);
+        }
+        const created = (await this.mutationExecutor.createFolder(cloud189, parentFolderId, folderName)).value;
+        const createdFolderId = created?.id || created?.fileId;
+        if (!createdFolderId) {
             throw new Error(`创建目录失败: ${folderName}`);
         }
-        return String(created.id);
+        return String(createdFolderId);
+    }
+
+    async _findExistingFolderPath(cloud189, rootFolderId, relativeDir = '') {
+        let currentFolderId = String(rootFolderId || '').trim();
+        const normalizedRelativeDir = this._normalizeRelativePath(relativeDir);
+        if (!currentFolderId || !normalizedRelativeDir) {
+            return currentFolderId || null;
+        }
+
+        for (const segment of normalizedRelativeDir.split('/')) {
+            const folderInfo = await cloud189.listFiles(currentFolderId);
+            const folders = folderInfo?.fileListAO?.folderList || [];
+            const child = folders.find((folder) => folder.name === segment);
+            const childId = child?.id || child?.fileId;
+            if (!childId) {
+                return null;
+            }
+            currentFolderId = String(childId);
+        }
+        return currentFolderId;
     }
 
     async _findFileByName(cloud189, folderId, fileName) {
@@ -1034,7 +1184,7 @@ class LazyShareStrmService {
     }
 
     async _deleteTransferredCasFile(cloud189, targetFolderId, casFile, maxAttempts = 30, intervalMs = 1000) {
-        await cloud189.deleteFile(casFile.id, casFile.name);
+        await this.mutationExecutor.delete(cloud189, casFile.id, casFile.name);
         for (let index = 0; index < maxAttempts; index++) {
             const remainFile = await this._findFileByName(cloud189, targetFolderId, casFile.name);
             if (!remainFile) {

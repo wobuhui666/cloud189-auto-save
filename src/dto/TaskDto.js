@@ -36,6 +36,9 @@ class CreateTaskDto {
         this.keepCasAfterRestore = Boolean(data?.keepCasAfterRestore); // CAS秒传恢复后保留原CAS文件
         this.enableSystemProxy = data?.enableSystemProxy; // 启用系统代理
         this.isFolder = data?.isFolder; // 是否是文件夹
+        this.coverageScope = data?.coverageScope; // 自动追剧多来源覆盖范围
+        this.metadataOverride = data?.metadataOverride; // 首次执行前写入的版本化元数据覆盖
+        this.autoSeriesIntentId = String(data?.autoSeriesIntentId || '');
     }
 
     validate() {

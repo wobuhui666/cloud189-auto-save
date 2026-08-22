@@ -23,6 +23,7 @@ const { StreamProxyService } = require('./streamProxy');
 const ConfigService = require('./ConfigService');
 const { MediaLibraryLayoutService, normalizeRelativePath: layoutNormalize } = require('./mediaLibraryLayout');
 const { TMDBService } = require('./tmdb');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
 
 const DEFAULT_MAX_ENTRIES = 2000;
 const DEFAULT_MAX_TOTAL_BYTES = 80 * 1024 * 1024;
@@ -323,6 +324,7 @@ class CasImportService {
         this.accountRepo = accountRepo || null;
         this.casService = new CasService();
         this.metadataCache = new CasMetadataCacheService();
+        this.mutationExecutor = new CloudMutationExecutor();
         this.streamProxyService = new StreamProxyService(accountRepo);
         this.layoutService = new MediaLibraryLayoutService({
             tmdbService: new TMDBService()
@@ -1063,7 +1065,7 @@ class CasImportService {
             return id;
         }
 
-        const created = await cloud189.createFolder(safeName, parentFolderId);
+        const created = (await this.mutationExecutor.createFolder(cloud189, parentFolderId, safeName)).value;
         if (!created?.id) {
             throw new Error(`创建文件夹失败: ${safeName}`);
         }

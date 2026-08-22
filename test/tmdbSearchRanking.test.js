@@ -35,6 +35,17 @@ test('TMDB ranking uses year to disambiguate identical titles', () => {
     assert.equal(ranked[0].media.id, 2);
 });
 
+test('TMDB ranking does not let an undated duplicate beat an established exact title', () => {
+    const results = [
+        { id: 223564, name: '超超超超超喜欢你的100个女朋友', first_air_date: '2023-10-08' },
+        { id: 328583, name: '超超超超超喜欢你的100个女朋友', first_air_date: '' }
+    ];
+
+    const ranked = rankSearchResults(results, '超超超超超喜欢你的100个女朋友', '2026');
+
+    assert.equal(ranked[0].media.id, 223564);
+});
+
 test('TMDB title normalization ignores punctuation, spacing and width', () => {
     assert.equal(normalizeMediaTitle('名侦探柯南：特别篇'), normalizeMediaTitle('名侦探柯南 特别篇'));
     assert.equal(normalizeMediaTitle('ＴＥＳＴ Show'), 'testshow');

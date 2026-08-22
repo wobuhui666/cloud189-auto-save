@@ -46,9 +46,12 @@ Web 端 **影巢** 页面常用操作包括：
 3. 填写影巢网页登录账号和密码（用于 Bridge 登录取 Cookie）。
 4. 填写 Browser Bridge 地址和 Token（须与 Bridge 容器 `BRIDGE_TOKEN` 一致）。
 5. 开启 **启用 Browser Bridge 签名模式**。
-6. 如有 OpenAPI，填写 Client ID / API Key。
-7. 按需开启 **每日自动签到**（固定 Cron 或随机时间窗口；可开自动过人机校验）。
-8. 保存系统设置。
+6. 如需降低访问频率，开启 **影巢 API 流控**并设置最小请求间隔（默认 1000 毫秒）。
+7. 如有 OpenAPI，填写 Client ID / API Key。
+8. 按需开启 **每日自动签到**（固定 Cron 或随机时间窗口；可开自动过人机校验）。
+9. 保存系统设置。
+
+流控开启后，自动追剧、Telegram Bot、定时签到、Web 接口与连通性测试产生的影巢请求都会进入同一串行队列；Bridge、Cookie、OpenAPI 和网页抓取使用相同规则。也可通过环境变量 `HDHIVE_FLOW_CONTROL_ENABLED` 和 `HDHIVE_FLOW_CONTROL_MIN_INTERVAL_MS` 配置。
 
 ### 3.2 媒体页（Cookie 兜底）
 

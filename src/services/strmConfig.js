@@ -6,6 +6,7 @@ const { Cloud189Service } = require('./cloud189');
 const ConfigService = require('./ConfigService');
 const { StreamProxyService } = require('./streamProxy');
 const { joinLocalStrmPath } = require('./mediaLibraryLayout');
+const { auditService } = require('./auditService');
 
 class StrmConfigService {
     constructor(strmConfigRepo, accountRepo, subscriptionRepo, subscriptionResourceRepo) {
@@ -45,18 +46,42 @@ class StrmConfigService {
         await this.strmConfigRepo.remove(config);
     }
 
-    async runConfig(id) {
+    async runConfig(id, options = {}) {
         const config = await this.strmConfigRepo.findOneBy({ id });
         if (!config) {
             throw new Error('STRM 配置不存在');
         }
-        const result = await this._runConfigRecord(config);
-        config.lastRunAt = result.lastRunAt || new Date();
-        if (result.lastCheckTime !== undefined) {
-            config.lastCheckTime = result.lastCheckTime;
+        const auditRun = await auditService.startRun({
+            correlationId: `strm-config:${config.id}`,
+            module: 'strm',
+            trigger: options.trigger || 'scheduler',
+            subjectType: 'strm_config',
+            subjectId: config.id,
+            subjectName: config.name || `STRM 配置 ${config.id}`,
+            metadata: { configId: config.id, configType: config.type }
+        });
+        const execute = async () => {
+            const result = await this._runConfigRecord(config);
+            config.lastRunAt = result.lastRunAt || new Date();
+            if (result.lastCheckTime !== undefined) {
+                config.lastCheckTime = result.lastCheckTime;
+            }
+            await this.strmConfigRepo.save(config);
+            return result;
+        };
+        try {
+            const result = auditRun
+                ? await auditService.runInContext(auditRun, execute)
+                : await execute();
+            await auditService.finishRun(auditRun, 'completed', { summary: result.message || 'STRM 配置执行完成' });
+            return result.message;
+        } catch (error) {
+            await auditService.finishRun(auditRun, 'failed', {
+                summary: 'STRM 配置执行失败',
+                error: error.message || String(error)
+            });
+            throw error;
         }
-        await this.strmConfigRepo.save(config);
-        return result.message;
     }
 
     async runConfigByRecord(config) {

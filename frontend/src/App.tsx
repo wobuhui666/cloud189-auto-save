@@ -19,7 +19,8 @@ import {
   Zap,
   Magnet,
   CheckCircle2,
-  Clapperboard
+  Clapperboard,
+  History as HistoryIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -44,12 +45,13 @@ import CasTab from './components/tabs/CasTab';
 import PtTab, { type PtPrefillData } from './components/tabs/PtTab';
 import PosterWallTab from './components/tabs/PosterWallTab';
 import HdhiveTab, { type HdhivePrefillData } from './components/tabs/HdhiveTab';
+import HistoryTab, { type HistoryFilters } from './components/tabs/HistoryTab';
 import { useDialog } from './components/ui/Dialog';
 import { lockBodyScroll, unlockBodyScroll } from './lib/bodyScrollLock';
 import { pushOverlay, popOverlay, getOverlayZIndex } from './lib/overlayStack';
 
 // --- Types ---
-export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'hdhive' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'posterWall' | 'settings';
+export type TabType = 'account' | 'fileManager' | 'task' | 'autoSeries' | 'hdhive' | 'organizer' | 'subscription' | 'strmConfig' | 'media' | 'cas' | 'pt' | 'posterWall' | 'history' | 'settings';
 type ThemeMode = 'light' | 'dark' | 'system';
 
 const appVersionLabel = `v${__APP_VERSION__}`;
@@ -93,6 +95,7 @@ export default function App() {
   const [ptPrefill, setPtPrefill] = useState<PtPrefillData | null>(null);
   const [hdhivePrefill, setHdhivePrefill] = useState<HdhivePrefillData | null>(null);
   const [mobileDrawerZ, setMobileDrawerZ] = useState({ backdrop: 150, panel: 151 });
+  const [historyFilters, setHistoryFilters] = useState<HistoryFilters>({});
 
   const resolvedTheme = themeMode === 'system'
     ? (systemPrefersDark ? 'dark' : 'light')
@@ -217,6 +220,7 @@ export default function App() {
     { id: 'cas', label: '秒传', icon: Zap },
     { id: 'pt', label: 'PT', icon: Magnet },
     { id: 'posterWall', label: '海报墙', icon: Clapperboard },
+    { id: 'history', label: '历史', icon: HistoryIcon },
     { id: 'media', label: '媒体', icon: Monitor },
     { id: 'settings', label: '系统', icon: Settings },
   ];
@@ -226,6 +230,16 @@ export default function App() {
   const handleOpenCreateTask = (initialData?: any) => {
     setCreateTaskInitialData(initialData || null);
     setIsCreateTaskOpen(true);
+  };
+
+  const handleSelectTab = (tab: TabType) => {
+    if (tab === 'history') setHistoryFilters({});
+    setActiveTab(tab);
+  };
+
+  const handleNavigateHistory = (filters: HistoryFilters = {}) => {
+    setHistoryFilters(filters);
+    setActiveTab('history');
   };
 
   const handleLogout = async () => {
@@ -298,7 +312,7 @@ export default function App() {
                   <motion.button
                     key={tab.id}
                     onClick={() => {
-                      setActiveTab(tab.id);
+                      handleSelectTab(tab.id);
                       setIsMobileMenuOpen(false);
                     }}
                     whileHover={{ scale: 1.02 }}
@@ -340,7 +354,7 @@ export default function App() {
           {tabs.map(tab => (
             <motion.button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleSelectTab(tab.id)}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               className={`w-full flex items-center gap-4 px-5 py-3.5 rounded-full text-sm font-medium transition-all duration-200 ${
@@ -490,10 +504,11 @@ export default function App() {
                   <TaskTab
                     key={`task-tab-${taskRefreshKey}`}
                     onCreateTask={(data) => handleOpenCreateTask(data)}
+                    onNavigateHistory={handleNavigateHistory}
                   />
                 )}
                 {activeTab === 'fileManager' && <FileManagerTab />}
-                {activeTab === 'autoSeries' && <AutoSeriesTab />}
+                {activeTab === 'autoSeries' && <AutoSeriesTab onNavigateHistory={handleNavigateHistory} />}
                 {activeTab === 'hdhive' && (
                   <HdhiveTab
                     onTransfer={handleOpenCreateTask}
@@ -501,12 +516,12 @@ export default function App() {
                     onPrefillConsumed={() => setHdhivePrefill(null)}
                   />
                 )}
-                {activeTab === 'organizer' && <OrganizerTab />}
+                {activeTab === 'organizer' && <OrganizerTab onNavigateHistory={handleNavigateHistory} />}
                 {activeTab === 'subscription' && <SubscriptionTab onTransfer={handleOpenCreateTask} />}
                 {activeTab === 'strmConfig' && <StrmConfigTab />}
                 {activeTab === 'media' && <MediaTab />}
                 {activeTab === 'cas' && <CasTab onNavigate={setActiveTab} />}
-                {activeTab === 'pt' && <PtTab prefill={ptPrefill} onPrefillConsumed={() => setPtPrefill(null)} />}
+                {activeTab === 'pt' && <PtTab prefill={ptPrefill} onPrefillConsumed={() => setPtPrefill(null)} onNavigateHistory={handleNavigateHistory} />}
                 {activeTab === 'posterWall' && (
                   <PosterWallTab
                     onCreatePtSubscription={(data) => {
@@ -520,12 +535,13 @@ export default function App() {
                   />
                 )}
                 {activeTab === 'settings' && <SettingsTab />}
+                {activeTab === 'history' && <HistoryTab initialFilters={historyFilters} />}
               </motion.div>
             </AnimatePresence>
           </div>
         </div>
 
-        {!isMobileMenuOpen && <FloatingActions onAction={handleFloatingAction} />}
+        {!isMobileMenuOpen && activeTab !== 'pt' && <FloatingActions onAction={handleFloatingAction} />}
       </main>
 
       {/* Modals */}

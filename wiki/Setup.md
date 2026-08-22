@@ -32,6 +32,7 @@ docker run -d \
 | `PUBLIC_BASE_URL` | 外部访问地址，用于生成代理播放链接；也可在系统设置中填写 `system.baseUrl` |
 | `PORT` | 主服务端口，默认 `3000` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 仅作为**首次初始化**默认值；若 `ADMIN_PASSWORD` 为空，首次登录需自行设置账号密码 |
+| `INITIAL_SETUP_TOKEN` | 可选的高熵一次性初始化令牌；从非本机地址首次设置管理员时必须配置并填写 |
 | `SESSION_SECRET` | Session 加密密钥；不设则首次启动自动生成并写入配置 |
 | `PASSWORD_ENCRYPTION_KEY` | 天翼账号密码 AES 密钥（hex），优先于配置文件 |
 | `TYPEORM_SYNCHRONIZE` | 显式覆盖 SQLite schema 自动同步开关 |
@@ -44,7 +45,7 @@ docker run -d \
 ## 2. 首次登录
 
 - 打开 `http://服务器IP:3000`。
-- 若尚未设置系统密码（默认如此），登录页会进入**首次设置**：自行填写用户名和密码（密码至少 6 位）。
+- 若尚未设置系统密码（默认如此），登录页会进入**首次设置**：本机可直接设置；从服务器 IP 等非本机地址访问时，必须同时填写预先配置的高熵 `INITIAL_SETUP_TOKEN`。
 - **没有**内置的 `admin` / `admin` 万能口令；只有你通过环境变量 `ADMIN_PASSWORD` 预先注入，或在首次设置里自己写入的密码才有效。
 - 登录后请在 **系统** 页 **访问认证** 中确认用户名，并生成 **系统 API Key**（REST / 自动化调用）。
 

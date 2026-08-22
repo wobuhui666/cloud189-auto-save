@@ -9,6 +9,7 @@ const UploadCryptoUtils = require('../utils/UploadCryptoUtils');
 const ConfigService = require('./ConfigService');
 const { CasFileService } = require('./casFileService');
 const { CasCleanupService } = require('./casCleanupService');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
 
 const CAS_SLICE_SIZE = 10 * 1024 * 1024; // 10MB（默认分片；超大文件自动放大）
 const MAX_COMMIT_RETRY = 3;
@@ -35,6 +36,7 @@ class CasService {
     constructor() {
         this._rsaCache = new Map(); // accountKey -> { pubKey, pkId, expire }
         this._cleanupService = new CasCleanupService();
+        this._mutationExecutor = new CloudMutationExecutor();
     }
 
     // ==================== CAS 文件判断与解析 ====================
@@ -699,13 +701,25 @@ class CasService {
 
         const file = this._jsonGet(commitRes, 'file') || this._jsonGet(commitRes, 'data') || {};
         logTaskEvent(`[CAS生成] 已上传: ${fileName}`);
-        return {
+        const result = {
             id: file.userFileId || file.fileId || file.id || '',
             fileId: file.userFileId || file.fileId || file.id || '',
             name: file.fileName || file.name || fileName,
             size: file.fileSize || buffer.length,
             md5: file.fileMd5 || fileMd5Hex
         };
+        await this._mutationExecutor.execute({
+            source: 'cloud189',
+            operation: 'upload',
+            audit: { targetPath: fileName, after: result, decisionSource: 'cas' },
+            mutate: async () => result,
+            resend: false,
+            verify: async () => {
+                const listing = await cloud189.listFiles(parentFolderId);
+                return (listing?.fileListAO?.fileList || []).find(item => item.name === fileName && (!result.fileId || String(item.id || item.fileId) === String(result.fileId))) || null;
+            }
+        });
+        return result;
     }
 
     /**
@@ -760,7 +774,16 @@ class CasService {
                 if (!uploadUrl?.requestURL) {
                     throw new Error(`获取上传分片地址失败: ${fileName} part ${partNumber}`);
                 }
+                const uploadStartedAt = Date.now();
                 await this._putUploadPart(uploadUrl.requestURL, uploadUrl.headers, buf);
+                if (typeof options.onProgress === 'function') {
+                    options.onProgress({
+                        chunkBytes: len,
+                        transferredBytes: end,
+                        totalBytes: fileSize,
+                        durationMs: Math.max(Date.now() - uploadStartedAt, 1)
+                    });
+                }
             }
         } finally {
             await fd.close();
@@ -782,13 +805,25 @@ class CasService {
 
         const file = this._jsonGet(commitRes, 'file') || this._jsonGet(commitRes, 'data') || {};
         logTaskEvent(`[真传] 已上传: ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
-        return {
+        const result = {
             id: file.userFileId || file.fileId || file.id || '',
             fileId: file.userFileId || file.fileId || file.id || '',
             name: file.fileName || file.name || fileName,
             size: file.fileSize || fileSize,
             md5: file.fileMd5 || fileMd5Hex
         };
+        await this._mutationExecutor.execute({
+            source: 'cloud189',
+            operation: 'upload',
+            audit: { targetPath: fileName, after: result, decisionSource: 'cas' },
+            mutate: async () => result,
+            resend: false,
+            verify: async () => {
+                const listing = await cloud189.listFiles(parentFolderId);
+                return (listing?.fileListAO?.fileList || []).find(item => item.name === fileName && (!result.fileId || String(item.id || item.fileId) === String(result.fileId))) || null;
+            }
+        });
+        return result;
     }
 
     async _getMultiUploadUrls(cloud189, sessionKey, uploadPath, uploadFileId, partInfoList) {

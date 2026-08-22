@@ -147,6 +147,50 @@ describe('simpleChatCompletion chunk-merge preserves per-file season', () => {
     });
 });
 
+describe('AI file parsing keeps nested path context', () => {
+    it('passes relativePath to the model for nested folders', async () => {
+        const aiService = require('../src/services/ai');
+        const originalChat = aiService.chat.bind(aiService);
+        const originalIsEnabled = aiService.isEnabled.bind(aiService);
+        let userPrompt = '';
+
+        try {
+            aiService.isEnabled = () => true;
+            aiService.chat = async (messages) => {
+                userPrompt = messages.find(message => message.role === 'user')?.content || '';
+                return {
+                    success: true,
+                    data: JSON.stringify({
+                        name: 'Test Show',
+                        year: 2024,
+                        type: 'tv',
+                        season: '02',
+                        episode: [{
+                            id: 'nested-1',
+                            name: 'Test Show',
+                            season: '02',
+                            episode: '01',
+                            extension: '.mkv'
+                        }]
+                    })
+                };
+            };
+
+            const result = await aiService.simpleChatCompletion('Test Show', [{
+                id: 'nested-1',
+                name: '01.mkv',
+                relativePath: 'Season 02/Disc 01/01.mkv'
+            }]);
+
+            assert.equal(result.success, true);
+            assert.match(userPrompt, /Season 02\/Disc 01\/01\.mkv/);
+        } finally {
+            aiService.chat = originalChat;
+            aiService.isEnabled = originalIsEnabled;
+        }
+    });
+});
+
 describe('applyLayoutToFiles end-to-end', () => {
     it('12 normal + NCOP + AI-flagged OVA → 12×S01 + 2×S00', () => {
         const svc = new MediaLibraryLayoutService();

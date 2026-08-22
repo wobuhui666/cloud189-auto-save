@@ -82,6 +82,23 @@
     color: var(--text-secondary);
     opacity: 0.85;
   }
+
+  .filter-select,
+  .filter-input {
+    @apply rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 outline-none transition-colors focus:border-[#0b57d0] focus:ring-2 focus:ring-[#0b57d0]/15 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200;
+  }
+
+  .filter-input::placeholder {
+    @apply text-slate-400 dark:text-slate-500;
+  }
+
+  .filter-reset {
+    @apply inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-xs text-slate-500 transition-colors hover:bg-slate-200/70 hover:text-[#0b57d0] dark:text-slate-400 dark:hover:bg-slate-700;
+  }
+
+  .icon-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition-colors hover:border-[#0b57d0]/40 hover:bg-[#d3e3fd] hover:text-[#0b57d0] disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-[#0b57d0]/20;
+  }
 }
 
 .tab-active {

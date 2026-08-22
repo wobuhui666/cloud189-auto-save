@@ -17,7 +17,13 @@ const { ptRenameService } = require('./ptRename');
 const { ptTorrentService } = require('./ptTorrent');
 const { CasArchiveService } = require('./casArchiveService');
 const aiService = require('./ai');
+const { CloudMutationExecutor } = require('./cloudMutationExecutor');
+const { normalizeMediaPreference, scoreMediaTitle } = require('./mediaPreference');
+const { mergeCandidateFilters, resolveMediaType, resolveValidationSeasonNumber, validatePtFilters } = require('./ptFilterValidation');
+const { InvalidResourceService } = require('./invalidResource');
 const { TMDBService } = require('./tmdb');
+const { buildMetadataTemplate, parseJson, normalizeMetadataOverride } = require('./metadataOverride');
+const { auditService } = require('./auditService');
 const {
     buildEpisodeDedupKey,
     computeFileHashes,
@@ -31,6 +37,7 @@ const {
     safeFileName
 } = require('./ptUtils');
 const {
+    AppDataSource,
     getPtSubscriptionRepository,
     getPtReleaseRepository,
     getAccountRepository
@@ -64,13 +71,94 @@ function buildPtCollisionCandidates(requestedName, release = {}) {
     );
 }
 
+const PT_FILTER_FIELDS = ['includePattern', 'excludePattern', 'qualityPattern', 'resolutionPattern', 'effectPattern'];
+
+function getCandidateFilters(candidate = {}) {
+    return PT_FILTER_FIELDS.reduce((filters, field) => {
+        filters[field] = String(candidate[field] || '').trim();
+        return filters;
+    }, {});
+}
+
+function hasCandidateFilters(candidate = {}) {
+    return PT_FILTER_FIELDS.some(field => String(candidate[field] || '').trim());
+}
+
+function sameStringList(left = [], right = []) {
+    return JSON.stringify(left || []) === JSON.stringify(right || []);
+}
+
+function mediaPreferenceSatisfies(existingInput = {}, requestedInput = {}) {
+    const existing = normalizeMediaPreference(existingInput || {});
+    const requested = normalizeMediaPreference(requestedInput || {});
+    return sameStringList(existing.resolutionPriority, requested.resolutionPriority)
+        && sameStringList(existing.sourcePriority, requested.sourcePriority)
+        && sameStringList(existing.dynamicRangePriority, requested.dynamicRangePriority)
+        && sameStringList(existing.codecPriority, requested.codecPriority)
+        && sameStringList(existing.audioPriority, requested.audioPriority)
+        && sameStringList(existing.preferredGroups, requested.preferredGroups)
+        && sameStringList(existing.blockedKeywords, requested.blockedKeywords)
+        && existing.extraRequirement === requested.extraRequirement
+        && existing.fallbackMode === requested.fallbackMode
+        && existing.upgradePolicy === requested.upgradePolicy;
+}
+
 class PtService {
-    constructor() {
-        this.casService = new CasService();
-        this.layoutService = new MediaLibraryLayoutService();
-        this.sourceService = new PtSourceService();
-        this.casArchiveService = new CasArchiveService();
+    constructor(options = {}) {
+        this.casService = options.casService || new CasService();
+        this.layoutService = options.layoutService || new MediaLibraryLayoutService();
+        this.sourceService = options.sourceService || new PtSourceService();
+        this.casArchiveService = options.casArchiveService || new CasArchiveService();
+        this.mutationExecutor = options.mutationExecutor || new CloudMutationExecutor();
+        this.invalidResourceService = options.invalidResourceService || new InvalidResourceService();
+        this.repositories = options.repositories || {};
+        this.cloud189Factory = options.cloud189Factory || (account => Cloud189Service.getInstance(account));
+        this.downloaderFactory = options.downloaderFactory || getDownloader;
         this._processingLock = false;
+        this._cloudUploadTransfers = new Map();
+    }
+
+    _ptSubscriptionRepository() {
+        return this.repositories.ptSubscription || getPtSubscriptionRepository();
+    }
+
+    _ptReleaseRepository() {
+        return this.repositories.ptRelease || getPtReleaseRepository();
+    }
+
+    _accountRepository() {
+        return this.repositories.account || getAccountRepository();
+    }
+
+    _startCloudUploadTransfer(releaseId) {
+        if (releaseId == null) return;
+        this._cloudUploadTransfers.set(String(releaseId), { speed: 0 });
+    }
+
+    _updateCloudUploadTransfer(releaseId, progress = {}) {
+        if (releaseId == null) return;
+        const durationMs = Math.max(Number(progress.durationMs || 0), 1);
+        const chunkBytes = Math.max(Number(progress.chunkBytes || 0), 0);
+        this._cloudUploadTransfers.set(String(releaseId), {
+            speed: chunkBytes * 1000 / durationMs
+        });
+    }
+
+    _finishCloudUploadTransfer(releaseId) {
+        if (releaseId == null) return;
+        this._cloudUploadTransfers.delete(String(releaseId));
+    }
+
+    getTransferStats(releases = []) {
+        const downloadSpeed = releases.reduce((total, release) => {
+            const speed = Number(release?.downloader?.downloadSpeed || 0);
+            return total + (Number.isFinite(speed) && speed > 0 ? speed : 0);
+        }, 0);
+        const cloudUploadSpeed = [...this._cloudUploadTransfers.values()].reduce((total, transfer) => {
+            const speed = Number(transfer?.speed || 0);
+            return total + (Number.isFinite(speed) && speed > 0 ? speed : 0);
+        }, 0);
+        return { downloadSpeed, cloudUploadSpeed };
     }
 
     // ==================== 测试 / 工具 ====================
@@ -78,7 +166,7 @@ class PtService {
     async testDownloader() {
         try {
             resetDownloader();
-            const downloader = getDownloader();
+            const downloader = this.downloaderFactory();
             return await downloader.testConnection();
         } catch (err) {
             return { ok: false, message: err && err.message ? err.message : String(err) };
@@ -159,30 +247,81 @@ class PtService {
         return this.sourceService.testMikanBaseUrl(baseUrl);
     }
 
-    async createAutoSeriesSubscription({ title, year = '', tmdbInfo = null, accountId, targetFolderId, targetFolder }) {
-        const candidates = await this._collectAutoSeriesCandidates(title);
+    async createAutoSeriesSubscription({ title, year = '', tmdbInfo = null, accountId, targetFolderId, targetFolder, selectedCandidate = null, mediaPreference = null, filterManagedBy = 'manual', metadataTemplate = null, autoSeriesIntentId = '' }) {
+        const candidates = selectedCandidate ? [selectedCandidate] : await this._collectAutoSeriesCandidates(title);
         if (!candidates.length) throw new Error('PT 聚合搜索未找到可用 RSS');
 
         const ranked = candidates
             .map(candidate => ({ ...candidate, score: this._scoreAutoSeriesCandidate(candidate, title, tmdbInfo) }))
             .sort((left, right) => right.score - left.score);
-        const aiSelection = await this._selectAutoSeriesCandidateWithAi(ranked, title, year, tmdbInfo);
-        const selected = aiSelection?.candidate || ranked[0];
-        const selectionReason = aiSelection?.reason || `确定性评分 ${selected.score}`;
+        const bestDeterministic = ranked[0];
+        const selected = selectedCandidate || bestDeterministic;
+        const selectionReason = selectedCandidate ? '按 Agent 已验证候选创建' : `确定性评分 ${selected.score}`;
+        const validationMediaType = resolveMediaType(tmdbInfo?.type || tmdbInfo?.mediaType || '', title);
+        const validationSeasonNumber = resolveValidationSeasonNumber({
+            title,
+            mediaType: validationMediaType,
+            tmdbInfo,
+            seasonNumber: selected.seasonNumber ?? null
+        });
 
         const repo = getPtSubscriptionRepository();
+        const requestedPreference = normalizeMediaPreference(mediaPreference || {});
         const existing = await repo.findOne({ where: { accountId: Number(accountId), rssUrl: selected.rssUrl } });
-        if (existing) return this._buildAutoSeriesPtResult(existing, selected, selectionReason, true);
+        if (existing) {
+            let filtersValid = true;
+            if (existing.filterManagedBy === 'agent') {
+                try {
+                    const expected = validatePtFilters({
+                        filters: getCandidateFilters(existing),
+                        samples: (selected.items || []).slice(0, 50),
+                        title,
+                        aliases: [tmdbInfo?.title, tmdbInfo?.originalTitle],
+                        seasonNumber: validationSeasonNumber,
+                        mediaType: validationMediaType
+                    }).token;
+                    filtersValid = Boolean(existing.filterValidationHash) && existing.filterValidationHash === expected;
+                } catch (_) {
+                    filtersValid = false;
+                }
+            }
+            const reusable = filtersValid
+                && mediaPreferenceSatisfies(safeJsonParse(existing.mediaPreferenceJson, {}), requestedPreference);
+            if (!reusable) {
+                throw new Error('现有人工 PT 订阅的正则或媒体偏好不满足当前追剧意图，已拒绝复用');
+            }
+            if (autoSeriesIntentId && !existing.autoSeriesIntentId) {
+                existing.autoSeriesIntentId = String(autoSeriesIntentId);
+                if (!existing.metadataTemplateJson) existing.metadataTemplateJson = JSON.stringify(metadataTemplate || buildMetadataTemplate(tmdbInfo || {}, 'template'));
+                await repo.save(existing);
+            }
+            return this._buildAutoSeriesPtResult(existing, selected, selectionReason, true);
+        }
+
+        let filterValidationHash = '';
+        if (filterManagedBy === 'agent') {
+            if (!hasCandidateFilters(selected)) {
+                throw new Error('Agent PT 候选缺少经服务端验证的正则');
+            }
+            filterValidationHash = validatePtFilters({
+                filters: getCandidateFilters(selected),
+                samples: (selected.items || []).slice(0, 50),
+                title,
+                aliases: [tmdbInfo?.title, tmdbInfo?.originalTitle],
+                seasonNumber: validationSeasonNumber,
+                mediaType: validationMediaType
+            }).token;
+        }
 
         const subscription = repo.create({
             name: `${tmdbInfo?.title || title}${year ? ` (${year})` : ''}`.trim(),
             sourcePreset: selected.preset,
             rssUrl: selected.rssUrl,
             includePattern: selected.includePattern || '',
-            excludePattern: '',
-            qualityPattern: '',
-            resolutionPattern: '',
-            effectPattern: '',
+            excludePattern: selected.excludePattern || '',
+            qualityPattern: selected.qualityPattern || '',
+            resolutionPattern: selected.resolutionPattern || '',
+            effectPattern: selected.effectPattern || '',
             sizeMinMB: 0,
             sizeMaxMB: 0,
             seedersMin: 0,
@@ -202,17 +341,23 @@ class PtService {
             totalEpisodeNumber: Number(tmdbInfo?.totalEpisodes || 0) || 0,
             autoDisabled: false,
             globalExclude: true,
+            filterManagedBy,
+            filterValidationHash,
+            mediaPreferenceJson: JSON.stringify(requestedPreference),
+            upgradePolicy: requestedPreference.upgradePolicy,
+            metadataTemplateJson: JSON.stringify(metadataTemplate
+                ? normalizeMetadataOverride(metadataTemplate, { source: metadataTemplate.source || (filterManagedBy === 'agent' ? 'agent' : 'template') })
+                : buildMetadataTemplate(tmdbInfo || {}, filterManagedBy === 'agent' ? 'agent' : 'template')),
+            autoSeriesIntentId: String(autoSeriesIntentId || ''),
             accountId: Number(accountId),
             targetFolderId: String(targetFolderId || ''),
             targetFolder: String(targetFolder || ''),
             enabled: true
         });
         await repo.save(subscription);
-        try {
-            await this.runPoll(subscription.id);
-        } catch (error) {
+        this.runPoll(subscription.id).catch((error) => {
             logTaskEvent(`[PT] 自动追剧订阅首次轮询失败 ${subscription.name}: ${error.message || error}`);
-        }
+        });
         return this._buildAutoSeriesPtResult(subscription, selected, selectionReason, false);
     }
 
@@ -350,27 +495,53 @@ class PtService {
         }
         let total = 0;
         for (const sub of subs) {
+            const auditRun = await auditService.startRun({
+                correlationId: sub.autoSeriesIntentId ? `intent:${sub.autoSeriesIntentId}` : `pt:${sub.id}`,
+                module: 'pt', trigger: subscriptionId ? 'manual' : 'scheduler',
+                subjectType: 'pt_subscription', subjectId: sub.id, subjectName: sub.name,
+                accountId: sub.accountId,
+                metadata: { subscriptionId: sub.id, phase: 'poll' }
+            });
             try {
-                const added = await this._pollSubscription(sub);
+                const added = auditRun
+                    ? await auditService.runInContext(auditRun, () => this._pollSubscription(sub))
+                    : await this._pollSubscription(sub);
                 total += added;
+                await auditService.finishRun(auditRun, 'completed', {
+                    summary: `PT 轮询完成，新增 ${added} 条`
+                });
             } catch (err) {
                 logTaskEvent(`[PT] 订阅 ${sub.name} 轮询失败: ${err.message || err}`);
                 sub.lastStatus = 'error';
                 sub.lastMessage = String(err.message || err).slice(0, 500);
                 sub.lastCheckTime = new Date();
                 await repo.save(sub);
+                await auditService.finishRun(auditRun, 'failed', {
+                    summary: 'PT 订阅轮询失败', error: err.message || err
+                });
             }
         }
         return { processed: total };
     }
 
     async _pollSubscription(subscription) {
-        const repo = getPtSubscriptionRepository();
-        const releaseRepo = getPtReleaseRepository();
+        const repo = this._ptSubscriptionRepository();
+        const releaseRepo = this._ptReleaseRepository();
         const pollingSubscription = this._preparePollingSubscription(subscription);
         logTaskEvent(`[PT] 开始拉取订阅: ${subscription.name}`);
 
-        const fetchedItems = (await this.sourceService.fetchFeedItems(pollingSubscription)).map(item => ({
+        if (subscription.rssUrl && await this.invalidResourceService.isInvalid(subscription.rssUrl, 'pt_feed')) {
+            throw new Error('PT RSS 处于失效缓存中，请人工解除后再试');
+        }
+
+        let feedItems;
+        try {
+            feedItems = await this.sourceService.fetchFeedItems(pollingSubscription);
+        } catch (error) {
+            await this.invalidResourceService.record(subscription.rssUrl, { resourceType: 'pt_feed', source: 'pt', operation: 'fetch_feed', error, metadata: { subscriptionId: subscription.id } }).catch(() => {});
+            throw error;
+        }
+        const fetchedItems = feedItems.map(item => ({
             ...item,
             infoHash: normalizeInfoHash(item.infoHash || extractInfoHashFromMagnet(item.magnetUrl || ''))
         }));
@@ -388,16 +559,16 @@ class PtService {
         const seenGuids = new Set(existingReleases.map(release => release.guid));
         const seenInfoHashes = new Set(existingReleases.map(release => normalizeInfoHash(release.infoHash)).filter(Boolean));
         const seenEpisodes = new Set(existingReleases.map(release => this._buildEpisodeDedupeKey(release, pollingSubscription)).filter(Boolean));
+        const eligibleItems = filteredItems.filter(item => matchReleaseFilters(item, pollingSubscription));
+        const selectedItems = this._selectBestEpisodeVersions(eligibleItems, pollingSubscription, existingReleases);
         const newReleases = [];
-        for (const item of filteredItems) {
+        for (const item of selectedItems) {
             if (!item.guid) continue;
             if (seenGuids.has(item.guid)) continue;
             if (item.infoHash && seenInfoHashes.has(item.infoHash)) continue;
-            if (!matchReleaseFilters(item, pollingSubscription)) {
-                continue;
-            }
             const episodeKey = pollingSubscription.episodeDedup ? this._buildEpisodeDedupeKey(item, pollingSubscription) : '';
-            if (episodeKey && seenEpisodes.has(episodeKey)) {
+            const upgradeFrom = item._upgradeFrom || null;
+            if (episodeKey && seenEpisodes.has(episodeKey) && !upgradeFrom) {
                 continue;
             }
             seenGuids.add(item.guid);
@@ -405,10 +576,34 @@ class PtService {
             if (episodeKey) seenEpisodes.add(episodeKey);
             newReleases.push(item);
         }
+        const skippedCount = Math.max(0, fetchedItems.length - newReleases.length);
+        await auditService.event('pt_candidates', 'PT 候选过滤与评分完成', {
+            phase: 'filter',
+            data: {
+                fetched: fetchedItems.length,
+                delayedOrLatestFiltered: fetchedItems.length - filteredItems.length,
+                ruleFiltered: filteredItems.length - eligibleItems.length,
+                versionFiltered: eligibleItems.length - selectedItems.length,
+                duplicateOrExisting: selectedItems.length - newReleases.length,
+                selected: newReleases.length,
+                samples: newReleases.slice(0, 20).map(item => ({
+                    title: item.title, episode: item.episodeNumber, qualityScore: item._qualityScore || 0
+                }))
+            }
+        });
+        if (skippedCount > 0) {
+            await auditService.recordOperation('skip', 'skipped', {
+                reason: '延迟、规则、质量评分或重复项过滤',
+                before: { total: fetchedItems.length, skipped: skippedCount },
+                after: { selected: newReleases.length },
+                decisionSource: 'pt_filter'
+            });
+        }
 
         let addedCount = 0;
         for (const item of newReleases) {
             try {
+                const upgradeFrom = item._upgradeFrom || null;
                 const release = releaseRepo.create({
                     subscriptionId: subscription.id,
                     guid: item.guid,
@@ -422,6 +617,9 @@ class PtService {
                     resolution: item.resolution || '',
                     quality: item.quality || '',
                     releaseTagsJson: JSON.stringify(item.tags || []),
+                    qualityScore: Number(item._qualityScore || 0),
+                    upgradeFromReleaseId: upgradeFrom?.id || null,
+                    activeVersion: upgradeFrom ? false : true,
                     magnetUrl: item.magnetUrl || '',
                     torrentUrl: item.torrentUrl || '',
                     detailsUrl: item.detailsUrl || '',
@@ -432,11 +630,16 @@ class PtService {
                     downloadVolumeFactor: item.downloadVolumeFactor != null ? Number(item.downloadVolumeFactor) : null,
                     uploadVolumeFactor: item.uploadVolumeFactor != null ? Number(item.uploadVolumeFactor) : null,
                     publishedAt: item.publishedAt || null,
+                    metadataTemplateSnapshotJson: subscription.metadataTemplateJson || '',
                     status: STATUS.PENDING
                 });
                 await releaseRepo.save(release);
 
                 await this._dispatchToDownloader(subscription, release);
+                await auditService.event('pt_download', 'PT Release 已提交下载', {
+                    phase: 'download',
+                    data: { releaseId: release.id, title: release.title, qualityScore: release.qualityScore || 0 }
+                });
                 addedCount += 1;
             } catch (err) {
                 logTaskEvent(`[PT] release 入队失败 [${item.title}]: ${err.message || err}`);
@@ -464,6 +667,38 @@ class PtService {
             ...subscription,
             globalExcludePattern
         };
+    }
+
+    _selectBestEpisodeVersions(items = [], subscription = {}, existingReleases = []) {
+        const preference = normalizeMediaPreference(safeJsonParse(subscription.mediaPreferenceJson, {}));
+        const selected = new Map();
+        for (const item of items) {
+            const episodeKey = buildEpisodeDedupKey(item) || `guid:${item.guid}`;
+            const quality = scoreMediaTitle(item.rawTitle || item.title || '', preference);
+            if (quality.blocked) continue;
+            const scored = { ...item, _qualityScore: quality.score };
+            const current = selected.get(episodeKey);
+            if (!current || scored._qualityScore > current._qualityScore) selected.set(episodeKey, scored);
+        }
+        return [...selected.entries()].map(([episodeKey, item]) => {
+            if (subscription.upgradePolicy !== 'higher_score') return item;
+            const completed = existingReleases.filter(release => buildEpisodeDedupKey(release) === episodeKey && release.status === STATUS.COMPLETED)
+                .sort((left, right) => Number(right.qualityScore || 0) - Number(left.qualityScore || 0))[0];
+            return completed && item._qualityScore > Number(completed.qualityScore || 0)
+                ? { ...item, _upgradeFrom: completed }
+                : item;
+        });
+    }
+
+    async validateAutoSeriesFilters({ candidate, filters, title, aliases = [], seasonNumber = null, mediaType = '', tmdbInfo = null }) {
+        const samples = (candidate?.items || []).slice(0, 50);
+        const effectiveFilters = mergeCandidateFilters(candidate, filters);
+        if (!hasCandidateFilters(effectiveFilters)) {
+            throw new Error('PT Agent 必须提供至少一个正则字段');
+        }
+        const validationMediaType = resolveMediaType(mediaType || tmdbInfo?.type || tmdbInfo?.mediaType, title);
+        const validationSeasonNumber = resolveValidationSeasonNumber({ title, mediaType: validationMediaType, tmdbInfo, seasonNumber });
+        return validatePtFilters({ filters: effectiveFilters, samples, title, aliases, seasonNumber: validationSeasonNumber, mediaType: validationMediaType });
     }
 
     _buildEpisodeDedupeKey(item = {}, subscription = {}) {
@@ -528,7 +763,7 @@ class PtService {
     }
 
     async _updateSubscriptionProgress(subscription, fetchedItems = []) {
-        const releaseRepo = getPtReleaseRepository();
+        const releaseRepo = this._ptReleaseRepository();
         const releases = await releaseRepo.find({ where: { subscriptionId: subscription.id } });
         subscription.currentEpisodeNumber = this._computeCurrentEpisodeNumber(subscription, releases);
         subscription.missingEpisodesJson = subscription.omit
@@ -543,6 +778,7 @@ class PtService {
 
     _computeCurrentEpisodeNumber(subscription = {}, releases = []) {
         const episodes = releases
+            .filter(release => Number(release.seasonNumber ?? 1) !== 0)
             .map(release => parseNumber(release.episodeNumber, null))
             .filter(episode => episode != null && episode > 0 && Math.trunc(episode) === episode);
         if (!episodes.length) {
@@ -597,8 +833,8 @@ class PtService {
     }
 
     async _dispatchToDownloader(subscription, release) {
-        const releaseRepo = getPtReleaseRepository();
-        const downloader = getDownloader();
+        const releaseRepo = this._ptReleaseRepository();
+        const downloader = this.downloaderFactory();
         const downloadRoot = String(ConfigService.getConfigValue('pt.downloadRoot', '') || '').trim();
         if (!downloadRoot) {
             throw new Error('未配置 PT 下载根目录');
@@ -610,6 +846,17 @@ class PtService {
         const subscriptionSavePath = path.join(downloadRoot, `sub-${subscription.id}`);
         const savePath = path.join(subscriptionSavePath, `rel-${release.id}`);
         const torrentSource = await this._prepareTorrentSource(subscription, release);
+        const previousHash = String(release.qbTorrentHash || '').trim();
+        let lookupInfoHash = torrentSource.infoHash || release.infoHash || undefined;
+
+        if (previousHash) {
+            const existingTorrent = await downloader.getTorrent(previousHash).catch(() => null);
+            if (!existingTorrent) {
+                release.infoHash = release.infoHash || previousHash;
+                release.qbTorrentHash = '';
+                lookupInfoHash = undefined;
+            }
+        }
 
         const torrent = await downloader.addTorrent({
             magnetUrl: release.magnetUrl || undefined,
@@ -620,7 +867,8 @@ class PtService {
             categorySavePath: subscriptionSavePath,
             category,
             tag,
-            infoHash: torrentSource.infoHash || release.infoHash || undefined
+            infoHash: lookupInfoHash,
+            forceStart: ConfigService.getConfigValue('pt.downloader.forceStart', true) !== false
         });
 
         if (!torrent || !torrent.hash) {
@@ -704,27 +952,63 @@ class PtService {
         }
         this._processingLock = true;
         try {
-            const releaseRepo = getPtReleaseRepository();
+            const releaseRepo = this._ptReleaseRepository();
             const releases = await releaseRepo.find({
-                where: { status: In([STATUS.DOWNLOADING, STATUS.DOWNLOADED, STATUS.UPLOADING]) }
+                where: { status: In([STATUS.PENDING, STATUS.DOWNLOADING, STATUS.DOWNLOADED, STATUS.UPLOADING]) }
             });
             for (const release of releases) {
+                const auditAvailable = auditService.isAvailable();
+                // pending 任务需要订阅配置重新投递；其他状态仅在审计可用时读取关联信息。
+                const subscription = (release.status === STATUS.PENDING || auditAvailable)
+                    ? await this._ptSubscriptionRepository().findOneBy({ id: release.subscriptionId })
+                    : null;
+                const auditRun = auditAvailable ? await auditService.startRun({
+                    correlationId: subscription?.autoSeriesIntentId ? `intent:${subscription.autoSeriesIntentId}` : `pt:${release.subscriptionId}`,
+                    module: 'pt', trigger: 'scheduler', subjectType: 'pt_release', subjectId: release.id,
+                    subjectName: release.title, accountId: subscription?.accountId,
+                    metadata: {
+                        subscriptionId: release.subscriptionId,
+                        status: release.status,
+                        qualityScore: release.qualityScore || 0,
+                        upgradeFromReleaseId: release.upgradeFromReleaseId || null
+                    }
+                }) : null;
                 try {
-                    if (release.status === STATUS.DOWNLOADING) {
-                        await this._refreshDownloadStatus(release);
-                    }
-                    if (release.status === STATUS.DOWNLOADED) {
-                        await this._uploadRelease(release);
-                    }
+                    const processRelease = async () => {
+                        if (release.status === STATUS.PENDING) {
+                            if (!subscription) {
+                                throw new Error(`找不到订阅 ${release.subscriptionId}`);
+                            }
+                            await this._dispatchToDownloader(subscription, release);
+                        }
+                        if (release.status === STATUS.DOWNLOADING) {
+                            await this._refreshDownloadStatus(release);
+                        }
+                        // UPLOADING 可能是进程在秒传中途退出后遗留的状态；上传流程本身会
+                        // 校验同名同哈希云端文件，可以安全地从本地完整文件继续执行。
+                        if ([STATUS.DOWNLOADED, STATUS.UPLOADING].includes(release.status)) {
+                            await this._uploadRelease(release);
+                        }
+                    };
+                    if (auditRun) await auditService.runInContext(auditRun, processRelease);
+                    else await processRelease();
+                    await auditService.finishRun(auditRun, 'completed', {
+                        summary: release.status === STATUS.COMPLETED ? 'PT Release 上传、验证和入库完成' : `PT Release 状态检查完成：${release.status}`
+                    });
                 } catch (err) {
                     logTaskEvent(`[PT] release ${release.id} 处理出错: ${err.message || err}`);
                     release.lastError = String(err.message || err).slice(0, 500);
-                    if (release.status === STATUS.DOWNLOADING) {
+                    if (release.status === STATUS.PENDING) {
+                        release.status = STATUS.FAILED;
+                    } else if (release.status === STATUS.DOWNLOADING) {
                         // 下载阶段错误不切失败状态，避免被一次性问题永久标失败
                     } else if (release.status === STATUS.UPLOADING) {
                         release.status = STATUS.UPLOAD_FAILED;
                     }
                     await releaseRepo.save(release);
+                    await auditService.finishRun(auditRun, 'failed', {
+                        summary: `PT Release 处理失败：${release.status}`, error: err.message || err
+                    });
                 }
             }
             return { processed: releases.length };
@@ -734,14 +1018,60 @@ class PtService {
     }
 
     async _refreshDownloadStatus(release) {
-        const releaseRepo = getPtReleaseRepository();
-        const downloader = getDownloader();
+        const releaseRepo = this._ptReleaseRepository();
+        const downloader = this.downloaderFactory();
         if (!release.qbTorrentHash) {
             return;
         }
         const torrent = await downloader.getTorrent(release.qbTorrentHash);
         if (!torrent) {
+            const completedPath = this._findCompletedLocalDownload(release);
+            if (completedPath) {
+                release.downloadPath = completedPath;
+                release.status = STATUS.DOWNLOADED;
+                release.progress = 100;
+                release.lastError = '';
+                await releaseRepo.save(release);
+                logTaskEvent(`[PT] 下载任务已移除，已通过本地完整文件恢复: ${release.title}`);
+                return;
+            }
+
+            release.infoHash = release.infoHash || release.qbTorrentHash;
+            release.qbTorrentHash = '';
+            release.status = STATUS.FAILED;
+            release.lastError = 'qBittorrent 下载任务不存在，且未找到完整的本地下载文件，请重试';
+            await releaseRepo.save(release);
+            logTaskEvent(`[PT] 下载任务不存在，已停止等待: ${release.title}`);
             return;
+        }
+        const brokenStateMessage = {
+            error: 'qBittorrent 下载任务发生错误',
+            missingFiles: 'qBittorrent 下载文件丢失'
+        }[torrent.state];
+        if (brokenStateMessage) {
+            const brokenHash = release.qbTorrentHash;
+            release.infoHash = release.infoHash || brokenHash;
+            release.status = STATUS.FAILED;
+            try {
+                await downloader.deleteTorrent(brokenHash, false);
+                release.qbTorrentHash = '';
+                release.lastError = `${brokenStateMessage}，已移除坏任务但保留本地文件，请重试`;
+            } catch (err) {
+                release.lastError = `${brokenStateMessage}；自动移除 qB 任务失败：${String(err.message || err)}`.slice(0, 500);
+            }
+            await releaseRepo.save(release);
+            logTaskEvent(`[PT] 下载器任务异常，已停止等待: ${release.title} (${torrent.state})`);
+            return;
+        }
+        const forceStart = ConfigService.getConfigValue('pt.downloader.forceStart', true) !== false;
+        if (forceStart && !torrent.isCompleted && (torrent.isStopped || torrent.isQueued) && typeof downloader.forceStartTorrent === 'function') {
+            await downloader.forceStartTorrent(release.qbTorrentHash);
+            release.lastError = '';
+            logTaskEvent(`[PT] 下载任务已强制启动: ${release.title} (${torrent.state || 'unknown'})`);
+        } else if (torrent.isStopped && !torrent.isCompleted && typeof downloader.startTorrent === 'function') {
+            await downloader.startTorrent(release.qbTorrentHash);
+            release.lastError = '';
+            logTaskEvent(`[PT] 下载任务已恢复: ${release.title}`);
         }
         release.downloadPath = torrent.contentPath || torrent.savePath || release.downloadPath;
         release.progress = Math.round((torrent.progress || 0) * 100);
@@ -755,14 +1085,70 @@ class PtService {
         }
     }
 
-    async _uploadRelease(release) {
-        const releaseRepo = getPtReleaseRepository();
-        const subRepo = getPtSubscriptionRepository();
-        const accountRepo = getAccountRepository();
+    _findCompletedLocalDownload(release) {
+        const expectedFiles = safeJsonParse(release.torrentFilesJson, [])
+            .filter(file => file && String(file.relativePath || file.name || '').trim());
+        if (!expectedFiles.length) {
+            return '';
+        }
 
-        release.status = STATUS.UPLOADING;
-        release.lastError = '';
-        await releaseRepo.save(release);
+        const downloadRoot = String(ConfigService.getConfigValue('pt.downloadRoot', '') || '').trim();
+        const deterministicPath = downloadRoot
+            ? path.join(downloadRoot, `sub-${release.subscriptionId}`, `rel-${release.id}`)
+            : '';
+        const candidates = [release.downloadPath, release.savePath, deterministicPath];
+        if (downloadRoot && release.localRootName) {
+            candidates.push(path.join(downloadRoot, String(release.localRootName)));
+        }
+
+        for (const candidate of [...new Set(candidates.filter(Boolean).map(value => path.resolve(String(value))))]) {
+            const roots = [candidate];
+            if (release.localRootName && path.basename(candidate) !== String(release.localRootName)) {
+                roots.push(path.join(candidate, String(release.localRootName)));
+            }
+            for (const root of roots) {
+                if (this._hasCompleteTorrentFiles(root, expectedFiles)) {
+                    return root;
+                }
+            }
+        }
+        return '';
+    }
+
+    _hasCompleteTorrentFiles(rootPath, expectedFiles) {
+        if (!fs.existsSync(rootPath)) {
+            return false;
+        }
+        const rootStat = fs.statSync(rootPath);
+        if (rootStat.isFile()) {
+            return expectedFiles.length === 1
+                && rootStat.size === Number(expectedFiles[0].size || rootStat.size);
+        }
+        if (!rootStat.isDirectory()) {
+            return false;
+        }
+
+        return expectedFiles.every(file => {
+            const relativePath = String(file.relativePath || file.name || '').replace(/\\/g, '/');
+            const filePath = path.resolve(rootPath, relativePath);
+            const relativeToRoot = path.relative(rootPath, filePath);
+            if (!relativeToRoot || relativeToRoot.startsWith('..') || path.isAbsolute(relativeToRoot)) {
+                return false;
+            }
+            try {
+                const stat = fs.statSync(filePath);
+                const expectedSize = Number(file.size || 0);
+                return stat.isFile() && (!expectedSize || stat.size === expectedSize);
+            } catch (_) {
+                return false;
+            }
+        });
+    }
+
+    async _uploadRelease(release) {
+        const releaseRepo = this._ptReleaseRepository();
+        const subRepo = this._ptSubscriptionRepository();
+        const accountRepo = this._accountRepository();
 
         const subscription = await subRepo.findOneBy({ id: release.subscriptionId });
         if (!subscription) {
@@ -778,14 +1164,35 @@ class PtService {
             throw new Error(`本地文件不存在: ${localPath || '(空)'}`);
         }
 
-        const cloud189 = Cloud189Service.getInstance(account);
+        const cloud189 = this.cloud189Factory(account);
 
         const localFiles = await collectLocalFiles(localPath);
         if (!localFiles.length) {
             throw new Error('本地下载目录为空');
         }
 
+        // Agent 创建的 PT 订阅必须在拿到真实文件树后完成逐文件审计，审计失败不得进入上传。
+        if (subscription.autoSeriesIntentId) {
+            await this._auditReleaseMetadata(subscription, release, localFiles);
+        }
+
+        release.status = STATUS.UPLOADING;
+        release.lastError = '';
+        await releaseRepo.save(release);
+
         const uploadPlan = await this._buildPtUploadPlan(subscription, release, localFiles);
+        await auditService.event('pt_upload_plan', 'PT 上传与媒体目录规划完成', {
+            phase: 'classify',
+            data: {
+                organizeEnabled: uploadPlan.organizeEnabled,
+                rootRelativePath: uploadPlan.rootRelativePath,
+                fileCount: uploadPlan.files.length,
+                mappings: uploadPlan.files.slice(0, 100).map(item => ({
+                    sourcePath: item.source?.relativePath,
+                    targetPath: item.cloudRelativePath
+                }))
+            }
+        });
         const releaseRootPath = uploadPlan.rootRelativePath;
         const releaseFolderId = await this._ensureNestedFolder(
             cloud189,
@@ -828,15 +1235,25 @@ class PtService {
 
             const uploadResult = destination.existing
                 ? { fileId: destination.fileId, via: 'existing' }
-                : await this._rapidUploadWithFallback(
+                : await this.mutationExecutor.upload(
                     cloud189,
                     subDirId,
-                    casInfo,
                     destination.fileName,
-                    file.fullPath,
-                    enableFamilyTransit,
-                    familyTransitFirst
-                );
+                    () => this._rapidUploadWithFallback(
+                        cloud189,
+                        subDirId,
+                        casInfo,
+                        destination.fileName,
+                        file.fullPath,
+                        enableFamilyTransit,
+                        familyTransitFirst,
+                        release.id
+                    ),
+                    { size: hashes.size }
+                ).then(result => ({
+                    fileId: String(result.value?.id || result.value?.fileId || result.response?.fileId || ''),
+                    via: result.response?.via || 'verified-upload'
+                }));
             const cloudRelativePath = path.posix.join(
                 cloudDir === '.' ? '' : cloudDir,
                 destination.fileName
@@ -871,19 +1288,23 @@ class PtService {
 
         release.manifestJson = JSON.stringify(manifest);
         release.casMetadataJson = JSON.stringify({ uploadedAt: new Date().toISOString(), count: manifest.length });
-        release.status = STATUS.COMPLETED;
         release.lastError = '';
         await releaseRepo.save(release);
-        logTaskEvent(`[PT] release 上传完成: ${release.title} (共 ${manifest.length} 个文件)`);
 
         // 生成 STRM 文件
         if (ConfigService.getConfigValue('pt.enableStrm', true)) {
-            try {
-                await this._generateStrmForRelease(account, subscription, release, manifest);
-            } catch (strmErr) {
-                logTaskEvent(`[PT] STRM 生成失败（不影响整体）: ${strmErr.message || strmErr}`);
-            }
+            await this._generateStrmForRelease(account, subscription, release, manifest, {
+                overwrite: Boolean(release.upgradeFromReleaseId)
+            });
         }
+
+        try {
+            await this._activateUploadedRelease(release, releaseRepo);
+        } catch (error) {
+            release.status = STATUS.UPLOAD_FAILED;
+            throw error;
+        }
+        logTaskEvent(`[PT] release 上传并校验完成: ${release.title} (共 ${manifest.length} 个文件)`);
 
         // 删除网盘源文件（复用 cas.deleteSourceAfterGenerate 配置）
         if (ConfigService.getConfigValue('cas.deleteSourceAfterGenerate', false)) {
@@ -930,6 +1351,41 @@ class PtService {
         }
     }
 
+    async _activateUploadedRelease(release, releaseRepo) {
+        if (!release.upgradeFromReleaseId) {
+            release.status = STATUS.COMPLETED;
+            release.activeVersion = true;
+            await releaseRepo.save(release);
+            return;
+        }
+
+        const previous = await releaseRepo.findOneBy({ id: Number(release.upgradeFromReleaseId) });
+        const previousActiveVersion = previous ? Boolean(previous.activeVersion) : null;
+        release.status = STATUS.COMPLETED;
+        release.activeVersion = true;
+        await releaseRepo.save(release);
+        if (!previous) return;
+
+        previous.activeVersion = false;
+        try {
+            await releaseRepo.save(previous);
+        } catch (error) {
+            release.activeVersion = false;
+            try {
+                await releaseRepo.save(release);
+            } catch (_) {}
+            previous.activeVersion = previousActiveVersion;
+            throw error;
+        }
+        await auditService.recordOperation('upgrade', 'completed', {
+            before: { releaseId: previous.id, qualityScore: previous.qualityScore, activeVersion: previousActiveVersion },
+            after: { releaseId: release.id, qualityScore: release.qualityScore, activeVersion: true },
+            verification: { oldInactive: true, newActive: true },
+            reason: '新版本上传与 STRM 回读验证成功',
+            decisionSource: 'pt_quality_score'
+        });
+    }
+
     async _buildPtUploadPlan(subscription, release, localFiles) {
         const config = ConfigService.getConfigValue('pt.strmOrganize', {});
         const organizeEnabled = !!config.enabled && ['regex', 'ai'].includes(config.mode);
@@ -942,6 +1398,11 @@ class PtService {
         const isMedia = file => mediaSuffixes.has(path.extname(file.name || '').toLowerCase());
         const mediaFiles = localFiles.filter(isMedia);
         const releaseFolderName = safeFileName(release.title || `release-${release.id}`);
+
+        const metadataOverride = parseJson(release.metadataAppliedOverrideJson || release.metadataOverrideJson, null);
+        if (metadataOverride?.version === 1 && Array.isArray(metadataOverride.files) && metadataOverride.files.length) {
+            return this._buildMetadataUploadPlan(subscription, release, localFiles, isMedia, metadataOverride);
+        }
 
         if (!organizeEnabled || !mediaFiles.length) {
             return {
@@ -1036,6 +1497,93 @@ class PtService {
         return { organizeEnabled: true, rootRelativePath, files: plannedFiles, libraryInfo };
     }
 
+    async _auditReleaseMetadata(subscription, release, localFiles) {
+        const releaseRepo = this._ptReleaseRepository();
+        if (!this.metadataAuditExecutor) {
+            throw new Error('metadata_audit Agent 未初始化，已阻止 PT release 上传');
+        }
+        const targets = await this.metadataAuditExecutor.metadataService.listIntentTargets(subscription.autoSeriesIntentId);
+        let targetRef = '';
+        for (const target of targets) {
+            if (target.type !== 'pt_release') continue;
+            const resolved = this.metadataAuditExecutor.metadataService.resolveTargetRef(target.targetRef, subscription.autoSeriesIntentId);
+            if (Number(resolved.id) === Number(release.id)) {
+                targetRef = target.targetRef;
+                break;
+            }
+        }
+        if (!targetRef) throw new Error('metadata_audit 无法取得当前 release 的受控引用');
+        const audit = await this.metadataAuditExecutor.runMetadataAudit({
+            intentId: subscription.autoSeriesIntentId,
+            metadataTemplate: parseJson(release.metadataTemplateSnapshotJson || subscription.metadataTemplateJson, null)
+        }, {
+            targetRef,
+            toolCallMode: 'auto'
+        });
+        const refreshed = await releaseRepo.findOneBy({ id: release.id });
+        if (!refreshed?.metadataAppliedOverrideJson) throw new Error('metadata_audit 未产生可应用的 release 覆盖');
+        release.metadataOverrideJson = refreshed.metadataOverrideJson;
+        release.metadataAppliedOverrideJson = refreshed.metadataAppliedOverrideJson;
+        await this._recordMetadataAudit(subscription, release, {
+            changed: !audit.noop,
+            fingerprint: audit.inspection?.fingerprint || '',
+            mappedFiles: parseJson(refreshed.metadataAppliedOverrideJson, {})?.files?.length || 0,
+            protocol: audit.protocol
+        });
+        return { changed: !audit.noop, override: parseJson(refreshed.metadataAppliedOverrideJson, null) };
+    }
+
+    _buildMetadataUploadPlan(subscription, release, localFiles, isMedia, override) {
+        const work = override.work || {};
+        const title = safeFileName(work.title || subscription.name || release.title || `release-${release.id}`);
+        const year = String(work.year || '').trim();
+        const category = safeFileName(work.category || (work.mediaType === 'movie' ? '电影' : '电视剧'));
+        const resource = safeFileName(year && !title.includes(`(${year})`) ? `${title} (${year})` : title);
+        const rootRelativePath = path.posix.join(category, resource);
+        const mappings = new Map((override.files || []).map(item => [String(item.relativePath).replace(/\\/g, '/'), item]));
+        const plannedFiles = localFiles.map(file => {
+            const relativePath = String(file.relativePath || file.name || '').replace(/\\/g, '/');
+            const mapping = mappings.get(relativePath);
+            if (!isMedia(file) || !mapping) {
+                return { source: file, isMedia: isMedia(file), fileName: file.name, cloudRelativePath: path.posix.join(rootRelativePath, relativePath) };
+            }
+            const season = mapping.special ? 0 : Number(mapping.seasonNumber ?? override.template?.defaultSeasonNumber ?? work.seasonNumber ?? 1);
+            const episode = mapping.episodeNumber;
+            const extension = path.extname(file.name || '');
+            let fileName = String(mapping.targetFileName || '').trim();
+            if (fileName && !path.extname(fileName)) fileName += extension;
+            if (!fileName) {
+                const episodeLabel = episode == null ? '' : ` - S${String(season).padStart(2, '0')}E${Number.isInteger(episode) ? String(episode).padStart(2, '0') : episode}`;
+                const episodeTitle = mapping.episodeTitle ? ` - ${safeFileName(mapping.episodeTitle)}` : '';
+                fileName = `${title}${episodeLabel}${episodeTitle}${extension}`;
+            }
+            fileName = safeFileName(fileName);
+            const relativeDir = work.mediaType === 'movie' ? '' : `Season ${String(season).padStart(2, '0')}`;
+            return { source: file, isMedia: true, fileName, cloudRelativePath: path.posix.join(rootRelativePath, relativeDir, fileName) };
+        });
+        const destinations = new Set();
+        for (const planned of plannedFiles) {
+            const key = planned.cloudRelativePath.toLowerCase();
+            if (destinations.has(key)) throw new Error(`元数据计划产生目标路径冲突: ${planned.cloudRelativePath}`);
+            destinations.add(key);
+        }
+        return { organizeEnabled: true, rootRelativePath, files: plannedFiles, metadataOverride: override };
+    }
+
+    async _recordMetadataAudit(subscription, release, summary) {
+        if (!AppDataSource.isInitialized) return;
+        try {
+            const repo = AppDataSource.getRepository('WorkflowRun');
+            const run = repo.create({
+                id: require('crypto').randomUUID(), type: 'metadata_audit', status: 'completed',
+                steps: [], current: 0, context: { ptSubscriptionId: subscription.id, releaseId: release.id, metadataAudit: summary },
+                subjectType: 'auto_series_intent', subjectId: subscription.autoSeriesIntentId,
+                protocol: 'metadata_audit', summary: summary.changed ? `自动应用 ${summary.mappedFiles} 个文件映射` : '元数据检查无差异', source: 'auto_series'
+            });
+            await repo.save(run);
+        } catch (_) {}
+    }
+
     async _resolvePtUploadDestination(cloud189, folderId, requestedName, hashes, release) {
         const listing = await cloud189.listFiles(folderId);
         const files = listing?.fileListAO?.fileList || [];
@@ -1081,7 +1629,17 @@ class PtService {
     }
 
     async _resolveReleaseLocalPath(release) {
-        const localPath = release.downloadPath || release.savePath || '';
+        let localPath = release.downloadPath || release.savePath || '';
+        if ((!localPath || !fs.existsSync(localPath)) && release.qbTorrentHash) {
+            const torrent = await this.downloaderFactory().getTorrent(release.qbTorrentHash).catch(() => null);
+            const livePath = torrent?.contentPath || torrent?.savePath || '';
+            if (livePath && fs.existsSync(livePath)) {
+                localPath = livePath;
+                release.downloadPath = livePath;
+                await this._ptReleaseRepository().save(release);
+                logTaskEvent(`[PT] 已从下载器修正本地路径: ${livePath}`);
+            }
+        }
         if (!localPath || !fs.existsSync(localPath)) {
             return localPath;
         }
@@ -1100,7 +1658,7 @@ class PtService {
         return fs.existsSync(rootedPath) ? rootedPath : localPath;
     }
 
-    async _rapidUploadWithFallback(cloud189, parentFolderId, casInfo, fileName, localFilePath, enableFamilyTransit, familyTransitFirst) {
+    async _rapidUploadWithFallback(cloud189, parentFolderId, casInfo, fileName, localFilePath, enableFamilyTransit, familyTransitFirst, releaseId = null) {
         const tryPersonal = async () => {
             const fileId = await this.casService._personalRapidUpload(cloud189, parentFolderId, casInfo, fileName);
             return { fileId, via: 'personal' };
@@ -1132,8 +1690,15 @@ class PtService {
 
         const tryRealUpload = async () => {
             logTaskEvent(`[PT] 秒传全部失败，开始真传: ${fileName}`);
-            const result = await this.casService._uploadStreamFile(cloud189, parentFolderId, fileName, localFilePath);
-            return { fileId: result.fileId, via: 'real-upload' };
+            this._startCloudUploadTransfer(releaseId);
+            try {
+                const result = await this.casService._uploadStreamFile(cloud189, parentFolderId, fileName, localFilePath, {
+                    onProgress: progress => this._updateCloudUploadTransfer(releaseId, progress)
+                });
+                return { fileId: result.fileId, via: 'real-upload' };
+            } finally {
+                this._finishCloudUploadTransfer(releaseId);
+            }
         };
 
         // 根据秒传配置决定尝试顺序
@@ -1182,7 +1747,7 @@ class PtService {
         if (existing?.id) {
             return String(existing.id);
         }
-        const created = await cloud189.createFolder(safeName, parentFolderId);
+        const created = (await this.mutationExecutor.createFolder(cloud189, parentFolderId, safeName)).value;
         if (!created?.id) {
             throw new Error(`创建文件夹失败: ${safeName}`);
         }
@@ -1203,7 +1768,7 @@ class PtService {
 
     // ==================== STRM 生成 ====================
 
-    async _generateStrmForRelease(account, subscription, release, manifest) {
+    async _generateStrmForRelease(account, subscription, release, manifest, options = {}) {
         if (!account.localStrmPrefix) {
             logTaskEvent(`[PT] 账号未配置 STRM 本地前缀，跳过 STRM 生成`);
             return;
@@ -1278,12 +1843,32 @@ class PtService {
                 isCas: true,
                 originalFileName: file.originalFileName || ''
             }),
-            false,
+            Boolean(options.overwrite),
             false,
             'default'
         );
 
+        if (options.overwrite) {
+            await this._verifyGeneratedStrmTargets(strmService, targetRoot, files);
+        }
+
         logTaskEvent(`[PT] STRM 生成完成: ${targetRoot} (共 ${files.length} 个文件)`);
+    }
+
+    async _verifyGeneratedStrmTargets(strmService, targetRoot, files) {
+        const targetDir = strmService._resolveBasePath(targetRoot);
+        for (const file of files) {
+            const relativePath = strmService._buildRelativeStrmPath(file.relativeDir || '', file.name);
+            const content = await fsp.readFile(path.join(targetDir, relativePath), 'utf8');
+            let payload = null;
+            try {
+                const token = new URL(String(content || '').trim()).pathname.split('/').filter(Boolean).at(-1);
+                payload = new StreamProxyService().parseToken(token);
+            } catch (_) {}
+            if (String(payload?.fileId || '') !== String(file.id || '')) {
+                throw new Error(`STRM 升级验证失败: ${relativePath}`);
+            }
+        }
     }
 
     // ==================== AI/TMDB 媒体库目录 ====================
@@ -1374,7 +1959,7 @@ class PtService {
         }
         const releaseRepo = getPtReleaseRepository();
         const completed = await releaseRepo.find({ where: { status: STATUS.COMPLETED } });
-        const downloader = getDownloader();
+        const downloader = this.downloaderFactory();
         let removed = 0;
         for (const release of completed) {
             if (release.qbTorrentHash) {
@@ -1392,27 +1977,86 @@ class PtService {
     // ==================== 重试 / 删除 release ====================
 
     async retryRelease(releaseId) {
-        const releaseRepo = getPtReleaseRepository();
+        const releaseRepo = this._ptReleaseRepository();
         const release = await releaseRepo.findOneBy({ id: Number(releaseId) });
         if (!release) {
             throw new Error('release 不存在');
         }
+        let shouldDispatch = false;
         if ([STATUS.FAILED, STATUS.UPLOAD_FAILED].includes(release.status)) {
             release.status = release.qbTorrentHash ? STATUS.DOWNLOADING : STATUS.PENDING;
+            shouldDispatch = !release.qbTorrentHash;
         } else if (release.status === STATUS.PENDING) {
-            const subscription = await getPtSubscriptionRepository().findOneBy({ id: release.subscriptionId });
-            if (subscription) {
-                await this._dispatchToDownloader(subscription, release);
-            }
+            shouldDispatch = true;
+        } else if (release.status === STATUS.DOWNLOADING) {
+            release.lastError = '';
+            await releaseRepo.save(release);
+            await this._refreshDownloadStatus(release);
+            return release;
         } else {
             // downloaded/uploading 直接重新跑上传
             release.status = STATUS.DOWNLOADED;
         }
         release.lastError = '';
         await releaseRepo.save(release);
+        if (shouldDispatch) {
+            const subscription = await this._ptSubscriptionRepository().findOneBy({ id: release.subscriptionId });
+            if (!subscription) {
+                throw new Error(`找不到订阅 ${release.subscriptionId}`);
+            }
+            await this._dispatchToDownloader(subscription, release);
+        }
         // 立即触发一次处理
         this.runProcessing().catch((err) => logTaskEvent(`[PT] retry 后处理失败: ${err.message || err}`));
         return release;
+    }
+
+    async listReleasesWithDownloader({ subscriptionId = null, limit = 500 } = {}) {
+        const releaseRepo = this._ptReleaseRepository();
+        const findOptions = {
+            order: { id: 'DESC' },
+            take: Math.min(Math.max(Number(limit) || 100, 1), 500)
+        };
+        if (subscriptionId != null) {
+            findOptions.where = { subscriptionId: Number(subscriptionId) };
+        }
+        const releases = await releaseRepo.find(findOptions);
+        const hashes = new Set(releases.map(release => String(release.qbTorrentHash || '').toLowerCase()).filter(Boolean));
+        if (!hashes.size) {
+            return releases.map(release => ({ ...release, downloader: null }));
+        }
+
+        try {
+            const downloader = this.downloaderFactory();
+            if (typeof downloader.listNormalizedTorrents !== 'function') {
+                return releases.map(release => ({ ...release, downloader: null }));
+            }
+            const torrents = await downloader.listNormalizedTorrents();
+            const torrentByHash = new Map(torrents.map(torrent => [String(torrent.hash || '').toLowerCase(), torrent]));
+            return releases.map(release => {
+                const hash = String(release.qbTorrentHash || '').toLowerCase();
+                const torrent = hash ? torrentByHash.get(hash) : null;
+                return {
+                    ...release,
+                    downloader: torrent ? {
+                        state: torrent.state,
+                        progress: Math.round((torrent.progress || 0) * 100),
+                        downloadSpeed: torrent.downloadSpeed,
+                        uploadSpeed: torrent.uploadSpeed,
+                        eta: torrent.eta,
+                        seeds: torrent.seeds,
+                        peers: torrent.peers,
+                        availability: torrent.availability,
+                        amountLeft: torrent.amountLeft,
+                        isQueued: torrent.isQueued,
+                        isStopped: torrent.isStopped
+                    } : (hash ? { state: release.status === STATUS.COMPLETED ? 'cleaned' : 'missing' } : null)
+                };
+            });
+        } catch (err) {
+            logTaskEvent(`[PT] 获取下载器快照失败: ${err.message || err}`);
+            return releases.map(release => ({ ...release, downloader: null }));
+        }
     }
 
     // ==================== STRM 重建（不重新下载/上传，仅从已存清单重生成） ====================
@@ -1498,7 +2142,7 @@ class PtService {
         }
         if (release.qbTorrentHash) {
             try {
-                const downloader = getDownloader();
+                const downloader = this.downloaderFactory();
                 await downloader.deleteTorrent(release.qbTorrentHash, deleteLocalFiles);
             } catch (err) {
                 logTaskEvent(`[PT] 删除 qb 任务失败: ${err.message || err}`);
@@ -1509,4 +2153,4 @@ class PtService {
 }
 
 const ptService = new PtService();
-module.exports = { PtService, ptService, PT_STATUS: STATUS, buildPtCollisionCandidates };
+module.exports = { PtService, ptService, PT_STATUS: STATUS, buildPtCollisionCandidates, mediaPreferenceSatisfies, getCandidateFilters, hasCandidateFilters };

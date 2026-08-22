@@ -22,6 +22,20 @@ const sendCallbackPage = (res: any, title: string, message: string, success: boo
 };
 
 export function setupHdhiveRoutes(app: Application) {
+    app.get('/api/hdhive/tgtodrive/status', async (req, res) => {
+        try {
+            const result = await hdhiveSDK.refreshTgtodriveStatus();
+            res.json({
+                success: result.success,
+                data: hdhiveSDK.getAuthStatus().tgtodrive,
+                error: result.error,
+                needsOAuth: result.needsOAuth
+            });
+        } catch (error) {
+            res.json({ success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+    });
+
     app.get('/api/hdhive/status', async (req, res) => {
         try {
             res.json({ success: true, data: hdhiveSDK.getAuthStatus() });
@@ -125,7 +139,7 @@ export function setupHdhiveRoutes(app: Application) {
 
     app.post('/api/hdhive/checkin', async (req, res) => {
         try {
-            res.json(await hdhiveSDK.checkinByBridge());
+            res.json(await hdhiveSDK.checkin());
         } catch (error) {
             res.json({ success: false, error: error instanceof Error ? error.message : String(error) });
         }
@@ -165,6 +179,31 @@ export function setupHdhiveRoutes(app: Application) {
             res.json(await hdhiveSDK.unlockResource(slug));
         } catch (error) {
             logTaskEvent('影巢资源解锁失败:' + error);
+            res.json({ success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+    });
+
+    app.get('/api/hdhive/security/challenge-image', async (req, res) => {
+        try {
+            const challengeId = typeof req.query.challengeId === 'string' ? req.query.challengeId : '';
+            const result = await hdhiveSDK.getAbuseChallengeImage(challengeId);
+            if (!result.success || !result.data) {
+                res.status(410).json({ success: false, error: result.error || '动态验证码已失效' });
+                return;
+            }
+            res.setHeader('Cache-Control', 'no-store');
+            res.type(result.contentType || 'image/gif').send(result.data);
+        } catch (error) {
+            res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+        }
+    });
+
+    app.post('/api/hdhive/security/verify', async (req, res) => {
+        try {
+            const challengeId = String(req.body?.challengeId || '').trim();
+            const answer = String(req.body?.answer || '').trim();
+            res.json(await hdhiveSDK.verifyAbuseChallenge(challengeId, answer));
+        } catch (error) {
             res.json({ success: false, error: error instanceof Error ? error.message : String(error) });
         }
     });

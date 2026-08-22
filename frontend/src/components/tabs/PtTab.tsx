@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, RefreshCw, RotateCcw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Search, ChevronRight, ChevronDown, Loader2, Wand2, Filter, HardDrive, Users } from 'lucide-react';
+import { Plus, RefreshCw, RotateCcw, Trash2, Edit2, Folder, Magnet, AlertCircle, CheckCircle2, Power, Settings as SettingsIcon, Download, Upload, Search, ChevronRight, ChevronDown, Loader2, Wand2, Filter, Tags, History, ListChecks, Play, Clock3, Gauge } from 'lucide-react';
 import Modal from '../Modal';
 import PTSearchModal, { type PtSubscriptionPrefill } from '../PTSearchModal';
 import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import Checkbox from '../ui/Checkbox';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
+import MetadataEditor from '../MetadataEditor';
 
 interface SearchResult { id: string; title: string; cover: string; url: string; source: string; directRss?: boolean; preview?: string[]; groups?: GroupResult[]; }
 interface GroupResult { name: string; rssUrl: string; itemCount?: number; source: string; }
@@ -82,6 +83,19 @@ interface PtRelease {
   publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  downloader?: {
+    state: string;
+    progress?: number;
+    downloadSpeed?: number;
+    uploadSpeed?: number;
+    eta?: number;
+    seeds?: number;
+    peers?: number;
+    availability?: number;
+    amountLeft?: number;
+    isQueued?: boolean;
+    isStopped?: boolean;
+  } | null;
 }
 
 interface DownloaderSettings {
@@ -92,6 +106,7 @@ interface DownloaderSettings {
   hasPassword?: boolean;
   categoryPrefix: string;
   tagPrefix: string;
+  forceStart: boolean;
   insecureSkipTlsVerify: boolean;
 }
 
@@ -174,23 +189,9 @@ const formatSize = (bytes?: number) => {
   return `${(n / 1024 / 1024 / 1024 / 1024).toFixed(2)} TB`;
 };
 
-const formatVolumeFactor = (rel: PtRelease): string => {
-  const dl = rel.downloadVolumeFactor;
-  const ul = rel.uploadVolumeFactor;
-  if (dl === 0 && ul != null && ul > 1) return `${ul}X免费`;
-  if (dl === 0) return '免费';
-  if (dl != null && dl > 0 && dl < 1) return `${Math.round(dl * 100)}%`;
-  if (ul != null && ul > 1) return `${ul}X`;
-  return '';
-};
-
-const parseReleaseTags = (rel: PtRelease): string[] => {
-  try {
-    const parsed = JSON.parse(rel.releaseTagsJson || '[]');
-    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean).slice(0, 6) : [];
-  } catch {
-    return [];
-  }
+const formatSpeed = (bytesPerSecond?: number) => {
+  const speed = Number(bytesPerSecond || 0);
+  return speed > 0 && Number.isFinite(speed) ? `${formatSize(speed)}/s` : '0 B/s';
 };
 
 const formatEpisodeBadge = (rel: PtRelease): string => {
@@ -211,15 +212,22 @@ const parseMissingEpisodes = (sub: PtSubscription): number[] => {
 
 const statusColor = (status: string) => {
   switch (status) {
-    case 'completed': return 'bg-[#c4eed0] text-[#0d4f1f]';
+    case 'completed': return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300';
     case 'downloading':
     case 'downloaded':
-    case 'uploading': return 'bg-[#cfe1ff] text-[#0b3a86]';
+    case 'uploading': return 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300';
     case 'failed':
-    case 'upload_failed': return 'bg-[#f9dadc] text-[#b3261e]';
-    case 'pending': return 'bg-slate-100 text-slate-500';
-    default: return 'bg-slate-100 text-slate-500';
+    case 'upload_failed': return 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300';
+    case 'pending': return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
+    default: return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
   }
+};
+
+const statusAccent = (status: string) => {
+  if (status === 'completed') return 'bg-emerald-500';
+  if (['failed', 'upload_failed'].includes(status)) return 'bg-red-500';
+  if (status === 'pending') return 'bg-slate-400';
+  return 'bg-[#0b57d0]';
 };
 
 const statusLabel = (status: string) => {
@@ -235,6 +243,35 @@ const statusLabel = (status: string) => {
   return map[status] || status;
 };
 
+const downloaderStateLabel = (state?: string) => {
+  const map: Record<string, string> = {
+    queuedDL: 'qB 排队',
+    stalledDL: '等待连接',
+    forcedDL: '强制下载',
+    downloading: '正在下载',
+    metaDL: '获取元数据',
+    checkingDL: '校验文件',
+    stoppedDL: '已停止',
+    pausedDL: '已暂停',
+    missingFiles: '文件丢失',
+    error: '下载器错误',
+    missing: '任务不存在',
+    cleaned: 'qB 已清理'
+  };
+  return state ? (map[state] || state) : '未投递';
+};
+
+const downloaderStateColor = (state?: string) => {
+  if (!state) return 'text-slate-400 dark:text-slate-500';
+  if (['downloading', 'forcedDL', 'metaDL', 'checkingDL'].includes(state)) return 'text-blue-600 dark:text-blue-400';
+  if (state === 'cleaned') return 'text-emerald-700 dark:text-emerald-400';
+  if (['queuedDL', 'stalledDL'].includes(state)) return 'text-amber-600 dark:text-amber-400';
+  if (['missingFiles', 'error', 'missing', 'stoppedDL', 'pausedDL'].includes(state)) return 'text-red-600 dark:text-red-400';
+  return 'text-slate-500 dark:text-slate-400';
+};
+
+const isActiveRelease = (release: PtRelease) => ['pending', 'downloading', 'downloaded', 'uploading'].includes(release.status);
+
 export interface PtPrefillData {
   name: string;
   rssUrl: string;
@@ -244,9 +281,10 @@ export interface PtPrefillData {
 interface PtTabProps {
   prefill?: PtPrefillData | null;
   onPrefillConsumed?: () => void;
+  onNavigateHistory: (filters?: { module?: string; subjectType?: string; subjectId?: string | number }) => void;
 }
 
-const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
+const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed, onNavigateHistory }) => {
   const toast = useToast();
   const dialog = useDialog();
   const [subs, setSubs] = useState<PtSubscription[]>([]);
@@ -270,11 +308,18 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
 
   const [folderSelectorOpen, setFolderSelectorOpen] = useState(false);
 
-  const [isReleasesOpen, setIsReleasesOpen] = useState(false);
-  const [currentSub, setCurrentSub] = useState<PtSubscription | null>(null);
-  const [releases, setReleases] = useState<PtRelease[]>([]);
+  const [managementView, setManagementView] = useState<'subscriptions' | 'releases'>('subscriptions');
+  const [subscriptionQuery, setSubscriptionQuery] = useState('');
+  const [allReleases, setAllReleases] = useState<PtRelease[]>([]);
+  const [transferStats, setTransferStats] = useState({ downloadSpeed: 0, cloudUploadSpeed: 0 });
+  const [releaseQuery, setReleaseQuery] = useState('');
+  const [releaseStatusFilter, setReleaseStatusFilter] = useState<'all' | 'active' | 'failed' | 'completed'>('all');
+  const [releaseSubscriptionFilter, setReleaseSubscriptionFilter] = useState('all');
+  const [releaseActionId, setReleaseActionId] = useState<number | null>(null);
+  const [processingReleases, setProcessingReleases] = useState(false);
   const [rebuildingAll, setRebuildingAll] = useState(false);
   const [releasesLoading, setReleasesLoading] = useState(false);
+  const [metadataTarget, setMetadataTarget] = useState<{ type: 'subscription' | 'release'; id: number; title: string } | null>(null);
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<PtSettings | null>(null);
@@ -359,6 +404,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
           hasPassword: !!pt.downloader?.hasPassword,
           categoryPrefix: pt.downloader?.categoryPrefix || 'pt-sub-',
           tagPrefix: pt.downloader?.tagPrefix || 'pt-rel-',
+          forceStart: pt.downloader?.forceStart !== false,
           insecureSkipTlsVerify: !!pt.downloader?.insecureSkipTlsVerify
         }
       });
@@ -375,6 +421,7 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
   useEffect(() => {
     fetchSubs();
     fetchMeta();
+    fetchAllReleases();
   }, []);
 
   // 当外部传入预填数据（如海报墙跳转过来），自动打开创建对话框并填充
@@ -411,14 +458,11 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill, accounts.length]);
 
-  // 当 releases 弹窗打开且存在活跃任务时，每 5 秒自动刷新进度
+  // PT 页面驻留期间持续刷新全局传输速度和任务状态。
   useEffect(() => {
-    if (!isReleasesOpen || !currentSub) return;
-    const hasActive = releases.some(r => r.status === 'downloading' || r.status === 'uploading');
-    if (!hasActive) return;
-    const interval = setInterval(() => { refreshReleases(); }, 5000);
+    const interval = setInterval(() => { void fetchAllReleases(true); }, 5000);
     return () => clearInterval(interval);
-  }, [isReleasesOpen, currentSub, releases]);
+  }, []);
 
   const openAdd = () => {
     setEditing(null);
@@ -595,36 +639,46 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
     } catch { toast.error('网络错误'); }
   };
 
-  const openReleases = async (sub: PtSubscription) => {
-    setCurrentSub(sub);
-    setReleases([]);
-    setIsReleasesOpen(true);
-    setReleasesLoading(true);
+  const fetchAllReleases = async (silent = false) => {
+    if (!silent) setReleasesLoading(true);
     try {
-      const r = await fetch(`/api/pt/subscriptions/${sub.id}/releases`);
+      const r = await fetch('/api/pt/releases?limit=500');
       const d = await r.json();
-      if (d.success) setReleases(d.data || []);
+      if (d.success) {
+        const releases = d.data || [];
+        setAllReleases(releases);
+        setTransferStats({
+          downloadSpeed: Number(d.transferStats?.downloadSpeed ?? releases.reduce((total: number, release: PtRelease) => total + Number(release.downloader?.downloadSpeed || 0), 0)),
+          cloudUploadSpeed: Number(d.transferStats?.cloudUploadSpeed || 0)
+        });
+      }
+      else if (!silent) toast.error('读取下载任务失败: ' + d.error);
+    } catch {
+      if (!silent) toast.error('读取下载任务失败');
     } finally {
-      setReleasesLoading(false);
+      if (!silent) setReleasesLoading(false);
     }
   };
 
-  const refreshReleases = async () => {
-    if (!currentSub) return;
-    try {
-      const r = await fetch(`/api/pt/subscriptions/${currentSub.id}/releases`);
-      const d = await r.json();
-      if (d.success) setReleases(d.data || []);
-    } catch { /* 静默处理 */ }
+  const openReleases = (sub: PtSubscription) => {
+    setReleaseSubscriptionFilter(String(sub.id));
+    setReleaseStatusFilter('all');
+    setManagementView('releases');
+    void fetchAllReleases();
   };
 
   const handleRetryRelease = async (id: number) => {
+    setReleaseActionId(id);
     try {
       const r = await fetch(`/api/pt/releases/${id}/retry`, { method: 'POST' });
       const d = await r.json();
-      if (d.success) refreshReleases();
+      if (d.success) {
+        toast.success('任务已重新投递');
+        await fetchAllReleases(true);
+      }
       else toast.error('重试失败: ' + d.error);
     } catch { toast.error('网络错误'); }
+    finally { setReleaseActionId(null); }
   };
 
   const handleDeleteRelease = async (id: number) => {
@@ -635,12 +689,18 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       tone: 'danger',
     });
     if (!ok) return;
+    setReleaseActionId(id);
     try {
       const r = await fetch(`/api/pt/releases/${id}`, { method: 'DELETE' });
       const d = await r.json();
-      if (d.success) refreshReleases();
+      if (d.success) {
+        toast.success('Release 已删除');
+        await fetchAllReleases(true);
+        await fetchSubs();
+      }
       else toast.error('删除失败: ' + d.error);
     } catch { toast.error('网络错误'); }
+    finally { setReleaseActionId(null); }
   };
 
   const handleRebuildStrm = async (id: number) => {
@@ -666,10 +726,29 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
       if (d.success) {
         const s = d.data || {};
         toast.success(`重建完成：成功 ${s.ok}，跳过 ${s.skipped}，失败 ${s.failed}（共 ${s.total}）`);
-        refreshReleases();
+        fetchAllReleases(true);
       } else toast.error('重建失败: ' + d.error);
     } catch { toast.error('网络错误'); }
     finally { setRebuildingAll(false); }
+  };
+
+  const handleProcessReleases = async () => {
+    setProcessingReleases(true);
+    try {
+      const r = await fetch('/api/pt/process', { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        const processed = d.data?.processed ?? 0;
+        toast.success(d.data?.skipped ? '后台正在处理任务' : `已检查 ${processed} 个任务`);
+        await fetchAllReleases(true);
+      } else {
+        toast.error('处理失败: ' + d.error);
+      }
+    } catch {
+      toast.error('处理失败');
+    } finally {
+      setProcessingReleases(false);
+    }
   };
 
   const openSettings = async () => {
@@ -939,93 +1018,162 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
     void loadFeedPreview(data.rssUrl, data.sourcePreset);
   };
 
+  const filteredSubs = subs.filter(sub => {
+    const query = subscriptionQuery.trim().toLowerCase();
+    if (!query) return true;
+    return [sub.name, sub.sourcePreset, sub.targetFolder, sub.lastMessage]
+      .some(value => String(value || '').toLowerCase().includes(query));
+  });
+  const releaseCounts = {
+    all: allReleases.length,
+    active: allReleases.filter(isActiveRelease).length,
+    failed: allReleases.filter(rel => ['failed', 'upload_failed'].includes(rel.status)).length,
+    completed: allReleases.filter(rel => rel.status === 'completed').length
+  };
+  const filteredReleases = allReleases.filter(rel => {
+    if (releaseSubscriptionFilter !== 'all' && String(rel.subscriptionId) !== releaseSubscriptionFilter) return false;
+    if (releaseStatusFilter === 'active' && !isActiveRelease(rel)) return false;
+    if (releaseStatusFilter === 'failed' && !['failed', 'upload_failed'].includes(rel.status)) return false;
+    if (releaseStatusFilter === 'completed' && rel.status !== 'completed') return false;
+    const query = releaseQuery.trim().toLowerCase();
+    if (!query) return true;
+    const subscriptionName = subs.find(sub => sub.id === rel.subscriptionId)?.name || '';
+    return [rel.title, rel.subgroup, rel.lastError, subscriptionName]
+      .some(value => String(value || '').toLowerCase().includes(query));
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setIsExternalSearchOpen(true)}
-            className="bg-[#0b57d0] text-white px-6 py-2.5 rounded-full text-sm font-medium hover:bg-[#0b57d0]/90 transition-all shadow-sm flex items-center gap-2"
-          >
-            <Search size={18} /> 搜索并创建
-          </button>
-          <button onClick={openAdd} className="bg-white border border-slate-300 text-slate-700 px-5 py-2.5 rounded-full text-sm font-medium hover:bg-slate-50 flex items-center gap-2 transition-colors">
-            <Plus size={16} /> 手动添加 RSS
-          </button>
-          <button onClick={openSettings} className="border border-slate-200 px-5 py-2.5 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-2">
-            <SettingsIcon size={16} /> PT 设置
-          </button>
-          <button onClick={handleDedupe} disabled={isDeduping} className="border border-slate-200 px-5 py-2.5 rounded-full text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2" title="合并 (账号 + RSS) 完全相同的订阅">
-            <Wand2 size={16} className={isDeduping ? 'animate-pulse' : ''} /> {isDeduping ? '清理中...' : '清理重复'}
-          </button>
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="ui-card-muted inline-flex self-start rounded-2xl p-1" role="tablist" aria-label="PT 管理视图">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={managementView === 'subscriptions'}
+              onClick={() => setManagementView('subscriptions')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${managementView === 'subscriptions' ? 'bg-[var(--bg-main)] text-[#0b57d0] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+            >
+              <Magnet size={17} /> 订阅 <span className="tabular-nums">{subs.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={managementView === 'releases'}
+              onClick={() => { setManagementView('releases'); void fetchAllReleases(); }}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${managementView === 'releases' ? 'bg-[var(--bg-main)] text-[#0b57d0] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+            >
+              <ListChecks size={17} /> 下载任务 <span className="tabular-nums">{releaseCounts.active}</span>
+            </button>
+          </div>
+          <div className="ui-card-muted grid grid-cols-2 self-start overflow-hidden rounded-2xl" aria-label="PT 总传输速度">
+            <div className="flex min-w-[132px] items-center gap-2.5 px-3.5 py-2">
+              <Download size={17} className="shrink-0 text-[#0b57d0]" />
+              <div className="min-w-0">
+                <div className="text-[10px] text-[var(--text-secondary)]">PT 下载</div>
+                <div className="truncate text-sm font-semibold tabular-nums text-[var(--text-primary)]" title={formatSpeed(transferStats.downloadSpeed)}>{formatSpeed(transferStats.downloadSpeed)}</div>
+              </div>
+            </div>
+            <div className="flex min-w-[132px] items-center gap-2.5 border-l border-[var(--border-color)] px-3.5 py-2">
+              <Upload size={17} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <div className="min-w-0">
+                <div className="text-[10px] text-[var(--text-secondary)]">天翼上传</div>
+                <div className="truncate text-sm font-semibold tabular-nums text-[var(--text-primary)]" title={formatSpeed(transferStats.cloudUploadSpeed)}>{formatSpeed(transferStats.cloudUploadSpeed)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {managementView === 'subscriptions' ? <>
+            <button type="button" onClick={() => setIsExternalSearchOpen(true)} className="flex items-center gap-2 rounded-full bg-[#0b57d0] px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#0b57d0]/90">
+              <Search size={17} /> 搜索并创建
+            </button>
+            <button type="button" onClick={openAdd} className="ui-card flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-slate-50 dark:hover:bg-slate-800">
+              <Plus size={16} /> 手动添加
+            </button>
+            <button type="button" onClick={handleDedupe} disabled={isDeduping} className="ui-card flex items-center gap-2 rounded-full px-4 py-2.5 text-sm text-[var(--text-secondary)] transition-colors hover:bg-slate-50 disabled:opacity-50 dark:hover:bg-slate-800" title="清理重复订阅">
+              <Wand2 size={16} className={isDeduping ? 'animate-pulse' : ''} /> {isDeduping ? '清理中' : '清理重复'}
+            </button>
+          </> : <>
+            <button type="button" onClick={handleProcessReleases} disabled={processingReleases} className="flex items-center gap-2 rounded-full bg-[#0b57d0] px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#0b57d0]/90 disabled:opacity-50">
+              <Play size={17} className={processingReleases ? 'animate-pulse' : ''} /> {processingReleases ? '处理中' : '立即处理'}
+            </button>
+            <button type="button" onClick={handleRebuildAllStrm} disabled={rebuildingAll} className="ui-card flex items-center gap-2 rounded-full px-4 py-2.5 text-sm text-[var(--text-secondary)] transition-colors hover:bg-slate-50 disabled:opacity-50 dark:hover:bg-slate-800">
+              <RotateCcw size={16} className={rebuildingAll ? 'animate-spin' : ''} /> 重建全部 STRM
+            </button>
+          </>}
+          <button type="button" onClick={openSettings} className="ui-card flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:text-[#0b57d0]" title="PT 设置" aria-label="PT 设置"><SettingsIcon size={18} /></button>
+          <button type="button" onClick={() => onNavigateHistory({ module: 'pt' })} className="ui-card flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-secondary)] transition-colors hover:text-[#0b57d0]" title="查看 PT 历史" aria-label="查看 PT 历史"><History size={18} /></button>
         </div>
       </div>
 
-      <div className="ui-card overflow-hidden shadow-sm">
+      {managementView === 'subscriptions' ? <div className="ui-card overflow-hidden shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-[var(--border-color)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-md">
+            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={subscriptionQuery} onChange={event => setSubscriptionQuery(event.target.value)} placeholder="搜索名称、来源或目录" className="ui-input w-full rounded-full py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" />
+          </div>
+          <button type="button" onClick={fetchSubs} disabled={loading} className="ui-input flex h-10 w-10 shrink-0 items-center justify-center self-end rounded-full text-[var(--text-secondary)] transition-colors hover:text-[#0b57d0] disabled:opacity-50 sm:self-auto" title="刷新订阅" aria-label="刷新订阅">
+            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50/50 border-b border-slate-100">
+            <thead className="border-b border-slate-100 bg-slate-50/50 text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
               <tr>
-                <th className="px-6 py-4 font-medium text-slate-500">名称</th>
-                <th className="px-6 py-4 font-medium text-slate-500">来源</th>
-                <th className="px-6 py-4 font-medium text-slate-500">目标</th>
-                <th className="px-6 py-4 font-medium text-slate-500">状态</th>
-                <th className="px-6 py-4 font-medium text-slate-500">最后检查</th>
-                <th className="px-6 py-4 font-medium text-slate-500 text-right">操作</th>
+                <th className="px-6 py-4 font-medium">名称</th>
+                <th className="px-6 py-4 font-medium">来源</th>
+                <th className="px-6 py-4 font-medium">目标</th>
+                <th className="px-6 py-4 font-medium">状态</th>
+                <th className="px-6 py-4 font-medium">最后检查</th>
+                <th className="px-6 py-4 text-right font-medium">操作</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
               {loading ? (
-                <tr><td colSpan={6} className="px-6 py-4 text-center text-slate-500">加载中...</td></tr>
-              ) : subs.length === 0 ? (
-                <tr><td colSpan={6} className="px-6 py-4 text-center text-slate-500">暂无 PT 订阅</td></tr>
-              ) : subs.map(sub => {
+                <tr><td colSpan={6} className="px-6 py-10 text-center text-[var(--text-secondary)]">加载中...</td></tr>
+              ) : filteredSubs.length === 0 ? (
+                <tr><td colSpan={6} className="px-6 py-10 text-center text-[var(--text-secondary)]">暂无 PT 订阅</td></tr>
+              ) : filteredSubs.map(sub => {
                 const missingEpisodes = parseMissingEpisodes(sub);
                 return (
-                <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors">
+                <tr key={sub.id} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-800/50">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-xl ${sub.enabled ? 'bg-[#cfe1ff] text-[#0b3a86]' : 'bg-slate-100 text-slate-400'}`}>
-                        <Magnet size={20} />
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="font-medium ui-title truncate max-w-[160px]" title={sub.name}>{sub.name}</span>
-                        {!sub.enabled && <span className="text-[10px] text-red-500 font-bold uppercase">已禁用</span>}
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${sub.enabled ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300' : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}><Magnet size={20} /></div>
+                      <div className="min-w-0">
+                        <div className="max-w-[180px] truncate font-medium ui-title" title={sub.name}>{sub.name}</div>
+                        {!sub.enabled && <span className="text-[10px] font-bold text-red-500">已禁用</span>}
                       </div>
                     </div>
                   </td>
                   <td className="px-6 py-4 text-xs">
-                    <div className="font-medium text-slate-700">{sub.sourcePreset}</div>
-                    <div className="font-mono text-slate-400 truncate max-w-[220px]" title={sub.rssUrl}>{sub.rssUrl || '-'}</div>
+                    <div className="font-medium text-[var(--text-primary)]">{sub.sourcePreset}</div>
+                    <div className="max-w-[220px] truncate font-mono text-[var(--text-secondary)]" title={sub.rssUrl}>{sub.rssUrl || '-'}</div>
                   </td>
-                  <td className="px-6 py-4 text-xs text-slate-600">
-                    <div className="truncate max-w-[200px]" title={sub.targetFolder}>{sub.targetFolder || sub.targetFolderId}</div>
-                    <div className="text-slate-400">
-                      共 {sub.releaseCount || 0} 条
-                      {sub.totalEpisodeNumber > 0 && ` · 进度 ${sub.currentEpisodeNumber || 0}/${sub.totalEpisodeNumber}`}
-                    </div>
-                    {missingEpisodes.length > 0 && (
-                      <div className="mt-1 text-[10px] text-amber-600 truncate max-w-[200px]" title={missingEpisodes.join(', ')}>
-                        缺集 {missingEpisodes.slice(0, 6).join(', ')}{missingEpisodes.length > 6 ? '…' : ''}
-                      </div>
-                    )}
+                  <td className="px-6 py-4 text-xs text-[var(--text-secondary)]">
+                    <div className="max-w-[220px] truncate text-[var(--text-primary)]" title={sub.targetFolder}>{sub.targetFolder || sub.targetFolderId}</div>
+                    <div>共 {sub.releaseCount || 0} 条{sub.totalEpisodeNumber > 0 && ` · 进度 ${sub.currentEpisodeNumber || 0}/${sub.totalEpisodeNumber}`}</div>
+                    {missingEpisodes.length > 0 && <div className="mt-1 max-w-[220px] truncate text-[10px] text-amber-600 dark:text-amber-400" title={missingEpisodes.join(', ')}>缺集 {missingEpisodes.slice(0, 6).join(', ')}{missingEpisodes.length > 6 ? '…' : ''}</div>}
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-1.5" title={sub.lastMessage || ''}>
-                      {sub.lastStatus === 'ok' && <CheckCircle2 size={14} className="text-[#0d4f1f]" />}
-                      {sub.lastStatus === 'error' && <AlertCircle size={14} className="text-[#b3261e]" />}
-                      <span className="text-xs">{sub.lastStatus || 'unknown'}</span>
+                    <div className="flex items-center gap-1.5 text-xs text-[var(--text-primary)]" title={sub.lastMessage || ''}>
+                      {sub.lastStatus === 'ok' && <CheckCircle2 size={14} className="text-emerald-600" />}
+                      {sub.lastStatus === 'error' && <AlertCircle size={14} className="text-red-600" />}
+                      <span>{sub.lastStatus || 'unknown'}</span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-slate-500 text-xs">{formatDateTime(sub.lastCheckTime)}</td>
+                  <td className="whitespace-nowrap px-6 py-4 text-xs text-[var(--text-secondary)]">{formatDateTime(sub.lastCheckTime)}</td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => openReleases(sub)} className="p-2 hover:bg-[#0b57d0]/10 rounded-full text-[#0b57d0]" title="查看 release"><Folder size={18} /></button>
-                      <button onClick={() => handleRefresh(sub.id)} className="p-2 hover:bg-slate-100 rounded-full text-slate-500" title="立即拉取"><RefreshCw size={18} /></button>
-                      <button onClick={() => handleToggle(sub)} className={`p-2 hover:bg-slate-100 rounded-full ${sub.enabled ? 'text-orange-500' : 'text-green-600'}`} title={sub.enabled ? '停用' : '启用'}><Power size={18} /></button>
-                      <button onClick={() => openEdit(sub)} className="p-2 hover:bg-slate-100 rounded-full text-slate-500" title="编辑"><Edit2 size={18} /></button>
-                      <button onClick={() => handleDelete(sub.id)} className="p-2 hover:bg-slate-100 rounded-full text-red-500" title="删除"><Trash2 size={18} /></button>
+                      <button onClick={() => openReleases(sub)} className="rounded-full p-2 text-[#0b57d0] transition-colors hover:bg-[#0b57d0]/10" title="查看下载任务" aria-label="查看下载任务"><Folder size={18} /></button>
+                      <button onClick={() => onNavigateHistory({ subjectType: 'pt_subscription', subjectId: sub.id })} className="rounded-full p-2 text-[var(--text-secondary)] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800" title="查看历史" aria-label={`查看${sub.name}历史`}><History size={18} /></button>
+                      <button onClick={() => handleRefresh(sub.id)} className="rounded-full p-2 text-[var(--text-secondary)] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800" title="立即拉取" aria-label="立即拉取"><RefreshCw size={18} /></button>
+                      <button onClick={() => handleToggle(sub)} className={`rounded-full p-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${sub.enabled ? 'text-amber-600' : 'text-emerald-600'}`} title={sub.enabled ? '停用' : '启用'} aria-label={sub.enabled ? '停用' : '启用'}><Power size={18} /></button>
+                      <button onClick={() => openEdit(sub)} className="rounded-full p-2 text-[var(--text-secondary)] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800" title="编辑" aria-label="编辑"><Edit2 size={18} /></button>
+                      <button onClick={() => setMetadataTarget({ type: 'subscription', id: sub.id, title: sub.name })} className="rounded-full p-2 text-[var(--text-secondary)] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800" title="元数据模板" aria-label="元数据模板"><Tags size={18} /></button>
+                      <button onClick={() => handleDelete(sub.id)} className="rounded-full p-2 text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-950/40" title="删除" aria-label="删除"><Trash2 size={18} /></button>
                     </div>
                   </td>
                 </tr>
@@ -1034,7 +1182,106 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
             </tbody>
           </table>
         </div>
-      </div>
+      </div> : (
+        <div className="space-y-4">
+          <div className="ui-card p-4 shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter size={16} className="mx-1 text-[var(--text-secondary)]" />
+              {([
+                ['all', '全部', releaseCounts.all],
+                ['active', '进行中', releaseCounts.active],
+                ['failed', '需处理', releaseCounts.failed],
+                ['completed', '已完成', releaseCounts.completed]
+              ] as const).map(([value, label, count]) => (
+                <button key={value} type="button" onClick={() => setReleaseStatusFilter(value)} className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${releaseStatusFilter === value ? 'border-[#0b57d0] bg-[#d3e3fd] text-[#0b57d0] dark:bg-[#0b57d0]/20 dark:text-blue-300' : 'border-transparent text-[var(--text-secondary)] hover:border-[var(--border-color)] hover:text-[var(--text-primary)]'}`}>
+                  {label} <span className="ml-1 tabular-nums">{count}</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div className="relative flex-1">
+                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input value={releaseQuery} onChange={event => setReleaseQuery(event.target.value)} placeholder="搜索标题、字幕组、订阅或错误" className="ui-input w-full rounded-full py-2.5 pl-11 pr-4 text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20" />
+              </div>
+              <select value={releaseSubscriptionFilter} onChange={event => setReleaseSubscriptionFilter(event.target.value)} className="ui-input min-w-0 rounded-full px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20 lg:min-w-[240px]">
+                <option value="all">全部订阅</option>
+                {subs.map(sub => <option key={sub.id} value={String(sub.id)}>{sub.name}</option>)}
+              </select>
+              <button type="button" onClick={() => fetchAllReleases()} disabled={releasesLoading} className="ui-input flex h-10 w-10 shrink-0 items-center justify-center self-end rounded-full text-[var(--text-secondary)] transition-colors hover:text-[#0b57d0] disabled:opacity-50 lg:self-auto" title="刷新下载状态" aria-label="刷新下载状态">
+                <RefreshCw size={18} className={releasesLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+
+          {releasesLoading && allReleases.length === 0 ? (
+            <div className="ui-card py-16 text-center text-sm text-[var(--text-secondary)]">加载下载状态...</div>
+          ) : filteredReleases.length === 0 ? (
+            <div className="ui-card py-16 text-center text-sm text-[var(--text-secondary)]">没有符合条件的下载任务</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3">
+              {filteredReleases.map(rel => {
+                const subscription = subs.find(sub => sub.id === rel.subscriptionId);
+                const qbt = rel.downloader;
+                const progress = Math.max(0, Math.min(100, Number(qbt?.progress ?? rel.progress ?? 0)));
+                const speed = Number(qbt?.downloadSpeed || 0);
+                const isWorking = ['downloading', 'forcedDL', 'metaDL', 'checkingDL'].includes(qbt?.state || '');
+                return (
+                  <article key={rel.id} className="ui-card group relative overflow-hidden p-5 shadow-sm transition-shadow hover:shadow-md">
+                    <div className={`absolute inset-y-4 left-0 w-1.5 rounded-r-full ${statusAccent(rel.status)}`} />
+                    <div className="flex flex-col gap-5 pl-3 xl:flex-row xl:items-center xl:justify-between">
+                      <div className="flex min-w-0 flex-1 items-start gap-4">
+                        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${statusColor(rel.status)}`}>
+                          {rel.status === 'completed' ? <CheckCircle2 size={22} /> : ['failed', 'upload_failed'].includes(rel.status) ? <AlertCircle size={22} /> : <Download size={22} />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="max-w-full truncate text-base font-semibold ui-title" title={rel.title}>{rel.title}</h3>
+                            <span className={`inline-flex rounded-md px-2.5 py-1 text-[11px] font-bold ${statusColor(rel.status)}`}>{statusLabel(rel.status)}</span>
+                            {formatEpisodeBadge(rel) && <span className="rounded-md bg-[#d3e3fd] px-2 py-1 font-mono text-[10px] font-bold text-[#0b57d0] dark:bg-[#0b57d0]/20 dark:text-blue-300">{formatEpisodeBadge(rel)}</span>}
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--text-secondary)]">
+                            <span className="max-w-[320px] truncate" title={subscription?.name || ''}>{subscription?.name || `订阅 #${rel.subscriptionId}`}</span>
+                            {formatSize(rel.size) && <span>{formatSize(rel.size)}</span>}
+                            <span>{formatDateTime(rel.updatedAt)}</span>
+                          </div>
+                          {rel.lastError && <div className="mt-3 line-clamp-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300" title={rel.lastError}>{rel.lastError}</div>}
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 xl:w-[430px]">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className={`flex min-w-0 items-center gap-1.5 text-xs font-medium ${downloaderStateColor(qbt?.state)}`}>
+                            {isWorking ? <Gauge size={15} /> : <Clock3 size={15} />}
+                            <span className="truncate">{downloaderStateLabel(qbt?.state)}</span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button onClick={() => setMetadataTarget({ type: 'release', id: rel.id, title: rel.title })} className="rounded-full p-2 text-[var(--text-secondary)] transition-colors hover:bg-slate-100 hover:text-[#0b57d0] dark:hover:bg-slate-800" title="编辑元数据" aria-label="编辑元数据"><Tags size={17} /></button>
+                            {rel.status !== 'completed' && <button onClick={() => handleRetryRelease(rel.id)} disabled={releaseActionId === rel.id} className="rounded-full p-2 text-[#0b57d0] transition-colors hover:bg-blue-50 disabled:opacity-50 dark:hover:bg-blue-950/40" title="重试或唤醒" aria-label="重试或唤醒"><RefreshCw size={17} className={releaseActionId === rel.id ? 'animate-spin' : ''} /></button>}
+                            {rel.status === 'completed' && <button onClick={() => handleRebuildStrm(rel.id)} className="rounded-full p-2 text-[#0b57d0] transition-colors hover:bg-blue-50 dark:hover:bg-blue-950/40" title="重建 STRM" aria-label="重建 STRM"><RotateCcw size={17} /></button>}
+                            <button onClick={() => handleDeleteRelease(rel.id)} disabled={releaseActionId === rel.id} className="rounded-full p-2 text-red-500 transition-colors hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-950/40" title="删除任务与本地文件" aria-label="删除任务与本地文件"><Trash2 size={17} /></button>
+                          </div>
+                        </div>
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-semibold tabular-nums text-[var(--text-primary)]">{progress}%</span>
+                            <span className="tabular-nums text-[var(--text-secondary)]">{speed > 0 ? `${formatSize(speed)}/s` : '-'}</span>
+                          </div>
+                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className={`h-full rounded-full transition-all ${statusAccent(rel.status)}`} style={{ width: `${progress}%` }} /></div>
+                        </div>
+                        <div className="mt-3 grid grid-cols-3 divide-x divide-[var(--border-color)] text-center text-xs">
+                          <div><div className="font-semibold tabular-nums text-[var(--text-primary)]">{qbt?.seeds ?? rel.seeders ?? 0}</div><div className="mt-0.5 text-[var(--text-secondary)]">做种</div></div>
+                          <div><div className="font-semibold tabular-nums text-[var(--text-primary)]">{qbt?.peers ?? rel.peers ?? 0}</div><div className="mt-0.5 text-[var(--text-secondary)]">连接</div></div>
+                          <div><div className="font-semibold tabular-nums text-[var(--text-primary)]">{qbt?.availability != null ? qbt.availability.toFixed(1) : '-'}</div><div className="mt-0.5 text-[var(--text-secondary)]">可用性</div></div>
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 添加/编辑订阅 */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editing ? '编辑 PT 订阅' : '添加 PT 订阅'} footer={null} maxWidthClass="max-w-4xl" contentClassName="px-5 md:px-8 pb-6 max-h-[72vh] overflow-y-auto">
@@ -1418,120 +1665,13 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
         }}
       />
 
-      {/* releases 弹窗 */}
-      <Modal isOpen={isReleasesOpen} onClose={() => setIsReleasesOpen(false)} title={`${currentSub?.name || '订阅'} 的 release`}>
-        <div className="min-h-[400px]">
-          <div className="flex justify-end gap-2 mb-3">
-            <button onClick={handleRebuildAllStrm} disabled={rebuildingAll} className="px-4 py-2 rounded-full border border-slate-200 text-sm hover:bg-slate-50 flex items-center gap-2 disabled:opacity-50">
-              <RotateCcw size={16} className={rebuildingAll ? 'animate-spin' : ''} /> 重建全部STRM
-            </button>
-            <button onClick={refreshReleases} className="px-4 py-2 rounded-full border border-slate-200 text-sm hover:bg-slate-50 flex items-center gap-2">
-              <RefreshCw size={16} className={releasesLoading ? 'animate-spin' : ''} /> 刷新
-            </button>
-          </div>
-          <div className="rounded-2xl border border-slate-100 overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50/50 border-b border-slate-100">
-                <tr>
-                  <th className="px-4 py-3 font-medium text-slate-500">标题</th>
-                  <th className="px-4 py-3 font-medium text-slate-500">状态</th>
-                  <th className="px-4 py-3 font-medium text-slate-500">qb hash</th>
-                  <th className="px-4 py-3 font-medium text-slate-500">更新时间</th>
-                  <th className="px-4 py-3 font-medium text-slate-500 text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {releasesLoading ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">加载中...</td></tr>
-                ) : releases.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">暂无 release</td></tr>
-                ) : releases.map(rel => {
-                  const sizeText = formatSize(rel.size);
-                  const factorText = formatVolumeFactor(rel);
-                  const isFreeFactor = factorText.includes('免费') || /^\d+X$/i.test(factorText);
-                  const episodeBadge = formatEpisodeBadge(rel);
-                  const tags = parseReleaseTags(rel);
-                  return (
-                  <tr key={rel.id} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-3">
-                      <div className="font-medium ui-title truncate max-w-[300px]" title={rel.title}>{rel.title}</div>
-                      {(sizeText || rel.seeders != null && rel.seeders > 0 || factorText || rel.subgroup || episodeBadge || rel.resolution || rel.quality || tags.length > 0) && (
-                        <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-500">
-                          {rel.subgroup && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{rel.subgroup}</span>
-                          )}
-                          {episodeBadge && (
-                            <span className="px-1.5 py-0.5 rounded bg-[#d3e3fd] text-[#0b57d0] font-mono">{episodeBadge}</span>
-                          )}
-                          {rel.resolution && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{rel.resolution}</span>
-                          )}
-                          {rel.quality && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{rel.quality}</span>
-                          )}
-                          {sizeText && (
-                            <span className="inline-flex items-center gap-0.5">
-                              <HardDrive size={11} />{sizeText}
-                            </span>
-                          )}
-                          {rel.seeders != null && rel.seeders > 0 && (
-                            <span className="inline-flex items-center gap-0.5">
-                              <Users size={11} />{rel.seeders}
-                            </span>
-                          )}
-                          {factorText && (
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${isFreeFactor ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                              {factorText}
-                            </span>
-                          )}
-                          {rel.publishedAt && (
-                            <span className="text-slate-400">· 发布 {formatDateTime(rel.publishedAt)}</span>
-                          )}
-                        </div>
-                      )}
-                      {tags.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {tags.map(tag => (
-                            <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-500 border border-slate-100">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {rel.lastError && <div className="text-[11px] text-red-500 mt-0.5 truncate max-w-[300px]" title={rel.lastError}>{rel.lastError}</div>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-1 rounded-full text-xs ${statusColor(rel.status)}`}>{statusLabel(rel.status)}</span>
-                        {(rel.status === 'downloading' || rel.status === 'uploading') && rel.progress != null && rel.progress > 0 && (
-                          <span className="text-xs ui-muted font-mono">{rel.progress}%</span>
-                        )}
-                      </div>
-                      {(rel.status === 'downloading' || rel.status === 'uploading') && rel.progress != null && rel.progress > 0 && (
-                        <div className="mt-1 w-full bg-slate-100 rounded-full h-1">
-                          <div className="bg-[#0b57d0] h-1 rounded-full transition-all" style={{ width: `${rel.progress}%` }}></div>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[10px] text-slate-400">{rel.qbTorrentHash ? rel.qbTorrentHash.slice(0, 12) + '…' : '-'}</td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">{formatDateTime(rel.updatedAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-1">
-                        <button onClick={() => handleRetryRelease(rel.id)} className="p-1.5 hover:bg-slate-100 rounded-full text-slate-500" title="重试"><RefreshCw size={14} /></button>
-                        {rel.status === 'completed' && (
-                          <button onClick={() => handleRebuildStrm(rel.id)} className="p-1.5 hover:bg-slate-100 rounded-full text-blue-500" title="重建STRM（不重新下载/上传）"><RotateCcw size={14} /></button>
-                        )}
-                        <button onClick={() => handleDeleteRelease(rel.id)} className="p-1.5 hover:bg-slate-100 rounded-full text-red-500" title="删除"><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </Modal>
+      <MetadataEditor
+        open={Boolean(metadataTarget)}
+        title={metadataTarget?.title || ''}
+        endpoint={metadataTarget ? `/api/pt/${metadataTarget.type === 'subscription' ? 'subscriptions' : 'releases'}/${metadataTarget.id}/metadata` : ''}
+        onClose={() => setMetadataTarget(null)}
+        onSaved={() => { void fetchSubs(); void fetchAllReleases(true); }}
+      />
 
       {/* PT 设置 */}
       <Modal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} title="PT 设置" footer={null}>
@@ -1602,6 +1742,16 @@ const PtTab: React.FC<PtTabProps> = ({ prefill, onPrefillConsumed }) => {
                   <label className="text-xs ui-muted">标签前缀</label>
                   <input type="text" value={settings.downloader.tagPrefix} onChange={e => setSettings({ ...settings, downloader: { ...settings.downloader, tagPrefix: e.target.value } })}
                     className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none" />
+                </div>
+                <div className="md:col-span-2">
+                  <Checkbox
+                    size="sm"
+                    checked={settings.downloader.forceStart}
+                    onChange={(v) => setSettings({ ...settings, downloader: { ...settings.downloader, forceStart: v } })}
+                    label="PT 任务强制启动（绕过 qB 活跃任务队列限制）"
+                    labelClassName="text-sm text-slate-700"
+                  />
+                  <p className="ml-6 mt-1 text-[11px] text-slate-400">建议开启；只作用于本系统创建的 PT 任务，不修改 qB 全局队列设置。</p>
                 </div>
                 <div className="md:col-span-2">
                   <Checkbox

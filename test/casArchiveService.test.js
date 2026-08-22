@@ -37,15 +37,18 @@ test('independent media paths do not overlap', () => {
 test('folder cache isolates parent folders and coalesces concurrent creation', async () => {
     const archive = new CasArchiveService();
     const calls = [];
+    const createdFolders = new Map();
     const cloud189 = {
         async listFiles(parentId) {
             calls.push(`list:${parentId}`);
-            return { fileListAO: { folderList: [] } };
+            return { fileListAO: { folderList: createdFolders.has(parentId) ? [createdFolders.get(parentId)] : [] } };
         },
         async createFolder(name, parentId) {
             calls.push(`create:${parentId}:${name}`);
             await new Promise(resolve => setTimeout(resolve, 5));
-            return { id: `${parentId}-${name}` };
+            const created = { id: `${parentId}-${name}`, name };
+            createdFolders.set(parentId, created);
+            return created;
         }
     };
 

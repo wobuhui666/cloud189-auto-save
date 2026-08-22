@@ -562,15 +562,15 @@ async function handleCheckin(svc, msg) {
         await send(svc.bot, chatId, '未启用影巢，请先在网页端媒体设置中开启并配置影巢');
         return;
     }
-    if (!status.signedCustomerApiAvailable) {
-        await send(svc.bot, chatId, '影巢签到依赖 Browser Bridge 签名模式，请先配置 Browser Bridge');
+    if (!status.signedCustomerApiAvailable && !status.tgtodrive?.enabled) {
+        await send(svc.bot, chatId, '影巢签到依赖 Browser Bridge 签名模式或 TgtoDrive 开放平台授权，请先配置其一');
         return;
     }
 
     await typing(svc.bot, chatId);
     const statusMsg = await send(svc.bot, chatId, '⏳ 正在执行影巢签到...');
     try {
-        const result = await svc.hdhiveSdk.checkinByBridge();
+        const result = await svc.hdhiveSdk.checkin();
         if (!result.success) {
             await edit(svc.bot, chatId, statusMsg?.message_id, `⚠️ ${escapeHtml(result.message || result.error || '影巢签到失败')}`);
             return;

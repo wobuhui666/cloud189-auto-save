@@ -126,6 +126,11 @@ class QbittorrentClient {
         return Array.isArray(response.body) ? response.body : [];
     }
 
+    async listNormalizedTorrents(searchParams = {}) {
+        const torrents = await this.listTorrents(searchParams);
+        return torrents.map((torrent) => this._normalizeTorrent(torrent));
+    }
+
     async getTorrent(hash) {
         if (!hash) {
             return null;
@@ -199,6 +204,7 @@ class QbittorrentClient {
             category: options.category || '',
             tags: options.tag || '',
             paused: 'false',
+            stopped: 'false',
             autoTMM: 'false',
             sequentialDownload: options.sequentialDownload === false ? 'false' : 'true',
             firstLastPiecePrio: options.firstLastPiecePrio === false ? 'false' : 'true',
@@ -239,6 +245,9 @@ class QbittorrentClient {
         if (!torrent && options.tag) {
             const rawTorrent = await this.waitForTorrentByTag(options.tag, 10000);
             torrent = rawTorrent ? this._normalizeTorrent(rawTorrent) : null;
+        }
+        if (torrent && options.forceStart) {
+            await this.forceStartTorrent(torrent.hash);
         }
         return torrent;
     }
@@ -284,6 +293,36 @@ class QbittorrentClient {
         });
     }
 
+    async startTorrent(hash) {
+        if (!hash) {
+            return;
+        }
+        try {
+            await this._request('POST', '/api/v2/torrents/start', {
+                form: { hashes: hash }
+            });
+        } catch (err) {
+            if (!/\(404\)/.test(String(err && err.message ? err.message : err))) {
+                throw err;
+            }
+            await this._request('POST', '/api/v2/torrents/resume', {
+                form: { hashes: hash }
+            });
+        }
+    }
+
+    async forceStartTorrent(hash, enabled = true) {
+        if (!hash) {
+            return;
+        }
+        await this._request('POST', '/api/v2/torrents/setForceStart', {
+            form: {
+                hashes: hash,
+                value: enabled ? 'true' : 'false'
+            }
+        });
+    }
+
     _normalizeTorrent(raw) {
         const stateRaw = String(raw.state || '');
         const completedStates = new Set(['uploading', 'queuedUP', 'stalledUP', 'forcedUP', 'pausedUP', 'checkingUP']);
@@ -291,11 +330,20 @@ class QbittorrentClient {
             hash: String(raw.hash || '').toLowerCase(),
             name: raw.name || '',
             state: stateRaw,
+            isQueued: new Set(['queuedDL', 'queuedUP']).has(stateRaw),
+            isStopped: new Set(['stoppedDL', 'stoppedUP', 'pausedDL', 'pausedUP']).has(stateRaw),
             isCompleted: completedStates.has(stateRaw) || Number(raw.progress || 0) >= 1,
             progress: Number(raw.progress || 0),
             savePath: raw.save_path || raw.content_path || '',
             contentPath: raw.content_path || '',
             size: Number(raw.size || 0),
+            downloadSpeed: Number(raw.dlspeed || 0),
+            uploadSpeed: Number(raw.upspeed || 0),
+            eta: Number(raw.eta || 0),
+            seeds: Number(raw.num_seeds || 0),
+            peers: Number(raw.num_leechs || 0),
+            availability: Number(raw.availability || 0),
+            amountLeft: Number(raw.amount_left || 0),
             addedOn: raw.added_on,
             raw
         };

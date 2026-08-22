@@ -5,6 +5,7 @@ const ConfigService = require('./ConfigService');
 const { ScrapeService } = require('./ScrapeService');
 const { LazyShareStrmService } = require('./lazyShareStrm');
 const { OrganizerService } = require('./organizer');
+const { auditService } = require('./auditService');
 
 class TaskEventHandler {
     constructor(messageUtil) {
@@ -17,6 +18,9 @@ class TaskEventHandler {
         }
         const task = taskCompleteEventDto.task;
         logTaskEvent(` ${task.resourceName} 触发事件:`);
+        await auditService.event('post_process', '开始任务后处理', {
+            phase: 'post_process', data: { fileCount: taskCompleteEventDto.fileList?.length || 0 }
+        });
         try {
             await this._handleAutoRename(taskCompleteEventDto);
             await this._handleCasArchive(taskCompleteEventDto);
@@ -27,6 +31,9 @@ class TaskEventHandler {
         } catch (error) {
             console.error(error);
             logTaskEvent(`任务完成后处理失败: ${error.message}`);
+            await auditService.event('post_process_failed', '任务完成后处理失败', {
+                phase: 'post_process', level: 'error', error: error.message
+            });
         }
         logTaskEvent(`================事件处理完成================`);
     }
@@ -37,15 +44,20 @@ class TaskEventHandler {
             return;
         }
         try {
+            await auditService.event('cas_archive', '开始 CAS 归档', { phase: 'cas' });
             await eventDto.taskService.archivePendingCasFiles(task, eventDto.cloud189);
         } catch (error) {
             logTaskEvent(`CAS归档失败，等待下次重试: ${error.message}`);
+            await auditService.event('cas_archive_failed', 'CAS 归档失败，等待下次重试', {
+                phase: 'cas', level: 'error', error: error.message
+            });
         }
     }
     async _handleAutoRename(taskCompleteEventDto) {
         try {
             // 懒 STRM：只锁定 layout / 准备 STRM 命名，不移动网盘
             if (taskCompleteEventDto.task?.enableOrganizer) {
+                await auditService.event('organizer', '开始媒体识别与整理', { phase: 'organizer' });
                 const organizerService = new OrganizerService(taskCompleteEventDto.taskService, taskCompleteEventDto.taskRepo);
                 const result = await organizerService.organizeTask(taskCompleteEventDto.task, {
                     triggerStrm: false,
@@ -70,6 +82,9 @@ class TaskEventHandler {
                 await organizerService.markError(taskCompleteEventDto.task.id, error);
             }
             logTaskEvent(`${taskCompleteEventDto.task?.enableOrganizer ? '整理器' : '自动重命名'}失败: ${error.message}`);
+            await auditService.event('organizer_failed', '媒体整理失败', {
+                phase: 'organizer', level: 'error', error: error.message
+            });
         }
     }
 
@@ -77,6 +92,7 @@ class TaskEventHandler {
         try {
             const {task,taskService, overwriteStrm} = taskCompleteEventDto;
             if (!ConfigService.getConfigValue('strm.enable')) {
+                await auditService.recordOperation('skip', 'skipped', { reason: 'STRM 未启用', decisionSource: 'config' });
                 return;
             }
             if (task.enableLazyStrm) {
@@ -93,6 +109,9 @@ class TaskEventHandler {
         } catch (error) {
             console.error(error);
             logTaskEvent(`生成STRM文件失败: ${error.message}`);
+            await auditService.event('strm_failed', 'STRM 生成失败', {
+                phase: 'strm', level: 'error', error: error.message
+            });
         }
     }
 
@@ -163,11 +182,21 @@ class TaskEventHandler {
             const {task, taskService} = taskCompleteEventDto;
             if (ConfigService.getConfigValue('emby.enable')) {
                 const embyService = new EmbyService(taskService);
-                await embyService.notify(task);
+                const itemId = await embyService.notify(task);
+                await auditService.recordOperation('notify', 'completed', {
+                    targetPath: embyService._resolveNotifyPath(task),
+                    after: { itemId, fullLibraryRefresh: !itemId },
+                    verification: { accepted: true },
+                    decisionSource: 'emby'
+                });
             }
         } catch (error) {
             console.error(error);
             logTaskEvent(`通知Emby失败: ${error.message}`);
+            await auditService.recordOperation('notify', 'failed', {
+                reason: 'Emby 入库通知失败', decisionSource: 'emby', error: error.message,
+                verification: { accepted: false }
+            });
         }
     }
 }

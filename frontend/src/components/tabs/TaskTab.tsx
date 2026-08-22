@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, ChevronRight, Filter, Search, RefreshCw, Files, PlayCircle, MoreVertical, CheckCircle2, AlertCircle, Clock, Trash2, ClipboardList, Edit3, Film } from 'lucide-react';
+import { Plus, ChevronRight, Filter, Search, RefreshCw, Files, PlayCircle, MoreVertical, CheckCircle2, AlertCircle, Clock, Trash2, ClipboardList, Edit3, Film, Tags, History } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useToast } from '../ui/Toast';
 import { useDialog } from '../ui/Dialog';
+import MetadataEditor from '../MetadataEditor';
 
 interface Account {
   id: number;
@@ -49,6 +50,7 @@ interface Task {
 
 interface TaskTabProps {
   onCreateTask: (initialData?: any) => void;
+  onNavigateHistory: (filters?: { module?: string; subjectType?: string; subjectId?: string | number }) => void;
 }
 
 interface CollectionFile {
@@ -88,7 +90,7 @@ const TASK_FEATURE_FILTERS: Array<{
   { key: 'feature:keep-cas', label: '保留CAS', matches: (task) => Boolean(task.keepCasAfterRestore) }
 ];
 
-const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
+const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask, onNavigateHistory }) => {
   const toast = useToast();
   const dialog = useDialog();
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -114,6 +116,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
 
   const [filterGroups, setFilterGroups] = useState<string[]>([]);
   const [collectionModal, setCollectionModal] = useState<{ title: string; loading: boolean; files: CollectionFile[] } | null>(null);
+  const [metadataTask, setMetadataTask] = useState<Task | null>(null);
 
   const fetchTasks = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -704,6 +707,9 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
           >
             <Plus size={18} /> 创建任务
           </button>
+          <button type="button" onClick={() => onNavigateHistory({ subjectType: 'task' })} className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50" title="查看任务历史">
+            <History size={17} /> 历史
+          </button>
           <div className="relative" data-task-top-menu>
             <button
               type="button"
@@ -975,6 +981,7 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => onNavigateHistory({ subjectType: 'task', subjectId: task.id })} className="p-2 hover:bg-slate-100 rounded-full text-slate-500 hover:text-[#0b57d0] transition-colors" title="查看历史" aria-label={`查看${taskName}历史`}><History size={18} /></button>
                     <button 
                       onClick={() => handleExecuteTask(task.id)}
                       disabled={isExecuting}
@@ -998,6 +1005,15 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
                           className="fixed w-44 bg-white border border-slate-200 rounded-xl shadow-lg py-1 z-[9999]"
                           style={{ top: dropdownPos.top, right: dropdownPos.right }}
                         >
+                          <button
+                            onClick={() => {
+                              setOpenTaskMenuId(null);
+                              setMetadataTask(task);
+                            }}
+                            className="w-full text-left px-3 py-1.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors flex items-center gap-2"
+                          >
+                            <Tags size={14} /> 编辑元数据
+                          </button>
                           <button
                             onClick={() => {
                               setOpenTaskMenuId(null);
@@ -1159,6 +1175,13 @@ const TaskTab: React.FC<TaskTabProps> = ({ onCreateTask }) => {
         </>,
         document.body
       )}
+      <MetadataEditor
+        open={Boolean(metadataTask)}
+        title={metadataTask?.tmdbTitle || metadataTask?.resourceName || ''}
+        endpoint={metadataTask ? `/api/tasks/${metadataTask.id}/metadata` : ''}
+        onClose={() => setMetadataTask(null)}
+        onSaved={() => fetchTasks()}
+      />
     </div>
   );
 };

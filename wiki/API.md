@@ -143,10 +143,26 @@ Web 使用说明见 [[FileManager]]。
 
 ## 6. 自动追剧
 
+`POST /api/auto-series` 创建持久化 Intent，支持 `agentEnabled`、`toolCallMode` 和 `mediaPreference`，返回 `intentId` 与 `workflowRunId`。
+
+`toolCallMode` 支持 `auto`、`native`、`json`。请求未传时继承“媒体 → OpenAI → 工具调用协议”的全局默认值；Intent 创建后保存协议快照，不受之后全局设置变化影响。`auto` 会先尝试原生 Tool Calling，仅在模型端明确不支持工具协议时切换 JSON 动作协议。
+
+- `GET /api/auto-series/intents`：Intent 列表
+- `POST /api/auto-series/intents/:id/pause`：暂停
+- `POST /api/auto-series/intents/:id/resume`：恢复
+- `POST /api/auto-series/intents/:id/run`：立即运行
+- `GET /api/invalid-resources`：查询失效资源缓存
+- `DELETE /api/invalid-resources/:id`：人工解除失效缓存
+- `GET /api/workflow-runs?intentId=&taskId=&ptSubscriptionId=`：按主体过滤工作流记录
+
+Intent 列表不会返回服务端持有的分享链接。WorkflowRun 仅保存工具名称、协议、媒体偏好评分、PT 正则验证摘要和降级原因等审计信息；分享链接、RSS URL、Token 与 API Key 会在写入和响应阶段脱敏。
+
 | 方法 | 路径 | 说明 |
 | :--- | :--- | :--- |
 | GET | `/api/auto-series/search` | 搜索自动追剧候选资源 |
-| POST | `/api/auto-series` | 创建自动追剧任务 |
+| POST | `/api/auto-series` | 创建自动追剧 Intent |
+| GET | `/api/auto-series/settings` | 获取独立自动追剧设置 |
+| PUT | `/api/auto-series/settings` | 校验并保存独立自动追剧设置 |
 | GET | `/api/auto-series/sources` | 获取自动追剧来源勾选与顺序 |
 | PUT | `/api/auto-series/sources` | 保存自动追剧来源勾选与顺序 |
 
@@ -156,11 +172,25 @@ Web 使用说明见 [[FileManager]]。
 {
   "title": "庆余年",
   "year": "2024",
-  "mode": "lazy"
+  "mode": "lazy",
+  "agentEnabled": true,
+  "toolCallMode": "auto",
+  "mediaPreference": {
+    "preferredGroups": ["LoliHouse"],
+    "blockedKeywords": ["预告", "sample"],
+    "fallbackMode": "next_tier",
+    "upgradePolicy": "higher_score"
+  },
+  "allowHdhivePoints": true,
+  "hdhiveMaxPoints": 10
 }
 ```
 
 `mode` 支持：`normal`、`lazy`。
+
+`allowHdhivePoints` 默认是 `false`。开启后，影巢来源可解锁积分资源；`hdhiveMaxPoints` 是单个资源允许消耗的积分上限。免费、已解锁资源不受该上限影响，积分未知或超过上限的资源会被跳过。
+
+创建接口会立即返回 HTTP `202`、`intentId` 和 `workflowRunId`，搜索、解锁及任务创建在后台继续执行。使用 Intent 或 WorkflowRun 查询接口查看状态。
 
 如果手动选择资源后创建，还可以附带：
 
@@ -170,6 +200,18 @@ Web 使用说明见 [[FileManager]]。
   "resourceTitle": "资源标题"
 }
 ```
+
+手动 CloudSaver 候选会在服务端加密持久化，以便重启后继续执行；影巢保存资源 slug，订阅来源保存已校验的服务端资源 ID。上述秘密标识不会由 Intent 列表接口返回。
+
+### SQLite 升级门禁
+
+服务启动时会显式创建新增表、补齐字段和索引，即使生产环境设置 `TYPEORM_SYNCHRONIZE=false` 也不依赖 TypeORM 自动同步。发布前可运行：
+
+```bash
+npm run test:db-upgrade
+```
+
+该命令会创建旧结构临时 SQLite，执行显式升级并校验 AutoSeries、WorkflowRun、PT 画质升级所需字段及索引。
 
 ---
 
@@ -369,6 +411,8 @@ Bridge 部署见 [[HDHiveBridge]]，使用见 [[HDHive]]。
 | GET | `/api/tmdb/trending/:mediaType/:timeWindow` | 趋势 |
 | GET | `/api/tmdb/discover/:mediaType` | 发现 |
 | GET | `/api/tmdb/:mediaType/top_rated` | 高分 |
+| GET | `/api/tmdb/people/popular` | 热门演员（分页） |
+| GET | `/api/tmdb/streaming/:provider` | 流媒体榜单；provider 支持 `netflix` / `hbo` / `apple` / `disney` / `crunchyroll` / `prime` / `amazon` / `hulu` |
 | GET | `/api/tmdb/:type/:id` | 详情 |
 | GET | `/api/douban/recent_hot/:kind` | 豆瓣近期热门 |
 | GET | `/api/douban/search` | 豆瓣搜索 |
@@ -378,6 +422,7 @@ Bridge 部署见 [[HDHiveBridge]]，使用见 [[HDHive]]。
 | GET | `/api/bangumi/ranking` | 排行 |
 | GET | `/api/bangumi/weekday/:id` | 按星期 |
 | GET | `/api/bangumi/search` | 搜索 |
+| GET | `/api/anilist/anime` | AniList 动漫榜单与筛选；支持 `sort` / `format` / `genre` / `seasonYear` / `search` |
 | GET | `/api/image-proxy` | 图片代理 |
 
 ---

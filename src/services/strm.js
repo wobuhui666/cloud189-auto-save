@@ -9,6 +9,7 @@ const { Cloud189Service } = require('./cloud189');
 
 const { CasService } = require('./casService');
 const { CasArchiveService } = require('./casArchiveService');
+const { auditService } = require('./auditService');
 const {
     MediaLibraryLayoutService,
     normalizeRelativePath,
@@ -61,6 +62,9 @@ class StrmService {
             return;
         }
         logTaskEvent(`${task.resourceName} 开始生成STRM文件, 总文件数: ${files.length}`);
+        await auditService.event('strm_started', '开始生成 STRM', {
+            phase: 'strm', data: { fileCount: files.length, overwrite, compare }
+        });
         const results = [];
         let success = 0;
         let failed = 0;
@@ -149,9 +153,23 @@ class StrmService {
                         path: strmPath
                     });
                     logTaskEvent(`生成STRM文件成功: ${strmPath}`);
+                    await auditService.recordOperation('strm', 'completed', {
+                        sourcePath: file.relativePath || fileName,
+                        targetPath: strmPath,
+                        after: { written: true },
+                        verification: { exists: true },
+                        decisionSource: 'strm'
+                    });
                     success++
                 } catch (error) {
                     logTaskEvent(`生成STRM文件失败: ${file.name}, 错误: ${error.message}`);
+                    await auditService.recordOperation('strm', 'failed', {
+                        sourcePath: file.relativePath || file.name,
+                        reason: 'STRM 写入失败',
+                        decisionSource: 'strm',
+                        error: error.message,
+                        verification: { exists: false }
+                    });
                     failed++
                 }
             }
@@ -162,39 +180,46 @@ class StrmService {
         }
         // 记录文件总数, 成功数, 失败数, 跳过数
         const message = `🎉${task.resourceName} 生成STRM文件完成, 总文件数: ${files.length}, 成功数: ${success}, 失败数: ${failed}, 跳过数: ${skipped}`
+        if (skipped > 0) {
+            await auditService.recordOperation('skip', 'skipped', {
+                reason: '非媒体文件、归档文件或已存在的 STRM',
+                before: { skippedCount: skipped },
+                decisionSource: 'strm'
+            });
+        }
+        await auditService.event('strm_finished', 'STRM 生成完成', {
+            phase: 'strm',
+            level: failed > 0 ? 'warn' : 'info',
+            data: { total: files.length, success, failed, skipped }
+        });
         logTaskEvent(message);
         return message;
     }
 
 
     _normalizeBaseRelativePath(targetPath = '') {
-        const normalizedBaseDir = path.normalize(this.baseDir);
-        const normalizedTargetPath = path.normalize(String(targetPath || '').trim());
-        if (!normalizedTargetPath || normalizedTargetPath === '.') {
+        const normalizedBaseDir = path.resolve(this.baseDir);
+        const rawTargetPath = String(targetPath || '').trim();
+        if (rawTargetPath.includes('\0')) {
+            throw new Error('STRM路径不合法');
+        }
+        if (!rawTargetPath || rawTargetPath === '.') {
             return '';
         }
 
-        if (normalizedTargetPath === normalizedBaseDir) {
-            return '';
-        }
-
-        let relative = '';
-        const baseWithSep = normalizedBaseDir.endsWith(path.sep)
-            ? normalizedBaseDir
-            : `${normalizedBaseDir}${path.sep}`;
-        if (normalizedTargetPath.startsWith(baseWithSep)) {
-            relative = path.relative(normalizedBaseDir, normalizedTargetPath);
-        } else {
-            const baseName = path.basename(normalizedBaseDir);
-            const marker = `${path.sep}${baseName}${path.sep}`;
-            const markerIndex = normalizedTargetPath.lastIndexOf(marker);
-            if (markerIndex >= 0) {
-                relative = normalizedTargetPath.substring(markerIndex + marker.length);
-            } else if (normalizedTargetPath.endsWith(`${path.sep}${baseName}`)) {
-                relative = '';
-            } else {
-                relative = normalizedTargetPath.replace(/^([/\\])+/, '');
+        const portableTargetPath = rawTargetPath.replace(/\\/g, '/');
+        const looksAbsolute = path.isAbsolute(rawTargetPath)
+            || path.win32.isAbsolute(portableTargetPath);
+        let relative = portableTargetPath;
+        if (looksAbsolute) {
+            const absoluteTargetPath = path.resolve(rawTargetPath);
+            const relativeFromBase = path.relative(normalizedBaseDir, absoluteTargetPath);
+            if (relativeFromBase === '..'
+                || relativeFromBase.startsWith(`..${path.sep}`)
+                || path.isAbsolute(relativeFromBase)) {
+                throw new Error('STRM路径超出允许目录');
             }
+            relative = relativeFromBase;
         }
 
         // 与 normalizeLocalStrmPrefix 对齐：相对路径若仍以裸 strm 开头则剥离
@@ -206,11 +231,51 @@ class StrmService {
         if (relative.startsWith('strm/')) {
             relative = relative.slice('strm/'.length).replace(/^\/+/, '');
         }
-        return relative;
+
+        const normalizedRelative = path.posix.normalize(relative);
+        if (normalizedRelative === '..'
+            || normalizedRelative.startsWith('../')
+            || path.posix.isAbsolute(normalizedRelative)
+            || path.win32.isAbsolute(normalizedRelative)) {
+            throw new Error('STRM路径超出允许目录');
+        }
+        return normalizedRelative === '.' ? '' : normalizedRelative;
     }
 
     _resolveBasePath(targetPath = '') {
-        return path.join(this.baseDir, this._normalizeBaseRelativePath(targetPath));
+        const basePath = path.resolve(this.baseDir);
+        const candidatePath = path.resolve(basePath, this._normalizeBaseRelativePath(targetPath));
+        const relativePath = path.relative(basePath, candidatePath);
+        if (relativePath === '..'
+            || relativePath.startsWith(`..${path.sep}`)
+            || path.isAbsolute(relativePath)) {
+            throw new Error('STRM路径超出允许目录');
+        }
+        return candidatePath;
+    }
+
+    async _assertRealPathInsideBase(targetPath) {
+        const basePath = path.resolve(this.baseDir);
+        let realBasePath;
+        let realTargetPath;
+        try {
+            [realBasePath, realTargetPath] = await Promise.all([
+                fs.realpath(basePath),
+                fs.realpath(targetPath)
+            ]);
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                return;
+            }
+            throw error;
+        }
+
+        const relativePath = path.relative(realBasePath, realTargetPath);
+        if (relativePath === '..'
+            || relativePath.startsWith(`..${path.sep}`)
+            || path.isAbsolute(relativePath)) {
+            throw new Error('STRM路径超出允许目录');
+        }
     }
 
     // 确保目录存在并设置权限和组，递归创建的所有目录都设置为 777 权限
@@ -277,6 +342,9 @@ class StrmService {
     async generateCustom(targetRoot, files, contentResolver, overwrite = false, compare = false, renameMode = 'default') {
         if (!this.enable) {
             logTaskEvent('STRM生成未启用, 请启用后执行');
+            await auditService.recordOperation('skip', 'skipped', {
+                reason: 'STRM 功能未启用', decisionSource: 'strm'
+            });
             return;
         }
         const mediaSuffixs = ConfigService.getConfigValue('task.mediaSuffix').split(';').map(suffix => suffix.toLowerCase());
@@ -285,6 +353,11 @@ class StrmService {
         let success = 0;
         let failed = 0;
         let skipped = 0;
+
+        await auditService.event('strm_started', '开始生成自定义 STRM', {
+            phase: 'strm',
+            data: { fileCount: files.length, targetRoot: normalizedTargetRoot, overwrite, compare }
+        });
 
         const mediaFiles = files
             .filter(file => !CasArchiveService.isArchivePath(file.relativePath || file.relativeDir || ''))
@@ -360,14 +433,36 @@ class StrmService {
                 }
                 await fs.chmod(strmPath, 0o644);
                 success++;
+                await auditService.recordOperation('strm', 'completed', {
+                    sourcePath: file.relativePath || file.name,
+                    targetPath: strmPath,
+                    after: { written: true },
+                    verification: { exists: true }, decisionSource: 'strm'
+                });
                 logTaskEvent(`生成STRM文件成功: ${strmPath}`);
             } catch (error) {
                 failed++;
+                await auditService.recordOperation('strm', 'failed', {
+                    sourcePath: file.relativePath || file.name,
+                    targetPath: typeof strmFileName === 'string' ? strmFileName : '',
+                    reason: 'STRM 写入失败', decisionSource: 'strm', error: error.message,
+                    verification: { exists: false }
+                });
                 logTaskEvent(`生成STRM文件失败: ${file.name}, 错误: ${error.message}`);
             }
         }
 
         const message = `🎉自定义STRM生成完成, 总文件数: ${files.length}, 成功数: ${success}, 失败数: ${failed}, 跳过数: ${skipped}`;
+        if (skipped > 0) {
+            await auditService.recordOperation('skip', 'skipped', {
+                reason: '非媒体文件、归档文件或已存在的 STRM',
+                before: { skippedCount: skipped }, decisionSource: 'strm'
+            });
+        }
+        await auditService.event('strm_finished', '自定义 STRM 生成完成', {
+            phase: 'strm', level: failed > 0 ? 'warn' : 'info',
+            data: { total: files.length, success, failed, skipped, targetRoot: normalizedTargetRoot }
+        });
         logTaskEvent(message);
         return message;
     }
@@ -766,6 +861,7 @@ class StrmService {
             } catch (err) {
                 return results;
             }
+            await this._assertRealPathInsideBase(targetPath);
             // 读取目录内容
             const items = await fs.readdir(targetPath, { withFileTypes: true });
             for (const item of items) {
@@ -812,6 +908,7 @@ class StrmService {
         } catch (error) {
             return results;
         }
+        await this._assertRealPathInsideBase(targetPath);
 
         const items = await fs.readdir(targetPath, { withFileTypes: true });
         for (const item of items) {
@@ -903,6 +1000,7 @@ class StrmService {
                 // logTaskEvent(`STRM目录不存在，跳过删除: ${targetDir}`);
                 return;
             }
+            await this._assertRealPathInsideBase(targetDir);
             await fs.rm(targetDir, { recursive: true });
             logTaskEvent(`删除STRM目录成功: ${targetDir}`);
 

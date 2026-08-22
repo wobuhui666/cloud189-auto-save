@@ -9,12 +9,13 @@ const { logTaskEvent } = require('../utils/logUtils');
 
 const CONFIG_KEY = 'listSubscriptions';
 const PT_FALLBACK_PRESETS = ['nyaa', 'dmhy', 'mikan', 'animegarden', 'anibt'];
-const VALID_SOURCES = new Set(['douban', 'tmdb', 'bangumi']);
+const VALID_SOURCES = new Set(['douban', 'tmdb', 'bangumi', 'anilist', 'streaming']);
 
 class ListSubscriptionService {
-    constructor({ doubanService, tmdbService, autoSeriesService, ptService, ptSubscriptionRepo }) {
+    constructor({ doubanService, tmdbService, aniListService, autoSeriesService, ptService, ptSubscriptionRepo }) {
         this.doubanService = doubanService;
         this.tmdbService = tmdbService;
+        this.aniListService = aniListService;
         this.autoSeriesService = autoSeriesService;
         this.ptService = ptService;
         this.ptSubscriptionRepo = ptSubscriptionRepo;
@@ -160,6 +161,16 @@ class ListSubscriptionService {
                 return await this.doubanService.getBangumiByWeekday(weekday);
             }
             return [];
+        }
+        if (sub.source === 'anilist') {
+            const sort = sub.category.startsWith('sort:') ? sub.category.slice(5) : 'TRENDING_DESC';
+            const data = await this.aniListService.list({ sort, limit });
+            return data.results || [];
+        }
+        if (sub.source === 'streaming') {
+            const provider = sub.category.startsWith('provider:') ? sub.category.slice(9) : '';
+            const data = await this.tmdbService.getStreamingRanking(provider, { limit, mediaType: 'all', region: 'US' });
+            return (data.results || []).slice(0, limit);
         }
         return [];
     }

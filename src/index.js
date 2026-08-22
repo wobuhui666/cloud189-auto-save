@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const { AppDataSource, ensureDatabaseColumns, ensureDatabaseIndexes } = require('./database');
-const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun } = require('./entities');
+const { AppDataSource, ensureDatabaseTables, ensureDatabaseColumns, ensureDatabaseIndexes } = require('./database');
+const { Account, Task, CommonFolder, Subscription, SubscriptionResource, StrmConfig, TaskProcessedFile, WorkflowRun, InvalidResource, AutoSeriesIntent } = require('./entities');
 const { TaskService } = require('./services/task');
 const { Cloud189Service } = require('./services/cloud189');
 const { MessageUtil } = require('./services/message');
@@ -36,12 +36,21 @@ const { StreamProxyService } = require('./services/streamProxy');
 const { LazyShareStrmService } = require('./services/lazyShareStrm');
 const { OrganizerService } = require('./services/organizer');
 const { AutoSeriesService } = require('./services/autoSeries');
+const { AutoSeriesIntentService } = require('./services/autoSeriesIntent');
+const { AutoSeriesAgentExecutor } = require('./services/autoSeriesAgent');
+const { MetadataOverrideService } = require('./services/metadataOverrideService');
+const { CandidateRegistry, CloudSaverSource, HdhiveSource, SubscriptionSource, PtSource, CandidateExecutor } = require('./services/resourceSources');
+const { InvalidResourceService } = require('./services/invalidResource');
+const { CloudMutationExecutor } = require('./services/cloudMutationExecutor');
+const { sanitizeWorkflowRun } = require('./services/workflowRunSanitizer');
+const { auditService } = require('./services/auditService');
 const TelegramService = require('./services/message/TelegramService');
 const { CasService } = require('./services/casService');
 const { CasImportService } = require('./services/casImportService');
 const { DoubanService } = require('./services/douban');
 const multer = require('multer');
 const { validateLazyFileCleanupSettings } = require('./utils/settingsValidation');
+const { authorizeInitialSetup } = require('./utils/initialSetup');
 
 const appPort = Number(process.env.PORT || 3000);
 let embyStandaloneProxyServer = null;
@@ -56,6 +65,7 @@ const LOGIN_RATE_LIMIT_MAX = Number(process.env.LOGIN_RATE_LIMIT_MAX || 10);
 const LOGIN_FAILURE_CLEANUP_INTERVAL_MS = 60 * 1000;
 const loginFailures = new Map();
 let lastLoginFailureCleanupAt = 0;
+let initialSetupInProgress = false;
 
 const normalizeTelegramSettings = (settings = {}) => {
     const normalized = JSON.parse(JSON.stringify(settings || {}));
@@ -620,12 +630,14 @@ const loginPageFallbackHtml = `<!DOCTYPE html>
     <main class="card">
         <div class="eyebrow">Cloud189 Auto Save</div>
         <h1>登录</h1>
-        <p>输入系统账号后进入控制台。</p>
+        <p>输入系统账号后进入控制台。远程首次初始化还需填写 INITIAL_SETUP_TOKEN。</p>
         <form id="loginForm">
             <label for="username">用户名</label>
             <input id="username" name="username" type="text" autocomplete="username" required />
             <label for="password">密码</label>
             <input id="password" name="password" type="password" autocomplete="current-password" required />
+            <label for="setupToken">初始化令牌（仅远程首次初始化）</label>
+            <input id="setupToken" name="setupToken" type="password" autocomplete="one-time-code" />
             <button id="submitButton" type="submit">登录</button>
             <div id="errorMessage" class="error"></div>
         </form>
@@ -644,7 +656,8 @@ const loginPageFallbackHtml = `<!DOCTYPE html>
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         username: document.getElementById('username').value,
-                        password: document.getElementById('password').value
+                        password: document.getElementById('password').value,
+                        setupToken: document.getElementById('setupToken').value
                     })
                 });
                 const data = await response.json();
@@ -844,6 +857,26 @@ app.post('/api/auth/login', async (req, res) => {
 
         // 检查是否为首次设置（密码为空）
         if (!configPassword) {
+            if (initialSetupInProgress) {
+                res.status(409).json({
+                    success: false,
+                    error: '首次初始化正在进行，请稍后重试',
+                    requireSetCredentials: true
+                });
+                return;
+            }
+
+            const setupAuthorization = authorizeInitialSetup(req);
+            if (!setupAuthorization.allowed) {
+                res.status(setupAuthorization.status).json({
+                    success: false,
+                    error: setupAuthorization.error,
+                    requireSetCredentials: true,
+                    requireSetupToken: true
+                });
+                return;
+            }
+
             // 首次登录，需要设置用户名和密码
             const usernameToSet = newUsername || username;
             const passwordToSet = newPassword || password;
@@ -860,13 +893,22 @@ app.post('/api/auth/login', async (req, res) => {
                 return;
             }
 
-            // 保存用户名和密码
-            ConfigService.setConfigValue('system.username', usernameToSet.trim());
-            ConfigService.setConfigValue('system.password', await hashPassword(passwordToSet));
-            clearLoginFailures(req);
-            req.session.authenticated = true;
-            req.session.username = usernameToSet.trim();
-            res.json({ success: true, message: '用户名和密码设置成功' });
+            initialSetupInProgress = true;
+            try {
+                // 锁内再次确认，避免并发请求覆盖已经完成的初始化。
+                if (ConfigService.getConfigValue('system.password')) {
+                    res.status(409).json({ success: false, error: '系统账号已完成初始化，请重新登录' });
+                    return;
+                }
+                ConfigService.setConfigValue('system.username', usernameToSet.trim());
+                ConfigService.setConfigValue('system.password', await hashPassword(passwordToSet));
+                clearLoginFailures(req);
+                req.session.authenticated = true;
+                req.session.username = usernameToSet.trim();
+                res.json({ success: true, message: '用户名和密码设置成功' });
+            } finally {
+                initialSetupInProgress = false;
+            }
             return;
         }
 
@@ -935,6 +977,15 @@ app.use((req, res, next) => {
 });
 // 初始化数据库连接
 AppDataSource.initialize().then(async () => {
+    await ensureDatabaseTables();
+    await ensureDatabaseColumns();
+    await ensureDatabaseIndexes();
+    const repairedAuditDates = await auditService.repairFutureDates();
+    const legacyAuditImported = await auditService.backfillLegacy({ limit: 1000 });
+    const interruptedAuditRuns = await auditService.markInterruptedRuns();
+    if (repairedAuditDates > 0) console.log(`审计未来时间修复完成: ${repairedAuditDates} 条`);
+    if (legacyAuditImported > 0) console.log(`审计历史回填完成: ${legacyAuditImported} 条`);
+    if (interruptedAuditRuns > 0) console.log(`审计中断恢复完成: ${interruptedAuditRuns} 条`);
     // 当前版本:
     const currentVersion = packageJson.version;
     console.log(`当前系统版本: ${currentVersion}`);
@@ -976,11 +1027,31 @@ AppDataSource.initialize().then(async () => {
         console.warn('账号凭据加密规范化跳过:', error.message);
     }
     const taskRepo = AppDataSource.getRepository(Task);
+    const workflowRunRepo = AppDataSource.getRepository(WorkflowRun);
+    const invalidResourceRepo = AppDataSource.getRepository(InvalidResource);
+    const autoSeriesIntentRepo = AppDataSource.getRepository(AutoSeriesIntent);
+    // 将旧版本中仍为明文的手动 CloudSaver 链接按实体 transformer 加密写回。
+    try {
+        const rawRows = await AppDataSource.query('SELECT id, selectedShareLink FROM auto_series_intent WHERE selectedShareLink IS NOT NULL AND selectedShareLink != \'\'');
+        let upgraded = 0;
+        for (const row of rawRows || []) {
+            if (PasswordCrypto.isEncrypted(row.selectedShareLink)) continue;
+            const intent = await autoSeriesIntentRepo.findOneBy({ id: row.id });
+            if (!intent) continue;
+            await autoSeriesIntentRepo.save(intent);
+            upgraded++;
+        }
+        if (upgraded > 0) {
+            console.log(`自动追剧候选密文规范化完成: ${upgraded} 条`);
+        }
+    } catch (error) {
+        console.warn('自动追剧候选密文规范化跳过:', error.message);
+    }
     const commonFolderRepo = AppDataSource.getRepository(CommonFolder);
     const subscriptionRepo = AppDataSource.getRepository(Subscription);
     const subscriptionResourceRepo = AppDataSource.getRepository(SubscriptionResource);
     const strmConfigRepo = AppDataSource.getRepository(StrmConfig);
-    const taskService = new TaskService(taskRepo, accountRepo);
+    const taskService = new TaskService(taskRepo, accountRepo, null, workflowRunRepo);
     const organizerService = new OrganizerService(taskService, taskRepo);
     const subscriptionService = new SubscriptionService(subscriptionRepo, subscriptionResourceRepo, accountRepo, taskService);
     const strmConfigService = new StrmConfigService(strmConfigRepo, accountRepo, subscriptionRepo, subscriptionResourceRepo);
@@ -1017,8 +1088,47 @@ AppDataSource.initialize().then(async () => {
         }
     });
     const autoSeriesService = new AutoSeriesService(taskService, accountRepo, lazyShareStrmService);
+    taskService.autoSeriesService = autoSeriesService;
+    const candidateRegistry = new CandidateRegistry();
+    const candidateExecutor = new CandidateExecutor(autoSeriesService, candidateRegistry);
+    const metadataOverrideService = new MetadataOverrideService({
+        taskRepo,
+        ptSubscriptionRepo: AppDataSource.getRepository('PtSubscription'),
+        ptReleaseRepo: AppDataSource.getRepository('PtRelease'),
+        taskService,
+        organizerService,
+        ptService: require('./services/ptService').ptService
+    });
+    const agentExecutor = new AutoSeriesAgentExecutor({
+        candidateExecutor,
+        metadataService: metadataOverrideService,
+        ptService: require('./services/ptService').ptService,
+        sources: {
+            cloudsaver: new CloudSaverSource(autoSeriesService, candidateRegistry),
+            hdhive: new HdhiveSource(autoSeriesService, candidateRegistry),
+            subscription: new SubscriptionSource(autoSeriesService, candidateRegistry),
+            pt: new PtSource(candidateRegistry)
+        }
+    });
+    require('./services/ptService').ptService.metadataAuditExecutor = agentExecutor;
+    const autoSeriesIntentService = new AutoSeriesIntentService({
+        intentRepo: autoSeriesIntentRepo,
+        workflowRunRepo,
+        accountRepo,
+        autoSeriesService,
+        agentExecutor,
+        taskService,
+        taskRepo,
+        ptSubscriptionRepo: AppDataSource.getRepository('PtSubscription'),
+        ptReleaseRepo: AppDataSource.getRepository('PtRelease')
+    });
+    const invalidResourceService = new InvalidResourceService(invalidResourceRepo);
+    const cloudMutationExecutor = new CloudMutationExecutor();
+    await autoSeriesIntentService.recoverStaleSearching();
     const tmdbService = new TMDBService();
     const doubanService = new DoubanService();
+    const { AniListService } = require('./services/aniList');
+    const aniListService = new AniListService();
     const embyService = new EmbyService(taskService)
     const embyPrewarmService = new EmbyPrewarmService(embyService);
     embyService.attachPrewarmService(embyPrewarmService);
@@ -1039,6 +1149,7 @@ AppDataSource.initialize().then(async () => {
     const folderCache = new CacheManager(parseInt(600));
     // 初始化任务定时器
     await SchedulerService.initTaskJobs(taskRepo, taskService);
+    SchedulerService.initAutoSeriesIntentJobs(autoSeriesIntentService);
     await SchedulerService.initStrmConfigJobs(strmConfigRepo, strmConfigService);
     await embyPrewarmService.reload();
 
@@ -1632,6 +1743,77 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    app.get('/api/workflow-runs', async (req, res) => {
+        try {
+            const limit = parsePaginationInt(req.query.limit, 30, 100);
+            const taskId = Number(req.query.taskId || 0);
+            const intentId = String(req.query.intentId || '').trim();
+            const ptSubscriptionId = Number(req.query.ptSubscriptionId || 0);
+            const type = String(req.query.type || '').trim();
+            const status = String(req.query.status || '').trim();
+            const runs = await workflowRunRepo.find({
+                where: {
+                    ...(type ? { type } : {}),
+                    ...(status ? { status } : {})
+                },
+                order: { updatedAt: 'DESC' },
+                take: Math.min(500, taskId > 0 || intentId || ptSubscriptionId > 0 ? Math.max(limit * 5, 100) : limit)
+            });
+            const filteredRuns = runs.filter(run => {
+                if (taskId > 0 && !((run.subjectType === 'task' && Number(run.subjectId) === taskId) || Number(run.context?.taskId || 0) === taskId)) return false;
+                if (intentId && !(run.subjectType === 'auto_series_intent' && run.subjectId === intentId)) return false;
+                if (ptSubscriptionId > 0 && Number(run.context?.ptSubscriptionId || 0) !== ptSubscriptionId) return false;
+                return true;
+            }).slice(0, limit);
+            res.json({ success: true, data: filteredRuns.map(sanitizeWorkflowRun) });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/audit-runs', async (req, res) => {
+        try {
+            const result = await auditService.listRuns({
+                page: req.query.page,
+                pageSize: req.query.pageSize,
+                keyword: req.query.keyword,
+                startAt: req.query.startAt,
+                endAt: req.query.endAt,
+                module: req.query.module,
+                action: req.query.action,
+                status: req.query.status,
+                accountId: req.query.accountId,
+                subjectType: req.query.subjectType,
+                subjectId: req.query.subjectId,
+                correlationId: req.query.correlationId
+            });
+            res.json({ success: true, data: result });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/audit-filter-options', async (req, res) => {
+        try {
+            res.json({ success: true, data: await auditService.getFilterOptions() });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/audit-runs/:id', async (req, res) => {
+        try {
+            const detail = await auditService.getRunDetail(req.params.id);
+            if (!detail) {
+                res.status(404).json({ success: false, error: '审计运行不存在' });
+                return;
+            }
+            res.json({ success: true, data: detail });
+        } catch (error) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     app.get('/api/organizer/tasks', async (req, res) => {
         try {
             const search = String(req.query.search || '').trim();
@@ -1768,6 +1950,32 @@ AppDataSource.initialize().then(async () => {
         }
     });
 
+    const registerMetadataRoutes = (basePath, targetType) => {
+        app.get(`${basePath}/:id/metadata`, async (req, res) => {
+            try { res.json({ success: true, data: await metadataOverrideService.read(targetType, req.params.id) }); }
+            catch (error) { res.json({ success: false, error: error.message }); }
+        });
+        app.post(`${basePath}/:id/metadata/preview`, async (req, res) => {
+            try { res.json({ success: true, data: await metadataOverrideService.preview(targetType, req.params.id, req.body || {}) }); }
+            catch (error) { res.json({ success: false, error: error.message }); }
+        });
+        app.put(`${basePath}/:id/metadata`, async (req, res) => {
+            try { res.json({ success: true, data: await metadataOverrideService.save(targetType, req.params.id, req.body || {}) }); }
+            catch (error) { res.json({ success: false, error: error.message }); }
+        });
+        app.delete(`${basePath}/:id/metadata`, async (req, res) => {
+            try { res.json({ success: true, data: await metadataOverrideService.reset(targetType, req.params.id) }); }
+            catch (error) { res.json({ success: false, error: error.message }); }
+        });
+        app.post(`${basePath}/:id/metadata/apply`, async (req, res) => {
+            try { res.json({ success: true, data: await metadataOverrideService.applySaved(targetType, req.params.id) }); }
+            catch (error) { res.json({ success: false, error: error.message }); }
+        });
+    };
+    registerMetadataRoutes('/api/tasks', 'task');
+    registerMetadataRoutes('/api/pt/subscriptions', 'pt_subscription');
+    registerMetadataRoutes('/api/pt/releases', 'pt_release');
+
     // 电影合集逐文件 TMDB 数据（供前端展示合集详情）
     app.get('/api/tasks/:id/collection-files', async (req, res) => {
         try {
@@ -1826,29 +2034,100 @@ AppDataSource.initialize().then(async () => {
     });
 
     app.post('/api/organizer/tasks/:id/run', async (req, res) => {
+        let auditRun = null;
         try {
             const taskId = parseInt(req.params.id);
-            const result = await organizerService.organizeTaskById(taskId, {
+            const task = await taskRepo.findOneBy({ id: taskId });
+            auditRun = await auditService.startRun({
+                correlationId: task?.autoSeriesIntentId ? `intent:${task.autoSeriesIntentId}` : undefined,
+                module: 'organizer', trigger: 'manual', subjectType: 'task', subjectId: taskId,
+                subjectName: task?.resourceName || `任务 ${taskId}`, accountId: task?.accountId
+            });
+            const organize = () => organizerService.organizeTaskById(taskId, {
                 triggerStrm: true,
                 force: true
             });
+            const result = auditRun ? await auditService.runInContext(auditRun, organize) : await organize();
+            await auditService.finishRun(auditRun, 'completed', { summary: result?.message || '手动整理完成' });
             res.json({ success: true, data: result });
         } catch (error) {
             const taskId = parseInt(req.params.id);
             if (!Number.isNaN(taskId)) {
                 await organizerService.markError(taskId, error);
             }
+            await auditService.finishRun(auditRun, 'failed', { summary: '手动整理失败', error: error.message });
             res.json({ success: false, error: error.message });
         }
     });
 
     app.post('/api/auto-series', async (req, res) => {
         try {
-            const result = await autoSeriesService.createByTitle(req.body || {});
+            const payload = req.body || {};
+            const result = await autoSeriesIntentService.create(payload);
+            res.status(202).json({ success: true, data: result });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/auto-series/settings', (req, res) => {
+        try {
+            res.json({ success: true, data: autoSeriesService.getSettings() });
+        } catch (error) {
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    app.put('/api/auto-series/settings', async (req, res) => {
+        try {
+            const data = await autoSeriesService.saveSettings(req.body || {});
+            res.json({ success: true, data });
+        } catch (error) {
+            res.status(400).json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/auto-series/intents', async (req, res) => {
+        try { res.json({ success: true, data: await autoSeriesIntentService.list() }); }
+        catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/auto-series/intents/:id/pause', async (req, res) => {
+        try { res.json({ success: true, data: await autoSeriesIntentService.pause(req.params.id) }); }
+        catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/auto-series/intents/:id/resume', async (req, res) => {
+        try { res.json({ success: true, data: await autoSeriesIntentService.resume(req.params.id) }); }
+        catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.post('/api/auto-series/intents/:id/run', async (req, res) => {
+        try { res.json({ success: true, data: await autoSeriesIntentService.runNow(req.params.id) }); }
+        catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.delete('/api/auto-series/intents/:id', async (req, res) => {
+        try {
+            const result = await autoSeriesIntentService.delete(req.params.id, {
+                deleteTasks: req.body?.deleteTasks === true,
+                deleteCloud: req.body?.deleteCloud === true,
+                deletePtSubscriptions: req.body?.deletePtSubscriptions === true
+            });
             res.json({ success: true, data: result });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }
+    });
+
+    app.get('/api/invalid-resources', async (req, res) => {
+        try { res.json({ success: true, data: await invalidResourceService.list({ limit: req.query.limit, activeOnly: req.query.activeOnly !== 'false' }) }); }
+        catch (error) { res.json({ success: false, error: error.message }); }
+    });
+
+    app.delete('/api/invalid-resources/:id', async (req, res) => {
+        try { res.json({ success: true, data: await invalidResourceService.release(req.params.id, 'api') }); }
+        catch (error) { res.json({ success: false, error: error.message }); }
     });
 
     app.get('/api/auto-series/sources', (req, res) => {
@@ -1870,7 +2149,9 @@ AppDataSource.initialize().then(async () => {
             const result = await autoSeriesService.searchResources({
                 title: req.query.title,
                 year: req.query.year,
-                sources: req.query.sources
+                sources: req.query.sources,
+                allowHdhivePoints: req.query.allowHdhivePoints,
+                hdhiveMaxPoints: req.query.hdhiveMaxPoints
             });
             res.json({ success: true, data: result });
         } catch (error) {
@@ -2089,10 +2370,8 @@ AppDataSource.initialize().then(async () => {
                 throw new Error('账号不存在');
             }
             const cloud189 = Cloud189Service.getInstance(account);
-            const createResult = await cloud189.createFolder(folderName, parentFolderId);
-            if (!createResult || createResult.res_code && createResult.res_code !== 0) {
-                throw new Error(createResult?.res_msg || '创建目录失败');
-            }
+            const mutation = await cloudMutationExecutor.createFolder(cloud189, parentFolderId, folderName);
+            const createResult = mutation.value;
             folderCache.clearPrefix('folders_');
             res.json({ success: true, data: createResult });
         } catch (error) {
@@ -2119,10 +2398,8 @@ AppDataSource.initialize().then(async () => {
                 throw new Error('账号不存在');
             }
             const cloud189 = Cloud189Service.getInstance(account);
-            const renameResult = await cloud189.renameFile(fileId, destFileName);
-            if (!renameResult || renameResult.res_code && renameResult.res_code !== 0) {
-                throw new Error(renameResult?.res_msg || '重命名失败');
-            }
+            const mutation = await cloudMutationExecutor.rename(cloud189, fileId, destFileName);
+            const renameResult = mutation.value;
             folderCache.clearPrefix('folders_');
             res.json({ success: true, data: renameResult });
         } catch (error) {
@@ -2238,10 +2515,18 @@ AppDataSource.initialize().then(async () => {
             }
 
             // 先回响应，再后台跑整理（同 STRM 重建模式）
+            const auditRun = await auditService.startRun({
+                module: 'organizer', trigger: 'manual', subjectType: 'cloud_selection',
+                subjectId: `${accountId}:${Date.now()}`,
+                subjectName: items.length === 1 ? items[0].name : `${items.length} 个文件项`,
+                accountId,
+                metadata: { itemCount: items.length, generateStrm, useAi, deleteEmptySource }
+            });
             res.json({
                 success: true,
                 data: {
                     message: '整理任务已开始后台执行',
+                    auditRunId: auditRun?.id || null,
                     count: items.length,
                     generateStrm,
                     useAi,
@@ -2249,7 +2534,7 @@ AppDataSource.initialize().then(async () => {
                 }
             });
 
-            organizerService.organizeCloudSelection({
+            const organize = () => organizerService.organizeCloudSelection({
                 account,
                 parentFolderId,
                 items,
@@ -2257,7 +2542,9 @@ AppDataSource.initialize().then(async () => {
                 forceRefresh,
                 generateStrm,
                 deleteEmptySource
-            }).then((result) => {
+            });
+            const organizePromise = auditRun ? auditService.runInContext(auditRun, organize) : organize();
+            organizePromise.then(async (result) => {
                 folderCache.clearPrefix('folders_');
                 const results = Array.isArray(result?.results) ? result.results : [];
                 const ok = results.filter((row) => !row.error && !row.skipped);
@@ -2272,8 +2559,12 @@ AppDataSource.initialize().then(async () => {
                     `[文件整理] 后台完成 account=${accountId} 成功=${ok.length} 跳过=${skipped.length} 失败=${failed.length}\n`
                     + summaryLines.join('\n')
                 );
-            }).catch((error) => {
+                await auditService.finishRun(auditRun, failed.length ? 'partial' : 'completed', {
+                    summary: `文件整理完成：成功 ${ok.length}，跳过 ${skipped.length}，失败 ${failed.length}`
+                });
+            }).catch(async (error) => {
                 logTaskEvent(`[文件整理] 后台失败: ${error.message}`, 'error');
+                await auditService.finishRun(auditRun, 'failed', { summary: '文件整理失败', error: error.message });
             });
         } catch (error) {
             res.json({ success: false, error: error.message });
@@ -2318,18 +2609,43 @@ AppDataSource.initialize().then(async () => {
             });
 
             const strmService = new StrmService();
-            strmService.generateSelectedDirectories(account, normalizedDirectories, {
+            const auditRun = await auditService.startRun({
+                correlationId: `strm-file-manager:${accountId}`,
+                module: 'strm',
+                trigger: 'manual',
+                subjectType: 'account',
+                subjectId: accountId,
+                subjectName: account.alias || account.username || `账号 ${accountId}`,
+                accountId,
+                metadata: {
+                    directoryCount: normalizedDirectories.length,
+                    overwriteExisting,
+                    localPathPrefix
+                }
+            });
+            const generate = () => strmService.generateSelectedDirectories(account, normalizedDirectories, {
                 useStreamProxy: true,
                 localPathPrefix,
                 overwriteExisting,
                 excludePattern
-            }).then((message) => {
+            });
+            const generatePromise = auditRun
+                ? auditService.runInContext(auditRun, generate)
+                : generate();
+            generatePromise.then(async (message) => {
                 logTaskEvent(
                     `[文件STRM] 后台完成 account=${accountId} 目录数=${normalizedDirectories.length}\n`
                     + (message || '')
                 );
+                await auditService.finishRun(auditRun, 'completed', {
+                    summary: message || `文件管理 STRM 生成完成，目录 ${normalizedDirectories.length} 个`
+                });
             }).catch((error) => {
                 logTaskEvent(`[文件STRM] 后台失败: ${error.message}`, 'error');
+                return auditService.finishRun(auditRun, 'failed', {
+                    summary: '文件管理 STRM 生成失败',
+                    error: error.message || String(error)
+                });
             });
         } catch (error) {
             res.json({ success: false, error: error.message });
@@ -2364,19 +2680,16 @@ AppDataSource.initialize().then(async () => {
         const result = []
         const successFiles = []
         for (const file of files) {
-            const renameResult = await cloud189.renameFile(file.fileId, file.destFileName);
-            if (!renameResult) {
-                throw new Error('重命名失败');
-            }
-            if (renameResult.res_code != 0) {
-                result.push(`文件${file.destFileName} ${renameResult.res_msg}`)
-            }else{
+            try {
+                await cloudMutationExecutor.rename(cloud189, file.fileId, file.destFileName);
                 if (strmEnabled){
                     // 与生成路径一致：剥裸 strm 前缀后删除旧 STRM
                     const oldFile = path.join(folderName, file.oldName);
                     await strmService.delete(joinLocalStrmPath(task.account.localStrmPrefix, oldFile));
                 }
                 successFiles.push({id: file.fileId, name: file.destFileName})
+            } catch (error) {
+                result.push(`文件${file.destFileName} ${error.message || error}`)
             }
         }
         // 重新生成STRM文件
@@ -2639,6 +2952,8 @@ AppDataSource.initialize().then(async () => {
                 latestUrl = await lazyShareStrmService.resolveLatestUrlByPayload(payload);
             } else if (payload.type === 'casLazy') {
                 latestUrl = await casImportService.resolveLazyPlayback(payload);
+            } else if (lazyShareStrmService.isArchivedCasPlaybackPayload(payload)) {
+                latestUrl = await lazyShareStrmService.resolveLatestUrlByPayload(payload);
             } else {
                 latestUrl = await streamProxyService.resolveLatestUrlByPayload(payload);
             }
@@ -2926,7 +3241,7 @@ AppDataSource.initialize().then(async () => {
 
     app.post('/api/strm/configs/:id/run', async (req, res) => {
         try {
-            const result = await strmConfigService.runConfig(parseInt(req.params.id));
+            const result = await strmConfigService.runConfig(parseInt(req.params.id), { trigger: 'manual' });
             res.json({ success: true, data: result });
         } catch (error) {
             res.json({ success: false, error: error.message });
@@ -2989,6 +3304,25 @@ AppDataSource.initialize().then(async () => {
             const { mediaType } = req.params;
             const page = parseInt(req.query.page) || 1;
             const data = await tmdbService.getTopRated(mediaType, page);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/tmdb/people/popular', async (req, res) => {
+        try {
+            const page = parseInt(req.query.page, 10) || 1;
+            const data = await tmdbService.getPopularPeople(page);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    app.get('/api/tmdb/streaming/:provider', async (req, res) => {
+        try {
+            const data = await tmdbService.getStreamingRanking(req.params.provider, req.query);
             res.json({ success: true, data });
         } catch (error) {
             res.json({ success: false, error: error.message });
@@ -3143,6 +3477,16 @@ AppDataSource.initialize().then(async () => {
                 return res.json({ success: false, error: '缺少 keyword 参数' });
             }
             const data = await doubanService.searchBangumi(keyword);
+            res.json({ success: true, data });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // ==================== AniList 动漫 API ====================
+    app.get('/api/anilist/anime', async (req, res) => {
+        try {
+            const data = await aniListService.list(req.query);
             res.json({ success: true, data });
         } catch (error) {
             res.json({ success: false, error: error.message });
@@ -3739,6 +4083,9 @@ AppDataSource.initialize().then(async () => {
                 totalEpisodeNumber: Number(req.body.totalEpisodeNumber) || 0,
                 autoDisabled: !!req.body.autoDisabled,
                 globalExclude: req.body.globalExclude !== false,
+                metadataTemplateJson: req.body.metadataTemplate
+                    ? JSON.stringify(metadataOverrideService.normalize(req.body.metadataTemplate, { source: 'user' }))
+                    : '',
                 accountId,
                 targetFolderId,
                 targetFolder,
@@ -3771,8 +4118,11 @@ AppDataSource.initialize().then(async () => {
                 'notDownloadEpisodes', 'skipHalfEpisode', 'customEpisode', 'customEpisodeRegex',
                 'customEpisodeGroupIndex', 'episodeOffset', 'omit', 'totalEpisodeNumber',
                 'autoDisabled', 'globalExclude',
+                'metadataTemplateJson',
                 'accountId', 'targetFolderId', 'targetFolder', 'enabled'
             ];
+            const filterFields = ['includePattern', 'excludePattern', 'qualityPattern', 'resolutionPattern', 'effectPattern'];
+            const manuallyEditedFilters = filterFields.some(field => req.body[field] !== undefined && String(req.body[field] || '') !== String(sub[field] || ''));
             const numericFields = new Set(['sizeMinMB', 'sizeMaxMB', 'seedersMin', 'delayedDownloadMinutes', 'customEpisodeGroupIndex', 'episodeOffset', 'totalEpisodeNumber']);
             const booleanFields = new Set(['freeOnly', 'episodeDedup', 'coexist', 'downloadNew', 'skipHalfEpisode', 'customEpisode', 'omit', 'autoDisabled', 'globalExclude', 'enabled']);
             fields.forEach((f) => {
@@ -3783,10 +4133,16 @@ AppDataSource.initialize().then(async () => {
                         : (Number(req.body[f]) || 0);
                 } else if (booleanFields.has(f)) {
                     sub[f] = !!req.body[f];
+                } else if (f === 'metadataTemplateJson' && req.body.metadataTemplate !== undefined) {
+                    sub[f] = JSON.stringify(metadataOverrideService.normalize(req.body.metadataTemplate, { source: 'user' }));
                 } else {
                     sub[f] = req.body[f];
                 }
             });
+            if (manuallyEditedFilters) {
+                sub.filterManagedBy = 'manual';
+                sub.filterValidationHash = '';
+            }
             await ptSubscriptionRepo.save(sub);
             res.json({ success: true, data: sub });
         } catch (error) {
@@ -3817,9 +4173,9 @@ AppDataSource.initialize().then(async () => {
 
     app.get('/api/pt/subscriptions/:id/releases', async (req, res) => {
         try {
-            const releases = await ptReleaseRepo.find({
-                where: { subscriptionId: Number(req.params.id) },
-                order: { id: 'DESC' }
+            const releases = await ptService.listReleasesWithDownloader({
+                subscriptionId: Number(req.params.id),
+                limit: 500
             });
             res.json({ success: true, data: releases });
         } catch (error) {
@@ -3830,8 +4186,12 @@ AppDataSource.initialize().then(async () => {
     app.get('/api/pt/releases', async (req, res) => {
         try {
             const limit = Math.min(Number(req.query.limit || 100), 500);
-            const releases = await ptReleaseRepo.find({ order: { id: 'DESC' }, take: limit });
-            res.json({ success: true, data: releases });
+            const releases = await ptService.listReleasesWithDownloader({ limit });
+            res.json({
+                success: true,
+                data: releases,
+                transferStats: ptService.getTransferStats(releases)
+            });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }
@@ -3935,6 +4295,7 @@ AppDataSource.initialize().then(async () => {
     const listSubscriptionService = new ListSubscriptionService({
         doubanService,
         tmdbService,
+        aniListService,
         autoSeriesService,
         ptService,
         ptSubscriptionRepo

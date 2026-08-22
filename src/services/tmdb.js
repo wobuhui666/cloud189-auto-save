@@ -10,6 +10,17 @@ const TMDB_CACHE_TTL = {
     DEFAULT: 12 * 60 * 60 * 1000
 };
 
+const STREAMING_PROVIDERS = Object.freeze({
+    netflix: { label: 'Netflix', id: '8' },
+    hbo: { label: 'HBO', id: '118|1899' },
+    apple: { label: 'Apple TV+', id: '350' },
+    disney: { label: 'Disney+', id: '337' },
+    crunchyroll: { label: 'Crunchyroll', id: '283' },
+    prime: { label: 'Amazon Prime', id: '9' },
+    amazon: { label: 'Amazon', id: '10' },
+    hulu: { label: 'Hulu', id: '15' },
+});
+
 function normalizeMediaTitle(value = '') {
     return String(value || '')
         .normalize('NFKC')
@@ -40,8 +51,10 @@ function scoreSearchResult(media, title, year = '') {
 
     const expectedYear = Number(year);
     const mediaYear = getMediaYear(media);
-    if (Number.isInteger(expectedYear) && expectedYear > 0 && mediaYear) {
-        score += mediaYear === expectedYear ? 200 : -Math.min(Math.abs(mediaYear - expectedYear), 50);
+    if (Number.isInteger(expectedYear) && expectedYear > 0) {
+        score += mediaYear
+            ? (mediaYear === expectedYear ? 200 : -Math.min(Math.abs(mediaYear - expectedYear), 50))
+            : -100;
     }
 
     return score;
@@ -459,6 +472,89 @@ class TMDBService {
             return { results: [], totalPages: 0, totalResults: 0 };
         }
     }
+
+    async getPopularPeople(page = 1) {
+        try {
+            const response = await this._request('/person/popular', {
+                page: Math.min(Math.max(Number.parseInt(page, 10) || 1, 1), 100)
+            });
+            return {
+                results: (response.results || []).map(person => ({
+                    id: person.id,
+                    title: person.name || '未命名演员',
+                    originalTitle: person.original_name || person.name || '',
+                    overview: (person.known_for || [])
+                        .map(item => item.title || item.name)
+                        .filter(Boolean)
+                        .slice(0, 3)
+                        .join(' · '),
+                    posterPath: person.profile_path ? `https://image.tmdb.org/t/p/w500${person.profile_path}` : '',
+                    voteAverage: 0,
+                    type: 'person',
+                    knownFor: person.known_for_department || '演员',
+                })),
+                totalPages: response.total_pages || 1,
+                totalResults: response.total_results || 0,
+            };
+        } catch (error) {
+            console.error(`获取热门演员失败: ${error.message}`);
+            return { results: [], totalPages: 0, totalResults: 0 };
+        }
+    }
+
+    async getStreamingRanking(provider, params = {}) {
+        const providerConfig = STREAMING_PROVIDERS[String(provider || '').toLowerCase()];
+        if (!providerConfig) throw new Error('无效的流媒体平台');
+        const mediaType = ['movie', 'tv'].includes(params.mediaType) ? params.mediaType : 'all';
+        const limit = Math.min(Math.max(Number.parseInt(params.limit, 10) || 30, 1), 100);
+        const region = String(params.region || 'US').toUpperCase();
+        if (!/^[A-Z]{2}$/.test(region)) throw new Error('无效的流媒体地区');
+        const page = Math.min(Math.max(Number.parseInt(params.page, 10) || 1, 1), 100);
+        const sortBy = ['popularity.desc', 'vote_average.desc', 'first_air_date.desc', 'primary_release_date.desc'].includes(params.sortBy)
+            ? params.sortBy
+            : 'popularity.desc';
+        const shared = {
+            with_watch_providers: providerConfig.id,
+            watch_region: region,
+            with_watch_monetization_types: 'flatrate|free|ads|rent|buy',
+            sort_by: sortBy,
+            page,
+        };
+        if (params.withGenres) shared.with_genres = String(params.withGenres).replace(/[^0-9,|]/g, '').slice(0, 80);
+        if (params.year && /^\d{4}$/.test(String(params.year))) {
+            if (mediaType === 'movie') shared.primary_release_year = String(params.year);
+            if (mediaType === 'tv') shared.first_air_date_year = String(params.year);
+        }
+        if (params.minRating && Number.isFinite(Number(params.minRating))) {
+            shared['vote_average.gte'] = Math.min(Math.max(Number(params.minRating), 0), 10);
+        }
+        const types = mediaType === 'all' ? ['movie', 'tv'] : [mediaType];
+        const responses = [];
+        const failedTypes = [];
+        for (const type of types) {
+            let result;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                result = await this.discover(type, shared);
+                // discover() uses totalPages=0 specifically for request failures.
+                if (result?.totalPages !== 0) break;
+            }
+            if (result?.totalPages === 0) {
+                failedTypes.push(type);
+            } else {
+                responses.push(result || { results: [], totalResults: 0 });
+            }
+        }
+        if (responses.length === 0 && failedTypes.length > 0) {
+            throw new Error('TMDB 流媒体榜单请求失败，请稍后重试');
+        }
+        const results = responses.flatMap(result => result.results || []).map(item => ({
+            ...item,
+            source: 'streaming',
+            provider: providerConfig.label,
+            providerKey: String(provider).toLowerCase(),
+        }));
+        return { results: results.slice(0, limit), provider: providerConfig, totalResults: responses.reduce((sum, item) => sum + (item.totalResults || 0), 0) };
+    }
 }
 
-module.exports = { TMDBService, normalizeMediaTitle, rankSearchResults, scoreSearchResult };
+module.exports = { TMDBService, normalizeMediaTitle, rankSearchResults, scoreSearchResult, STREAMING_PROVIDERS };

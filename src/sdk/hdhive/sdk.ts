@@ -1,6 +1,8 @@
 const got = require('got');
 const crypto = require('crypto');
 const ConfigService = require('../../services/ConfigService');
+const tgtodriveOpenApi = require('./tgtodriveOpenApi').default;
+const { HdhiveFlowController, normalizeHdhiveFlowControl } = require('../../services/hdhiveFlowControl');
 const Cloud189Utils = require('../../utils/Cloud189Utils');
 const ProxyUtil = require('../../utils/ProxyUtil');
 const { logTaskEvent } = require('../../utils/logUtils');
@@ -137,9 +139,20 @@ class HdhiveCookieJar {
 class HdhiveSDK {
     private cache = new Map<string, { data: any; expireAt: number }>();
     private oauthStates = new Map<string, { redirectUri: string; expireAt: number }>();
+    private readonly flowController = new HdhiveFlowController();
     private readonly cacheTTL = 5 * 60 * 1000;
     private readonly stateTTL = 10 * 60 * 1000;
 
+    private get flowControlConfig(): { enabled: boolean; minIntervalMs: number } {
+        return normalizeHdhiveFlowControl({
+            enabled: ConfigService.getConfigValue('hdhive.flowControl.enabled', process.env.HDHIVE_FLOW_CONTROL_ENABLED === 'true'),
+            minIntervalMs: ConfigService.getConfigValue('hdhive.flowControl.minIntervalMs', process.env.HDHIVE_FLOW_CONTROL_MIN_INTERVAL_MS || 1000)
+        });
+    }
+
+    private async runRequest(executor: () => Promise<any>): Promise<any> {
+        return this.flowController.run(executor, this.flowControlConfig);
+    }
     private get baseUrl(): string {
         const configured = ConfigService.getConfigValue('hdhive.baseUrl') || process.env.HDHIVE_BASE_URL || 'https://hdhive.com';
         return String(configured || '').replace(/\/+$/, '') || 'https://hdhive.com';
@@ -198,6 +211,9 @@ class HdhiveSDK {
         return (configured === true || process.env.HDHIVE_BROWSER_BRIDGE_ENABLED === 'true' || !!this.browserBridgeBaseUrl) && !!this.browserBridgeBaseUrl;
     }
 
+    private get tgtodriveAvailable(): boolean {
+        return tgtodriveOpenApi.configured;
+    }
     get enabled(): boolean {
         return !!ConfigService.getConfigValue('hdhive.enabled') && !!this.baseUrl;
     }
@@ -225,6 +241,7 @@ class HdhiveSDK {
             hasClient: !!this.clientId,
             hasApiKey: !!this.apiKey,
             cookieModeAvailable: !!this.cookie,
+            flowControl: this.flowControlConfig,
             browserBridge: {
                 enabled: this.browserBridgeEnabled,
                 baseUrl: this.browserBridgeBaseUrl,
@@ -234,6 +251,10 @@ class HdhiveSDK {
             signedCustomerApiAvailable: this.browserBridgeEnabled && !!this.browserBridgeToken,
             resourceUnlockActionConfigured: !!this.resourceUnlockActionId,
             isAuthorized: this.isAuthorized,
+            tgtodrive: {
+                enabled: this.tgtodriveAvailable,
+                ...tgtodriveOpenApi.getStatus()
+            },
             needsOAuth: this.needsOAuth,
             tokenExpiresAt: this.tokenExpiresAt || null
         };
@@ -280,10 +301,18 @@ class HdhiveSDK {
         if (options.searchParams !== undefined) {
             requestOptions.searchParams = options.searchParams;
         }
-        const response = await got(this.buildBridgeUrl(pathname), requestOptions);
+        const response = await this.runRequest(() => got(this.buildBridgeUrl(pathname), requestOptions));
         const body: any = response.body || {};
         if (response.statusCode >= 400 || body.success === false) {
-            return { success: false, error: body.error || body.message || `Browser Bridge HTTP ${response.statusCode}`, data: body.data };
+            return {
+                success: false,
+                error: body.error || body.message || `Browser Bridge HTTP ${response.statusCode}`,
+                data: body.data,
+                verificationRequired: body.verificationRequired === true,
+                challengeId: body.challengeId || null,
+                challengeExpiresInSeconds: body.challengeExpiresInSeconds || null,
+                challengeImageReady: body.challengeImageReady === true
+            };
         }
         return body;
     }
@@ -353,10 +382,100 @@ class HdhiveSDK {
         return { success: true, data: this.unwrapBridgePayload(result.data?.payload) };
     }
 
+    async getAbuseChallengeImage(challengeId: string): Promise<any> {
+        const normalizedChallengeId = String(challengeId || '').trim();
+        if (!normalizedChallengeId) {
+            return { success: false, error: 'challengeId 参数不能为空' };
+        }
+        if (!this.browserBridgeEnabled || !this.browserBridgeToken) {
+            return { success: false, error: '影巢 Browser Bridge 未启用或 Token 未配置' };
+        }
+        const response = await this.runRequest(() => got(this.buildBridgeUrl('/hdhive/security/challenge-image'), {
+            method: 'POST',
+            headers: {
+                'x-bridge-token': this.browserBridgeToken
+            },
+            json: { challengeId: normalizedChallengeId },
+            responseType: 'buffer',
+            timeout: { request: 30000 },
+            throwHttpErrors: false,
+            ...this.getProxyAgent()
+        }));
+        if (response.statusCode >= 400) {
+            let error = `Browser Bridge HTTP ${response.statusCode}`;
+            try {
+                const body = JSON.parse(response.body.toString('utf8'));
+                error = body.error || body.message || error;
+            } catch {}
+            return { success: false, error };
+        }
+        return {
+            success: true,
+            data: response.body,
+            contentType: String(response.headers['content-type'] || 'image/gif')
+        };
+    }
+
+    async verifyAbuseChallenge(challengeId: string, answer: string): Promise<any> {
+        const normalizedChallengeId = String(challengeId || '').trim();
+        const normalizedAnswer = String(answer || '').trim().toUpperCase();
+        if (!normalizedChallengeId) {
+            return { success: false, error: 'challengeId 参数不能为空' };
+        }
+        if (!/^[A-Z0-9]{5}$/.test(normalizedAnswer)) {
+            return { success: false, error: '请输入完整的 5 位动态验证码' };
+        }
+        return this.bridgeRequest('/hdhive/security/verify', {
+            method: 'POST',
+            json: { challengeId: normalizedChallengeId, answer: normalizedAnswer },
+            timeoutMs: 60000
+        });
+    }
+
+    private async refreshBridgeLogin(): Promise<any> {
+        const relogin = await this.bridgeRequest('/hdhive/login', {
+            method: 'POST',
+            timeoutMs: 130000
+        });
+        if (relogin.success) {
+            this.persistCookieHeader(relogin.data?.cookieHeader || '');
+            this.cache.clear();
+        }
+        return relogin;
+    }
     private get checkinAutoVerify(): boolean {
         return ConfigService.getConfigValue('hdhive.checkin.autoVerify') !== false;
     }
 
+    async refreshTgtodriveStatus(): Promise<{ success: boolean; data?: any; error?: string; needsOAuth?: boolean }> {
+        if (!this.tgtodriveAvailable) {
+            return { success: false, error: '影巢 TgtoDrive 开放平台尚未配置 install_id，请先发起授权' };
+        }
+        const result = await tgtodriveOpenApi.refreshStatus();
+        return { success: result.success, data: result.data, error: result.error, needsOAuth: result.needsOAuth };
+    }
+
+    async checkin(options: { autoVerify?: boolean; isGambler?: boolean } = {}) {
+        if (this.tgtodriveAvailable) {
+            return this.checkinByTgtodrive(options);
+        }
+        return this.checkinByBridge(options);
+    }
+
+    async checkinByTgtodrive(options: { autoVerify?: boolean; isGambler?: boolean } = {}) {
+        const statusResult = await tgtodriveOpenApi.refreshStatus();
+        if (!statusResult.success) {
+            return { success: false, error: statusResult.error || '影巢 TgtoDrive 授权状态检查失败', message: `影巢签到失败：${statusResult.error || '授权状态检查失败'}` };
+        }
+        if (!tgtodriveOpenApi.authorized) {
+            return { success: false, error: '请先完成影巢 TgtoDrive OAuth 授权', needsOAuth: true };
+        }
+        const result = await tgtodriveOpenApi.checkin(options.isGambler === true);
+        if (!result.success) {
+            return { success: false, error: result.error, message: `影巢签到失败：${result.error || '未知错误'}`, needsOAuth: result.needsOAuth };
+        }
+        return { success: true, data: result.data, message: this.summarizeCheckin(result.data) };
+    }
     async checkinByBridge(options: { autoVerify?: boolean } = {}) {
         const autoVerify = options.autoVerify ?? this.checkinAutoVerify;
         const result = await this.bridgeRequest('/hdhive/customer/checkin', {
@@ -476,7 +595,7 @@ class HdhiveSDK {
         if (!jar.toHeader()) {
             return false;
         }
-        const response = await got.post(this.buildUrl(AUTH_ENDPOINTS.refresh), {
+        const response = await this.runRequest(() => got.post(this.buildUrl(AUTH_ENDPOINTS.refresh), {
             headers: {
                 ...this.buildCookieHeaders(jar),
                 'x-skip-auth-refresh': 'true'
@@ -485,7 +604,7 @@ class HdhiveSDK {
             timeout: { request: 15000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         this.mergeResponseCookies(jar, response);
         return response.statusCode >= 200 && response.statusCode < 300;
     }
@@ -511,7 +630,7 @@ class HdhiveSDK {
         if (options.body !== undefined) {
             requestOptions.body = options.body;
         }
-        const response = await got(this.buildUrl(pathname), requestOptions);
+        const response = await this.runRequest(() => got(this.buildUrl(pathname), requestOptions));
         this.mergeResponseCookies(jar, response);
         const body = response.body;
         const code = body && typeof body === 'object' ? body.code : '';
@@ -537,6 +656,10 @@ class HdhiveSDK {
     }
 
     getOAuthUrl(redirectUri: string, scope = 'query unlock') {
+        const hasLegacyOAuthCredentials = Boolean(this.clientId && this.apiKey);
+        if (tgtodriveOpenApi.oauthAvailable && (!hasLegacyOAuthCredentials || this.tgtodriveAvailable)) {
+            return { url: tgtodriveOpenApi.buildAuthUrl(), state: '', mode: 'tgtodrive' };
+        }
         if (!this.clientId) {
             throw new Error('影巢 Client ID 未配置');
         }
@@ -559,17 +682,24 @@ class HdhiveSDK {
     }
 
     async exchangeCodeForToken(code: string, redirectUri: string) {
+        if (this.tgtodriveAvailable) {
+            const refreshResult = await tgtodriveOpenApi.refreshStatus();
+            if (!refreshResult.success) {
+                return refreshResult;
+            }
+            return { success: true };
+        }
         if (!this.apiKey) {
             return { success: false, error: '影巢 API Key 未配置' };
         }
-        const response = await got.post(this.buildUrl('/api/public/openapi/oauth/token'), {
+        const response = await this.runRequest(() => got.post(this.buildUrl('/api/public/openapi/oauth/token'), {
             headers: this.buildApiHeaders(),
             json: { grant_type: 'authorization_code', code, redirect_uri: redirectUri },
             responseType: 'json',
             timeout: { request: 30000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         const body: any = response.body || {};
         if (response.statusCode !== 200 || !body.success) {
             return { success: false, error: body.description || body.message || '授权码换取 Token 失败' };
@@ -582,14 +712,14 @@ class HdhiveSDK {
         if (!this.refreshToken) {
             return { success: false, error: 'Refresh Token 未配置，请重新授权' };
         }
-        const response = await got.post(this.buildUrl('/api/public/openapi/oauth/refresh'), {
+        const response = await this.runRequest(() => got.post(this.buildUrl('/api/public/openapi/oauth/refresh'), {
             headers: this.buildApiHeaders(),
             json: { refresh_token: this.refreshToken },
             responseType: 'json',
             timeout: { request: 30000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         const body: any = response.body || {};
         if (response.statusCode === 401 || body.code === 'OPENAPI_REAUTH_REQUIRED') {
             this.clearTokens();
@@ -603,16 +733,20 @@ class HdhiveSDK {
     }
 
     async revokeAuth() {
+        if (this.tgtodriveAvailable) {
+            tgtodriveOpenApi.resetAuth();
+            return { success: true };
+        }
         try {
             if (this.refreshToken) {
-                await got.post(this.buildUrl('/api/public/openapi/oauth/revoke'), {
+                await this.runRequest(() => got.post(this.buildUrl('/api/public/openapi/oauth/revoke'), {
                     headers: this.buildApiHeaders(),
                     json: { refresh_token: this.refreshToken },
                     responseType: 'json',
                     timeout: { request: 10000 },
                     throwHttpErrors: false,
                     ...this.getProxyAgent()
-                });
+                }));
             }
         } catch (error: any) {
             logTaskEvent(`影巢撤销授权请求失败: ${error.message}`);
@@ -622,16 +756,23 @@ class HdhiveSDK {
     }
 
     async ping() {
+        if (this.tgtodriveAvailable) {
+            const tgtodriveResult = await tgtodriveOpenApi.ping();
+            if (tgtodriveResult.success) {
+                return { success: true, message: tgtodriveResult.data?.message || 'pong' };
+            }
+            return { success: false, message: tgtodriveResult.error || '影巢 TgtoDrive 开放平台不可用' };
+        }
         if (!this.apiKey) {
             return { success: false, message: '影巢 API Key 未配置' };
         }
-        const response = await got.get(this.buildUrl('/api/open/ping'), {
+        const response = await this.runRequest(() => got.get(this.buildUrl('/api/open/ping'), {
             headers: this.buildApiHeaders(),
             responseType: 'json',
             timeout: { request: 10000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         const body: any = response.body || {};
         if (response.statusCode === 401) {
             return { success: false, message: '影巢 API Key 无效或已过期' };
@@ -643,13 +784,13 @@ class HdhiveSDK {
         if (!this.apiKey) {
             return { success: false, error: '影巢 API Key 未配置' };
         }
-        const response = await got.get(this.buildUrl('/api/open/quota'), {
+        const response = await this.runRequest(() => got.get(this.buildUrl('/api/open/quota'), {
             headers: this.buildApiHeaders(),
             responseType: 'json',
             timeout: { request: 10000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         const body: any = response.body || {};
         if (response.statusCode === 401) {
             return { success: false, error: '影巢 API Key 无效或已过期' };
@@ -661,13 +802,13 @@ class HdhiveSDK {
         if (!this.isAuthorized) {
             return { success: false, error: '请先进行 OAuth 授权', needsOAuth: true };
         }
-        const response = await got.get(this.buildUrl(pathname), {
+        const response = await this.runRequest(() => got.get(this.buildUrl(pathname), {
             headers: this.buildApiHeaders(true),
             responseType: 'json',
             timeout: { request: 30000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         const body: any = response.body || {};
         if (response.statusCode === 401 && retryOn401) {
             const refreshResult = await this.refreshAccessToken();
@@ -683,6 +824,16 @@ class HdhiveSDK {
     }
 
     async getMe() {
+        if (this.tgtodriveAvailable) {
+            const tgtodriveResult = await tgtodriveOpenApi.me();
+            if (tgtodriveResult.success) {
+                return { success: true, data: tgtodriveResult.data };
+            }
+            if (tgtodriveResult.needsOAuth) {
+                return { success: false, error: tgtodriveResult.error || '请先完成影巢 TgtoDrive OAuth 授权', needsOAuth: true };
+            }
+            logTaskEvent(`影巢 TgtoDrive 获取用户信息失败: ${tgtodriveResult.error}`);
+        }
         const openApiResult = await this.authedGet('/api/open/me');
         if (openApiResult.success || !this.browserBridgeEnabled || !this.browserBridgeToken) {
             return openApiResult;
@@ -752,7 +903,7 @@ class HdhiveSDK {
         });
         if (!result.success && attempt < 2) {
             if (this.isBridgeAuthError(result)) {
-                const relogin = await this.bridgeRequest('/hdhive/login', { method: 'POST', timeoutMs: 130000 });
+                const relogin = await this.refreshBridgeLogin();
                 if (relogin.success) {
                     return this.getResourcesByBridge(type, tmdbId, attempt + 1);
                 }
@@ -865,6 +1016,24 @@ class HdhiveSDK {
     }
 
     async getResources(type: 'movie' | 'tv', tmdbId: string | number) {
+        if (this.tgtodriveAvailable) {
+            const tgtodriveCacheKey = `resources:${type}:${tmdbId}:tgtodrive`;
+            const tgtodriveCached = this.getCache(tgtodriveCacheKey);
+            if (tgtodriveCached) {
+                return { success: true, data: tgtodriveCached };
+            }
+            const tgtodriveResult = await tgtodriveOpenApi.getResources(type, tmdbId);
+            if (tgtodriveResult.success) {
+                const resources = Array.isArray(tgtodriveResult.data) ? tgtodriveResult.data : [];
+                const normalized = this.normalizeResources(resources).filter((item: any) => item.cloudType === 'cloud189');
+                this.setCache(tgtodriveCacheKey, normalized);
+                return { success: true, data: normalized };
+            }
+            if (tgtodriveResult.needsOAuth) {
+                return { success: false, error: tgtodriveResult.error || '请先完成影巢 TgtoDrive OAuth 授权', needsOAuth: true };
+            }
+            logTaskEvent(`影巢 TgtoDrive 资源查询失败: ${tgtodriveResult.error}`);
+        }
         const cacheMode = this.isAuthorized ? 'openapi' : this.browserBridgeEnabled ? 'bridge' : 'cookie';
         const cacheKey = `resources:${type}:${tmdbId}:${cacheMode}`;
         const cached = this.getCache(cacheKey);
@@ -922,14 +1091,14 @@ class HdhiveSDK {
         if (!this.isAuthorized) {
             return { success: false, error: '请先进行 OAuth 授权', needsOAuth: true };
         }
-        const response = await got.post(this.buildUrl('/api/open/resources/unlock'), {
+        const response = await this.runRequest(() => got.post(this.buildUrl('/api/open/resources/unlock'), {
             headers: this.buildApiHeaders(true),
             json: { slug },
             responseType: 'json',
             timeout: { request: 30000 },
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         const body: any = response.body || {};
         if (response.statusCode === 401) {
             const refreshResult = await this.refreshAccessToken();
@@ -946,27 +1115,38 @@ class HdhiveSDK {
         }
         this.cache.clear();
         const data = body.data || body;
-        const parsed = Cloud189Utils.parseCloudShare(data.full_url || data.url || data.link || '');
+        const parsed = Cloud189Utils.parseCloudShare(
+            data.full_url || data.fullUrl || data.share_url || data.shareUrl || data.url || data.link || ''
+        );
+        if (!parsed.url) {
+            return { success: false, error: '影巢 OpenAPI 解锁成功，但未返回有效天翼分享链接' };
+        }
         return {
             success: true,
             data: {
-                link: parsed.url || data.url || data.link || '',
+                link: parsed.url,
                 code: parsed.accessCode || data.access_code || data.code || '',
-                fullUrl: data.full_url || '',
+                fullUrl: data.full_url || data.fullUrl || parsed.url,
                 points: data.points || 0
             }
         };
     }
 
-    private async unlockResourceByBridge(slug: string): Promise<{ success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string }> {
+    private async unlockResourceByBridge(slug: string): Promise<{ success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string; verificationRequired?: boolean; challengeId?: string | null; challengeExpiresInSeconds?: number | null; challengeImageReady?: boolean }> {
         const resourceId = this.extractResourceSlug(this.normalizeResourcePath(slug));
-        const existing = await this.getUnlockedResourceByBridge(resourceId).catch(() => null);
-        if (existing?.success) {
-            return existing;
-        }
-        const result = await this.bridgeRequest(`/hdhive/customer/resources/${encodeURIComponent(resourceId)}/unlock`, {
-            method: 'POST'
+        let result = await this.bridgeRequest(`/hdhive/customer/resources/${encodeURIComponent(resourceId)}/unlock`, {
+            method: 'POST',
+            timeoutMs: 190000
         });
+        if (!result.success && this.isBridgeAuthError(result)) {
+            const relogin = await this.refreshBridgeLogin();
+            if (relogin.success) {
+                result = await this.bridgeRequest(`/hdhive/customer/resources/${encodeURIComponent(resourceId)}/unlock`, {
+                    method: 'POST',
+                    timeoutMs: 190000
+                });
+            }
+        }
         if (!result.success) {
             return result;
         }
@@ -1062,7 +1242,39 @@ class HdhiveSDK {
         return { success: false, error: '影巢 Cookie 解锁完成但未解析到天翼分享链接' };
     }
 
-    async unlockResource(slug: string): Promise<{ success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string; needsOAuth?: boolean; needsCookie?: boolean }> {
+    async unlockResource(slug: string): Promise<{ success: boolean; data?: { link: string; code: string; fullUrl: string; points: number }; error?: string; needsOAuth?: boolean; needsCookie?: boolean; verificationRequired?: boolean; challengeId?: string | null; challengeExpiresInSeconds?: number | null; challengeImageReady?: boolean }> {
+        if (this.tgtodriveAvailable) {
+            const tgtodriveResult = await tgtodriveOpenApi.unlock(slug);
+            if (tgtodriveResult.success) {
+                this.cache.clear();
+                const unlockData = tgtodriveResult.data || {};
+                const parsed = Cloud189Utils.parseCloudShare(
+                    unlockData.full_url
+                    || unlockData.fullUrl
+                    || unlockData.share_url
+                    || unlockData.shareUrl
+                    || unlockData.url
+                    || unlockData.link
+                    || ''
+                );
+                if (!parsed.url) {
+                    return { success: false, error: '影巢 TgtoDrive 解锁成功，但未返回有效天翼分享链接' };
+                }
+                return {
+                    success: true,
+                    data: {
+                        link: parsed.url,
+                        code: parsed.accessCode || unlockData.access_code || unlockData.code || '',
+                        fullUrl: unlockData.full_url || unlockData.fullUrl || parsed.url,
+                        points: unlockData.points || 0
+                    }
+                };
+            }
+            if (tgtodriveResult.needsOAuth) {
+                return { success: false, error: tgtodriveResult.error || '请先完成影巢 TgtoDrive OAuth 授权', needsOAuth: true };
+            }
+            logTaskEvent(`影巢 TgtoDrive 资源解锁失败: ${tgtodriveResult.error}`);
+        }
         let openApiResult: any = null;
         if (this.apiKey && this.isAuthorized) {
             openApiResult = await this.unlockResourceByOpenApi(slug);
@@ -1075,6 +1287,12 @@ class HdhiveSDK {
         if (this.browserBridgeEnabled && this.browserBridgeToken) {
             bridgeResult = await this.unlockResourceByBridge(slug);
             if (bridgeResult.success) {
+                return bridgeResult;
+            }
+            if (bridgeResult.verificationRequired) {
+                return bridgeResult;
+            }
+            if (/Browser Bridge|人机验证|abuse challenge|webpack|握手|请先登录|cookie/i.test(String(bridgeResult.error || ''))) {
                 return bridgeResult;
             }
         }
@@ -1256,7 +1474,16 @@ class HdhiveSDK {
         return resources.map((resource) => {
             const cloudType = this.mapCloudType(resource.pan_type || resource.cloudType || resource.drive || resource.netdisk_website_id || resource.net_disk_website_id || resource.website_id || resource.website || resource.type);
             const cloudMeta = CLOUD_TYPE_MAP[cloudType] || CLOUD_TYPE_MAP.unknown;
-            const shareText = resource.full_url || resource.fullUrl || resource.media_url || resource.mediaUrl || resource.shareLink || resource.share_link || resource.link || resource.url || '';
+            const pageUrl = resource.media_url || resource.mediaUrl || '';
+            const shareText = resource.full_url
+                || resource.fullUrl
+                || resource.share_url
+                || resource.shareUrl
+                || resource.shareLink
+                || resource.share_link
+                || resource.link
+                || resource.url
+                || '';
             const parsed = Cloud189Utils.parseCloudShare(shareText);
             const resourceId = resource.slug || resource.id || resource.resourceId || resource.resource_id || '';
             const hasPointField = resource.unlock_points !== undefined || resource.points !== undefined || resource.cost !== undefined;
@@ -1279,7 +1506,8 @@ class HdhiveSDK {
                 quality: this.extractQuality(resource.title || resource.name || ''),
                 uploader: resource.user || resource.uploader || resource.publisher || {},
                 publishedAt: resource.publishedAt || resource.createTime || '',
-                link: parsed.url || resource.media_url || resource.mediaUrl || resource.shareLink || resource.share_link || resource.link || resource.url || '',
+                pageUrl,
+                link: parsed.url || '',
                 code: parsed.accessCode || resource.access_code || resource.accessCode || resource.code || resource.password || resource.passwd || '',
                 isUnlocked: !!(resource.is_unlocked || resource.isUnlocked || parsed.url)
             };
@@ -1397,13 +1625,13 @@ class HdhiveSDK {
 
     private async fetchPage(pathname: string): Promise<{ html: string; url: string }> {
         const jar = this.createCookieJar();
-        const response = await got.get(this.buildUrl(pathname), {
+        const response = await this.runRequest(() => got.get(this.buildUrl(pathname), {
             headers: this.buildCookieHeaders(jar, 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'),
             timeout: { request: 20000 },
             followRedirect: true,
             throwHttpErrors: false,
             ...this.getProxyAgent()
-        });
+        }));
         this.mergeResponseCookies(jar, response);
         return { html: String(response.body || ''), url: response.url || this.buildUrl(pathname) };
     }

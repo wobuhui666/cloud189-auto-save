@@ -154,6 +154,28 @@ class AIService {
         }
     }
 
+    async chatCompletion(messages, config = {}) {
+        try {
+            const openaiConfig = ConfigService.getConfigValue('openai');
+            if (!this.isEnabled(openaiConfig)) throw new Error('AI服务未配置或未启用');
+            const baseURL = openaiConfig.baseUrl || 'https://api.openai.com/v1';
+            const response = await this._runWithFlowControl('AI工具调用请求', () => got.post(`${baseURL}/chat/completions`, {
+                json: {
+                    model: openaiConfig.model,
+                    messages,
+                    stream: false,
+                    ...this.defaultConfig,
+                    ...config
+                },
+                headers: { Authorization: `Bearer ${openaiConfig.apiKey}`, 'Content-Type': 'application/json' },
+                responseType: 'json'
+            }), openaiConfig);
+            return { success: true, message: response.body?.choices?.[0]?.message || null, body: response.body };
+        } catch (error) {
+            return { success: false, error: error.message || String(error), status: error.response?.statusCode || 0 };
+        }
+    }
+
     // 文件夹分析
     async folderAnalysis(resourcePath, dirs) {
         const messages = [
@@ -164,7 +186,7 @@ class AIService {
                 输入信息说明：
                 1. name 字段必须是纯净的影视剧名称，不能包含年份、季数等信息。**当资源路径中包含括号内的年份时（如 "请回答1994(2025)"），括号前的所有文本（包括数字 "1994" 和文字 "请回答"）都应合并作为 name 字段，即 "请回答1994"。**
                 2. 资源路径：包含影视剧的主要信息，**如果资源路径中同时包含普通年份和括号内的年份（如 "请回答1994(2025)"），请优先提取括号内的年份作为最终年份。**
-                3. 文件夹列表：需要标准化的文件夹信息
+                3. 文件夹列表是完整的递归目录树。每项可包含 relativePath、parentId、depth、directFileCount、hasFiles；必须结合完整路径判断季度和特别篇，不能只看叶子目录名。
 
                 文件夹命名规则：
                 1. 常规季度：仅当文件夹名称明确表示季度时（如 "第一季", "第1季", "S1", "Season1" 等），统一使用 "Season XX" 格式，XX 必须是两位数字。
@@ -185,13 +207,15 @@ class AIService {
                     type: "tv" | "movie",  // 资源类型
                     folders: [{    // 标准化后的文件夹列表
                         id: string,
-                        name: string  // 标准化后的文件夹名称 (或原始名称)
+                        name: string,  // 仅标准化当前目录的叶子名称，不得拼接父路径
+                        relativePath: string  // 原始完整相对路径，原样返回
                     }]
                 }
                 注意事项：
                 1. 不要使用代码块标记，直接返回 JSON 对象
-                2. 文件夹名称必须严格按照此格式返回，不要添加任何额外说明文字
-                3. 不要对文件名内容做任何主观评判，专注于格式解析
+                2. 必须返回输入中的每一个文件夹 ID；不得丢失深层目录，不得修改 id 和 relativePath
+                3. 文件夹名称必须严格按照此格式返回，不要添加任何额外说明文字
+                4. 不要对文件名内容做任何主观评判，专注于格式解析
                 `
             },
             {
@@ -237,9 +261,9 @@ class AIService {
             return { success: false, error: 'AI服务未配置或未启用' };
         }
 
-        // 固定排序，避免分块顺序导致 base name 漂移
+        // 固定排序，优先按完整相对路径，避免套娃目录中的同名文件丢失上下文。
         files = [...(files || [])].sort((a, b) =>
-            String(a?.name || '').localeCompare(String(b?.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' })
+            String(a?.relativePath || a?.name || '').localeCompare(String(b?.relativePath || b?.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' })
         );
 
         try {
@@ -261,6 +285,7 @@ class AIService {
                             5. 如果是单个文件，episode 数组只包含一个元素
                             6. 多部独立电影组成的合集（标题含"剧场版""电影""Movie"，或各文件有独立片名和不同年份）应判为 movie；此时 episode 数组中每个条目必须填写该文件自己的片名（name）和年份（year），而不是合集的统一标题
                             7. 特殊季文件（如 NCOP/NCED 无字幕片头片尾、OVA、SP 特别篇等非正片内容），season 必须设为 "00"（Emby 特别篇），episode 按顺序编号，不要占用正片集号
+                            8. 每个文件可包含 relativePath（如 "Season 02/Disc 01/episode.mkv"）。它是文件在套娃目录中的完整相对路径，必须优先利用其中的季度、特别篇和上下文信息；不得把路径中的 Disc/CD 编号误判为季度或集号
 
                             返回格式必须是: {
                                 name: string,  // 纯净的影视剧名称，不含年份
@@ -309,6 +334,7 @@ class AIService {
                             季编号: ${baseResult.season || 'N/A'} // 提供季编号上下文
 
                             如果类型是 movie 且文件列表包含多部独立电影，每个条目必须保留该文件自己的 name 和 year，不能统一成合集名称。
+                            每个文件可包含 relativePath；必须继续利用完整相对路径识别所在季度、特别篇和内容上下文，不得只看 name。
 
                             返回格式必须是**严格的 JSON 对象**，包含一个 'episode' 键，其值为一个数组。数组中的每个对象代表一个剧集信息。**确保所有键（如 "id", "name", "season", "episode", "extension"）都用双引号括起来**：
                             {
@@ -444,20 +470,20 @@ class AIService {
 
                         输入:
                         1. resourceName: 媒体资源的名称 (例如：电影标题、剧集名称)。
-                        2. files: 一个文件对象数组，每个对象包含 'id' 和 'name' 字段。
+                        2. files: 一个文件对象数组，每个对象包含 'id'、'name' 和 'relativePath' 字段；relativePath 是套娃目录中的完整相对路径。
                         3. filterDescription: 一个中文字符串，描述了筛选规则。
 
                         **处理逻辑:**
                         1.  **理解规则:** 仔细分析 'filterDescription' 以确定筛选标准。规则可能涉及：
-                            *   **文件名包含/不包含特定文本:** 例如 "包含 '特效'" 或 "不包含 '预告'"。
+                            *   **文件名或完整路径包含/不包含特定文本:** 例如 "包含 '特效'"、"不包含 '预告'"、"位于 Season 02"。
                             *   **剧集编号比较:** 例如 "剧集号大于 10", "集数小于等于 5"。
                         2.  **提取信息 (如果需要):**
-                            *   对于涉及**剧集编号**的规则，你需要从每个文件的 'name' 字段中提取剧集编号。常见的剧集编号格式包括：
+                            *   对于涉及**季度或剧集编号**的规则，优先结合每个文件的 'relativePath'，再从 'name' 字段提取。常见格式包括：
                                 *   \`SxxExx\` (例如 \`S01E05\` -> 剧集号是 5)
                                 *   \`第 xx 集\` (例如 \`第 12 集\` -> 剧集号是 12)
                                 *   单独的数字，如果上下文清晰 (例如 \`Episode 03\` -> 剧集号是 3)
                             *   **优先识别 \`SxxExx\` 格式中的 \`Exx\` 部分。如果不存在，再尝试识别 \`第 xx 集\` 格式。** 提取出的剧集号应为**数字**。
-                        3.  **应用规则:** 将提取的信息（或完整文件名）与 'filterDescription' 中的条件进行比较。
+                        3.  **应用规则:** 将提取的信息（或完整相对路径与文件名）与 'filterDescription' 中的条件进行比较。
                             *   对于剧集编号比较，请进行**数值比较** (例如，判断 12 是否大于 3)。
                         4.  **筛选:** 保留所有满足 'filterDescription' 条件的文件。
 

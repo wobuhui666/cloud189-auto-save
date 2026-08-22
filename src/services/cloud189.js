@@ -4,6 +4,7 @@ const { logTaskEvent } = require('../utils/logUtils');
 const crypto = require('crypto');
 const got = require('got');
 const ProxyUtil = require('../utils/ProxyUtil');
+const { parseCloud189Json } = require('../utils/safeJson');
 
 class Cloud189QRAuthService {
     constructor() {
@@ -201,13 +202,17 @@ class Cloud189Service {
         };
         try {
             const requestUrl = this.buildRequestUrl(action);
-            return await this.client.request(requestUrl, body).json();
+            const response = await this.client.request(requestUrl, {
+                ...body,
+                responseType: 'text'
+            });
+            return parseCloud189Json(String(response.body || ''));
         }catch (error) {
             const statusCode = Number(error?.response?.statusCode || 0);
             if (error?.name === 'HTTPError' || statusCode > 0) {
                 let responseBody = null;
                 try {
-                    responseBody = JSON.parse(error?.response?.body);
+                    responseBody = parseCloud189Json(String(error?.response?.body || ''));
                 } catch (parseError) {
                     responseBody = null;
                 }
@@ -432,6 +437,7 @@ class Cloud189Service {
         const allFolders = [];
         let pageNum = 1;
         let hasMore = true;
+        let firstFailure = null;
         
         while (hasMore && pageNum <= maxPages) {
             const result = await this.requestWithRetry('/api/open/file/listFiles.action', {
@@ -448,6 +454,11 @@ class Cloud189Service {
                 retries: 2,
                 retryDelayMs: 1200
             });
+
+            if (!result?.fileListAO) {
+                firstFailure = firstFailure || result || null;
+                break;
+            }
             
             const fileListAO = result?.fileListAO || {};
             const files = fileListAO.fileList || [];
@@ -471,6 +482,10 @@ class Cloud189Service {
             }
         }
         
+        if (firstFailure) {
+            return firstFailure;
+        }
+
         return {
             fileListAO: {
                 fileList: allFiles,

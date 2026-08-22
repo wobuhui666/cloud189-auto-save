@@ -531,6 +531,13 @@
                         </div>
                     </div>
 
+                    <div class="form-group" id="setup-token-group" hidden>
+                        <label for="setup-token" id="setup-token-label">首次初始化安全令牌</label>
+                        <div class="input-wrapper">
+                            <input id="setup-token" name="setupToken" type="password" autocomplete="one-time-code" placeholder="远程初始化时填写 INITIAL_SETUP_TOKEN">
+                        </div>
+                    </div>
+
                     <button class="btn-login" id="btn-login" type="submit">
                         <span class="btn-text">登录</span>
                         <span class="btn-hover-content">登录</span>
@@ -543,6 +550,9 @@
     <script>
         const usernameInput = document.getElementById('username');
         const passwordInput = document.getElementById('password');
+        const setupTokenGroup = document.getElementById('setup-token-group');
+        const setupTokenInput = document.getElementById('setup-token');
+        const setupTokenLabel = document.getElementById('setup-token-label');
         const toggleButton = document.getElementById('toggle-password');
         const eyeIcon = document.getElementById('eye-icon');
         const eyeOffIcon = document.getElementById('eye-off-icon');
@@ -574,13 +584,16 @@
             errorMsg.textContent = '';
             usernameInput.classList.remove('error');
             passwordInput.classList.remove('error');
+            setupTokenInput.classList.remove('error');
             usernameLabel.classList.remove('error-label');
             passwordLabel.classList.remove('error-label');
+            setupTokenLabel.classList.remove('error-label');
         }
 
         function setSetupMode(enabled) {
             isSetupMode = enabled;
             setupHint.classList.toggle('show', enabled);
+            setupTokenGroup.hidden = !enabled;
             formTitle.textContent = enabled ? '初始化账号' : '欢迎回来';
             usernameInput.placeholder = enabled ? '设置系统登录用户名' : '请输入用户名';
             passwordInput.placeholder = enabled ? '设置系统登录密码（至少 6 位）' : '请输入密码';
@@ -598,6 +611,10 @@
             if (inputElement === passwordInput) {
                 passwordInput.classList.add('error');
                 passwordLabel.classList.add('error-label');
+            }
+            if (inputElement === setupTokenInput) {
+                setupTokenInput.classList.add('error');
+                setupTokenLabel.classList.add('error-label');
             }
             triggerLoginError();
         }
@@ -969,6 +986,8 @@
             }
         });
 
+        setupTokenInput.addEventListener('input', clearErrors);
+
         async function hydrateAuthMode() {
             try {
                 const response = await fetch('/api/auth/me');
@@ -989,6 +1008,7 @@
 
             const username = usernameInput.value.trim();
             const password = passwordInput.value;
+            const setupToken = setupTokenInput.value;
 
             if (!username) {
                 showError('请输入用户名', usernameInput);
@@ -1008,7 +1028,7 @@
                 const response = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
+                    body: JSON.stringify({ username, password, setupToken })
                 });
                 const data = await response.json().catch(() => ({}));
                 if (data.success) {
@@ -1018,7 +1038,9 @@
                 if (data.requireSetCredentials) {
                     setSetupMode(true);
                 }
-                const targetInput = (data.error || '').includes('用户名') ? usernameInput : passwordInput;
+                const targetInput = data.requireSetupToken
+                    ? setupTokenInput
+                    : (data.error || '').includes('用户名') ? usernameInput : passwordInput;
                 showError(data.error || '登录失败，请检查用户名或密码', targetInput);
             } catch (error) {
                 showError('登录请求失败，请检查服务是否正在运行', passwordInput);

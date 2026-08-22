@@ -34,8 +34,21 @@ class ConfigService {
           sourcePreferences: [
             { source: 'cloudsaver', enabled: true },
             { source: 'hdhive', enabled: true },
-            { source: 'pt', enabled: true }
-          ]
+            { source: 'pt', enabled: true },
+            { source: 'subscription', enabled: true }
+          ],
+          keepCasAfterRestore: false,
+          allowHdhivePoints: false,
+          hdhiveMaxPoints: 10,
+          agentEnabled: false,
+          toolCallMode: 'auto',
+          mediaPreference: {
+            preferredGroups: [],
+            blockedKeywords: ['预告', 'trailer', 'teaser', '样片', 'sample', 'CAM', 'TS'],
+            extraRequirement: '',
+            fallbackMode: 'next_tier',
+            upgradePolicy: 'higher_score'
+          }
         }
       },
       // CAS 配置（已迁移到独立配置节点，保留 task 部分用于兼容）
@@ -75,6 +88,7 @@ class ConfigService {
           password: '',
           categoryPrefix: 'pt-sub-',
           tagPrefix: 'pt-rel-',
+          forceStart: true,             // PT 任务绕过 qB 队列，避免无速度任务阻塞后续下载
           insecureSkipTlsVerify: false
         }
       },
@@ -177,6 +191,10 @@ class ConfigService {
           baseUrl: process.env.HDHIVE_BROWSER_BRIDGE_URL || '',
           token: process.env.HDHIVE_BROWSER_BRIDGE_TOKEN || ''
         },
+        flowControl: {
+          enabled: process.env.HDHIVE_FLOW_CONTROL_ENABLED === 'true',
+          minIntervalMs: Number(process.env.HDHIVE_FLOW_CONTROL_MIN_INTERVAL_MS || 1000)
+        },
         checkin: {
           enabled: false,
           cron: '35 8 * * *',
@@ -207,6 +225,7 @@ class ConfigService {
       openai: {
         enable: false,
         mode: 'fallback',
+        toolCallMode: 'auto',
         baseUrl: '',
         apiKey: '',
         model: 'GLM-4-Flash-250414',

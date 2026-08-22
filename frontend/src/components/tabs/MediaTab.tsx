@@ -70,6 +70,7 @@ interface MediaSettings {
     hasApiKey?: boolean;
     model: string;
     flowControlEnabled: boolean;
+    toolCallMode: 'auto' | 'native' | 'json';
     rename: {
       template: string;
       movieTemplate: string;
@@ -131,6 +132,7 @@ const initialSettings: MediaSettings = {
     hasApiKey: false,
     model: '',
     flowControlEnabled: false,
+    toolCallMode: 'auto',
     rename: {
       template: '{{name}} - {{se}}{{ext}}',
       movieTemplate: '{{name}}{% if year %} ({{year}}){% endif %}{{ext}}'
@@ -460,7 +462,19 @@ const MediaTab: React.FC = () => {
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
               />
             </div>
-            <div className="md:col-span-2 space-y-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium ui-title">自动追剧默认工具协议</label>
+              <select
+                value={settings.openai.toolCallMode}
+                onChange={e => updateSetting('openai.toolCallMode', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+              >
+                <option value="auto">自动（原生优先）</option>
+                <option value="native">仅原生 Tool Calling</option>
+                <option value="json">仅 JSON 动作</option>
+              </select>
+            </div>
+            <div className="space-y-2">
               <label className="text-sm font-medium ui-title">剧集命名模板</label>
               <input 
                 type="text" 

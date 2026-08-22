@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Bell, MessageSquare, Shield, Globe, Cpu, Database, Save, RefreshCw, Key, Plus, Trash2, X, Settings, PlayCircle, Folder, Send, Search } from 'lucide-react';
+import { Settings as SettingsIcon, Bell, MessageSquare, Shield, Globe, Cpu, Database, Save, RefreshCw, Key, Plus, Trash2, X, Settings, Send, Search } from 'lucide-react';
 import Modal from '../Modal';
-import FolderSelector, { SelectedFolder } from '../FolderSelector';
 import Checkbox from '../ui/Checkbox';
 import Switch from '../ui/Switch';
 import { useToast } from '../ui/Toast';
@@ -171,6 +170,7 @@ interface SettingsData {
     baseUrl: string;
     apiKey: string;
     model: string;
+    toolCallMode?: 'auto' | 'native' | 'json';
     rename?: {
       template: string;
       movieTemplate: string;
@@ -198,6 +198,10 @@ interface SettingsData {
       baseUrl: string;
       token: string;
       hasToken?: boolean;
+    };
+    flowControl: {
+      enabled: boolean;
+      minIntervalMs: number;
     };
     checkin: {
       enabled: boolean;
@@ -268,6 +272,10 @@ const initialSettings: SettingsData = {
       baseUrl: '',
       token: ''
     },
+    flowControl: {
+      enabled: false,
+      minIntervalMs: 1000
+    },
     checkin: {
       enabled: false,
       cron: '35 8 * * *',
@@ -288,20 +296,16 @@ const SettingsTab: React.FC = () => {
     { id: 'settings-telegram', label: 'Telegram', keywords: ['telegram', 'tg', 'bot'] },
     { id: 'settings-push', label: '消息推送', keywords: ['推送', '企业微信', 'bark', 'pushplus'] },
     { id: 'settings-proxy', label: '网络代理', keywords: ['代理', 'proxy'] },
-    { id: 'settings-hdhive', label: '影巢资源', keywords: ['影巢', 'hdhive'] },
+    { id: 'settings-hdhive', label: '影巢资源', keywords: ['影巢', 'hdhive', '流控', '限流'] },
     { id: 'settings-custom-push', label: '自定义推送', keywords: ['自定义推送', 'webhook'] },
     { id: 'settings-regex', label: '正则预设', keywords: ['正则', 'regex'] },
   ];
   const [visibleSectionIds, setVisibleSectionIds] = useState<string[] | null>(null);
   const [settings, setSettings] = useState<SettingsData>(initialSettings);
-  const [accounts, setAccounts] = useState<{id: number, username: string, alias?: string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [keepAliveRunning, setKeepAliveRunning] = useState(false);
   const lazyFileDailyCleanupTime = getDailyTimeFromCron(settings.task.lazyFileCleanupCron);
-
-  // Folder Selector State
-  const [isFolderSelectorOpen, setIsFolderSelectorOpen] = useState(false);
 
   // Custom Push Modal State
   const [isPushModalOpen, setIsPushModalOpen] = useState(false);
@@ -332,7 +336,6 @@ const SettingsTab: React.FC = () => {
   useEffect(() => {
     loadSettings();
     loadRegexPresets();
-    fetchAccounts();
   }, []);
 
   const loadSettings = async () => {
@@ -362,6 +365,10 @@ const SettingsTab: React.FC = () => {
               ...initialSettings.hdhive.browserBridge,
               ...(loaded.hdhive?.browserBridge || {}),
               token: ''
+            },
+            flowControl: {
+              ...initialSettings.hdhive.flowControl,
+              ...(loaded.hdhive?.flowControl || {})
             },
             checkin: {
               ...initialSettings.hdhive.checkin,
@@ -434,18 +441,6 @@ const SettingsTab: React.FC = () => {
       console.error('Failed to load settings:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchAccounts = async () => {
-    try {
-      const response = await fetch('/api/accounts');
-      const data = await response.json();
-      if (data.success) {
-        setAccounts(data.data || []);
-      }
-    } catch (error) {
-      console.error('Failed to fetch accounts:', error);
     }
   };
 
@@ -646,8 +641,6 @@ const SettingsTab: React.FC = () => {
       </div>
     );
   }
-
-  const selectedAccount = accounts.find(a => String(a.id) === settings.task.autoCreate.accountId);
 
   return (
     <div className="max-w-4xl space-y-8 pb-8">
@@ -928,47 +921,6 @@ const SettingsTab: React.FC = () => {
             </button>
           </div>
 
-          {/* Auto Series Defaults */}
-          <div className="pt-6 border-t border-slate-100 space-y-4">
-            <h4 className="text-sm font-bold ui-title flex items-center gap-2">
-              <PlayCircle size={18} className="text-[#0b57d0]" /> 自动追剧默认配置
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium ui-title">默认追剧账号</label>
-                <select 
-                  value={settings.task.autoCreate.accountId}
-                  onChange={(e) => updateSettings('task.autoCreate.accountId', e.target.value)}
-                  className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                >
-                  <option value="">选择默认账号...</option>
-                  {accounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>{acc.alias ? `${acc.username} (${acc.alias})` : acc.username}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium ui-title">默认保存目录</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={settings.task.autoCreate.targetFolder || settings.task.autoCreate.targetFolderId}
-                    readOnly
-                    placeholder="根目录"
-                    className="flex-1 px-5 py-3 bg-slate-100 border border-slate-300 rounded-2xl text-sm outline-none text-slate-500"
-                  />
-                  <button 
-                    type="button" 
-                    onClick={() => setIsFolderSelectorOpen(true)}
-                    disabled={!settings.task.autoCreate.accountId}
-                    className="px-4 py-3 bg-white border border-slate-300 rounded-2xl text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
-                  >
-                    <Folder size={20} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -1356,10 +1308,10 @@ const SettingsTab: React.FC = () => {
         </div>
         <div className={`ui-card p-8 space-y-6 shadow-sm transition-opacity ${!settings.hdhive.enabled && 'opacity-60'}`}>
           <div className="text-xs ui-muted bg-slate-50 p-4 rounded-2xl border border-slate-100 leading-relaxed">
-            支持 Cookie 网页解析、OpenAPI OAuth 和 Browser Bridge 签名网页模式。敏感凭证如已保存或通过环境变量配置，可保持输入框为空。
+            TgtoDrive OAuth 是推荐主通道，请在“影巢资源”页完成授权。这里主要维护 Browser Bridge、Cookie 备用通道和旧版 OpenAPI 兼容配置；敏感凭证已保存时可保持输入框为空。
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium ui-title">影巢站点地址</label>
               <input
                 type="url"
@@ -1369,15 +1321,9 @@ const SettingsTab: React.FC = () => {
                 placeholder="https://hdhive.com"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium ui-title">Client ID</label>
-              <input
-                type="text"
-                value={settings.hdhive.clientId}
-                onChange={(e) => updateSettings('hdhive.clientId', e.target.value)}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                placeholder="OpenAPI Client ID"
-              />
+            <div className="md:col-span-2 border-t border-slate-100 pt-2">
+              <div className="text-sm font-semibold ui-title">备用通道 · Browser Bridge</div>
+              <div className="mt-1 text-xs ui-muted">用于网页签名、账号登录取 Cookie 和资源解锁；主通道正常时无需依赖它。</div>
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium ui-title">网页登录账号</label>
@@ -1397,16 +1343,6 @@ const SettingsTab: React.FC = () => {
                 onChange={(e) => updateSettings('hdhive.password', e.target.value)}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
                 placeholder={settings.hdhive.hasPassword ? '已保存密码；留空不覆盖' : '用于 Browser Bridge 登录取 Cookie'}
-              />
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium ui-title">Cookie</label>
-              <textarea
-                rows={3}
-                value={settings.hdhive.cookie}
-                onChange={(e) => updateSettings('hdhive.cookie', e.target.value)}
-                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                placeholder={settings.hdhive.hasCookie ? '已保存 Cookie；留空不覆盖' : '用于网页登录解析，留空则不启用 Cookie 模式'}
               />
             </div>
             <div className="space-y-2">
@@ -1438,15 +1374,69 @@ const SettingsTab: React.FC = () => {
                 <Switch checked={settings.hdhive.browserBridge.enabled} onChange={(v) => updateSettings('hdhive.browserBridge.enabled', v)} />
               </div>
             </div>
+            <div className="md:col-span-2 border-t border-slate-100 pt-2">
+              <div className="text-sm font-semibold ui-title">兜底通道 · Cookie 网页模式</div>
+              <div className="mt-1 text-xs ui-muted">仅在开放平台和 Bridge 不可用时直接解析网页，失效后需要重新同步。</div>
+            </div>
             <div className="space-y-2 md:col-span-2">
-              <label className="text-sm font-medium ui-title">API Key</label>
+              <label className="text-sm font-medium ui-title">Cookie</label>
+              <textarea
+                rows={3}
+                value={settings.hdhive.cookie}
+                onChange={(e) => updateSettings('hdhive.cookie', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder={settings.hdhive.hasCookie ? '已保存 Cookie；留空不覆盖' : '用于网页登录解析，留空则不启用 Cookie 模式'}
+              />
+            </div>
+            <div className="md:col-span-2 border-t border-slate-100 pt-2">
+              <div className="text-sm font-semibold ui-title">兼容通道 · 旧版 OpenAPI OAuth</div>
+              <div className="mt-1 text-xs ui-muted">仅供已有旧版凭据的部署继续使用；新接入无需配置。</div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium ui-title">旧版 Client ID</label>
+              <input
+                type="text"
+                value={settings.hdhive.clientId}
+                onChange={(e) => updateSettings('hdhive.clientId', e.target.value)}
+                className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                placeholder="旧版 OpenAPI Client ID"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium ui-title">旧版 API Key</label>
               <input
                 type="password"
                 value={settings.hdhive.apiKey}
                 onChange={(e) => updateSettings('hdhive.apiKey', e.target.value)}
                 className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
-                placeholder="OpenAPI API Key；留空不覆盖已保存值"
+                placeholder="旧版 OpenAPI API Key；留空不覆盖已保存值"
               />
+            </div>
+            <div className="md:col-span-2 border-t border-slate-100 pt-2">
+              <div className="text-sm font-semibold ui-title">高级选项</div>
+            </div>
+            <div className="space-y-3 md:col-span-2">
+              <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
+                <div>
+                  <div className="text-sm font-medium ui-title">影巢 API 流控</div>
+                  <div className="mt-1 text-xs ui-muted">开启后所有影巢请求串行排队，并保证相邻请求至少间隔指定毫秒。</div>
+                </div>
+                <Switch checked={settings.hdhive.flowControl.enabled} onChange={(v) => updateSettings('hdhive.flowControl.enabled', v)} />
+              </div>
+              {settings.hdhive.flowControl.enabled && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium ui-title">最小请求间隔（毫秒）</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={60000}
+                    step={100}
+                    value={settings.hdhive.flowControl.minIntervalMs}
+                    onChange={(e) => updateSettings('hdhive.flowControl.minIntervalMs', Math.min(Math.max(Number(e.target.value) || 0, 0), 60000))}
+                    className="w-full px-5 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-sm outline-none focus:ring-2 focus:ring-[#0b57d0]/20"
+                  />
+                </div>
+              )}
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium ui-title">资源解锁 Action ID</label>
@@ -1462,7 +1452,7 @@ const SettingsTab: React.FC = () => {
               <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
                 <div>
                   <div className="text-sm font-medium ui-title">每日自动签到</div>
-                  <div className="mt-1 text-xs ui-muted">依赖 Browser Bridge 签名模式，按下方 Cron 定时调用影巢签到接口并推送积分结果。</div>
+                  <div className="mt-1 text-xs ui-muted">优先通过 TgtoDrive OAuth 签到，未接入时使用 Browser Bridge，并推送积分结果。</div>
                 </div>
                 <Switch checked={settings.hdhive.checkin.enabled} onChange={(v) => updateSettings('hdhive.checkin.enabled', v)} />
               </div>
@@ -1853,18 +1843,6 @@ const SettingsTab: React.FC = () => {
         </form>
       </Modal>
 
-      <FolderSelector
-        isOpen={isFolderSelectorOpen}
-        onClose={() => setIsFolderSelectorOpen(false)}
-        accountId={Number(settings.task.autoCreate.accountId)}
-        accountName={selectedAccount?.username || ''}
-        title="选择自动追剧默认保存目录"
-        onSelect={(folder: SelectedFolder) => {
-          updateSettings('task.autoCreate.accountId', String(folder.accountId));
-          updateSettings('task.autoCreate.targetFolderId', folder.id);
-          updateSettings('task.autoCreate.targetFolder', folder.name);
-        }}
-      />
     </div>
   );
 };

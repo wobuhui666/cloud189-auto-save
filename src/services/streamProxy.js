@@ -51,6 +51,7 @@ class StreamProxyService {
             sourceMd5: payload.sourceMd5 ? String(payload.sourceMd5).toUpperCase() : '',
             sourceSize: Number(payload.sourceSize || 0) || 0,
             targetFolderId: payload.targetFolderId ? String(payload.targetFolderId) : '',
+            targetIdentity: payload.targetIdentity ? String(payload.targetIdentity) : '',
             rootName: payload.rootName ? String(payload.rootName) : '',
             relativeDir: payload.relativeDir ? String(payload.relativeDir) : '',
             isCas: !!payload.isCas,

@@ -234,6 +234,26 @@ class EmbyService {
         return response?.Items?.[0] || null;
     }
 
+    async getMediaSourceById(itemId, mediaSourceId) {
+        const normalizedMediaSourceId = String(mediaSourceId || '').trim();
+        if (!normalizedMediaSourceId) {
+            return null;
+        }
+
+        const url = `${this.embyUrl}/Items/${itemId}/PlaybackInfo`;
+        const response = await this.request(url, {
+            method: 'POST',
+            searchParams: {
+                MediaSourceId: normalizedMediaSourceId,
+                AutoOpenLiveStream: false,
+                IsPlayback: false
+            },
+            json: {}
+        });
+        const mediaSources = Array.isArray(response?.MediaSources) ? response.MediaSources : [];
+        return mediaSources.find((source) => String(source.Id) === normalizedMediaSourceId) || null;
+    }
+
     _isPlaybackRequest(requestPath = '') {
         const normalizedPath = String(requestPath || '').split('?')[0];
         return /\/(?:emby\/)?(?:Videos|Audio)\/[^/]+\/.+/i.test(normalizedPath);
@@ -387,7 +407,18 @@ class EmbyService {
         }
 
         const upstream = got.stream(targetUrl, options);
+        const handleDownstreamAbort = () => {
+            if (!upstream.destroyed) {
+                upstream.destroy();
+            }
+        };
+        req.once('aborted', handleDownstreamAbort);
+        res.once('close', handleDownstreamAbort);
         upstream.on('response', (response) => {
+            if (res.destroyed || res.writableEnded) {
+                upstream.destroy();
+                return;
+            }
             res.status(response.statusCode || 502);
             for (const [key, value] of Object.entries(response.headers)) {
                 if (value == null || key.toLowerCase() === 'content-length') {
@@ -401,6 +432,9 @@ class EmbyService {
             }
         });
         upstream.on('error', (error) => {
+            if (error.code === 'ECONNRESET' || error.code === 'ERR_STREAM_PREMATURE_CLOSE' || res.destroyed || res.writableEnded) {
+                return;
+            }
             if (!res.headersSent) {
                 res.status(502).json({ success: false, error: `Emby反代请求失败: ${error.message}` });
             }
@@ -554,9 +588,20 @@ class EmbyService {
             throw new Error(`未获取到 Emby 媒体项: ${itemId}`);
         }
 
-        const mediaPath = this._resolveMediaPath(item, mediaSourceId);
+        const normalizedMediaSourceId = String(mediaSourceId || '').trim();
+        let selectedMediaSource = this._findMediaSource(item, normalizedMediaSourceId);
+        if (normalizedMediaSourceId && !selectedMediaSource) {
+            selectedMediaSource = await this.getMediaSourceById(itemId, normalizedMediaSourceId);
+        }
+        const mediaPath = selectedMediaSource?.Path
+            ? this._normalizeMediaPath(selectedMediaSource.Path)
+            : this._resolveMediaPath(item);
         if (!mediaPath) {
             throw new Error(`Emby 媒体项缺少可用路径: ${itemId}`);
+        }
+
+        if (normalizedMediaSourceId && !selectedMediaSource) {
+            throw new Error(`未获取到 Emby 媒体版本: ${normalizedMediaSourceId}`);
         }
 
         const streamProxyUrl = await this._resolveStreamProxyMediaUrl(mediaPath);
@@ -582,16 +627,23 @@ class EmbyService {
 
     _resolveMediaPath(item, mediaSourceId = '') {
         const mediaSources = Array.isArray(item?.MediaSources) ? item.MediaSources : [];
-        if (mediaSourceId) {
-            const matchedSource = mediaSources.find((source) => String(source.Id) === String(mediaSourceId));
-            if (matchedSource?.Path) {
-                return this._normalizeMediaPath(matchedSource.Path);
-            }
+        const matchedSource = this._findMediaSource(item, mediaSourceId);
+        if (matchedSource?.Path) {
+            return this._normalizeMediaPath(matchedSource.Path);
         }
         if (mediaSources[0]?.Path) {
             return this._normalizeMediaPath(mediaSources[0].Path);
         }
         return item?.Path ? this._normalizeMediaPath(item.Path) : '';
+    }
+
+    _findMediaSource(item, mediaSourceId = '') {
+        const normalizedMediaSourceId = String(mediaSourceId || '').trim();
+        if (!normalizedMediaSourceId) {
+            return null;
+        }
+        const mediaSources = Array.isArray(item?.MediaSources) ? item.MediaSources : [];
+        return mediaSources.find((source) => String(source.Id) === normalizedMediaSourceId) || null;
     }
 
     _normalizeMediaPath(value = '') {
@@ -615,7 +667,10 @@ class EmbyService {
         }
 
         const payload = this._streamProxyService.parseToken(token);
-        if (payload.type === 'lazyShare') {
+        if (
+            payload.type === 'lazyShare'
+            || this._lazyShareStrmService.isArchivedCasPlaybackPayload(payload)
+        ) {
             return await this._lazyShareStrmService.resolveLatestUrlByPayload(payload);
         }
         return await this._streamProxyService.resolveLatestUrlByPayload(payload);

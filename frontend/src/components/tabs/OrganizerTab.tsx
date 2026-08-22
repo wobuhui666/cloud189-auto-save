@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Search, RefreshCw, Clock, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Play, Search, RefreshCw, Clock, AlertCircle, CheckCircle2, History } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 
 interface Account {
@@ -19,7 +19,11 @@ interface OrganizerTask {
   lastOrganizeError: string | null;
 }
 
-const OrganizerTab: React.FC = () => {
+interface OrganizerTabProps {
+  onNavigateHistory: (filters?: { module?: string; subjectType?: string; subjectId?: string | number }) => void;
+}
+
+const OrganizerTab: React.FC<OrganizerTabProps> = ({ onNavigateHistory }) => {
   const toast = useToast();
   const [tasks, setTasks] = useState<OrganizerTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,6 +94,7 @@ const OrganizerTab: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h2 className="text-xl font-bold ui-title">整理器任务</h2>
         <div className="flex items-center gap-3">
+          <button type="button" onClick={() => onNavigateHistory({ module: 'organizer' })} className="p-2 bg-white border border-slate-300 rounded-full hover:bg-slate-50 text-slate-600 shadow-sm" title="查看整理历史" aria-label="查看整理历史"><History size={20} /></button>
           <div className="relative w-64">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input
@@ -146,14 +151,14 @@ const OrganizerTab: React.FC = () => {
                   return (
                     <tr key={task.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-4">
-                        <button
+                        <div className="flex items-center gap-1"><button type="button" onClick={() => onNavigateHistory({ subjectType: 'task', subjectId: task.id })} className="p-2 rounded-full text-slate-500 hover:bg-slate-100 hover:text-[#0b57d0]" title="查看历史" aria-label={`查看${task.resourceName}历史`}><History size={17} /></button><button
                           onClick={() => handleRunTask(task.id)}
                           disabled={isRunning}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-[#0b57d0] text-white hover:bg-[#0b57d0]/90 disabled:opacity-50"
                         >
                           {isRunning ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
                           {isRunning ? '执行中' : '执行整理'}
-                        </button>
+                        </button></div>
                       </td>
                       <td className="px-6 py-4 font-medium ui-title">
                         <div title={task.tmdbTitle ? `原始名称：${task.resourceName}` : ''}>

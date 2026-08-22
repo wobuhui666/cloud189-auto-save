@@ -1,9 +1,104 @@
 const ConfigService = require('./ConfigService');
 const { TMDBService } = require('./tmdb');
 const { AppDataSource } = require('../database');
+const { InvalidResourceService } = require('./invalidResource');
+const { createNoCoverageError } = require('./operationError');
+const { DEFAULT_MEDIA_PREFERENCE, normalizeMediaPreference } = require('./mediaPreference');
+const { buildMetadataTemplate } = require('./metadataOverride');
 
 const AUTO_SERIES_SOURCES = ['cloudsaver', 'hdhive', 'pt', 'subscription'];
 const DEFAULT_SOURCE_PREFERENCES = AUTO_SERIES_SOURCES.map(source => ({ source, enabled: true }));
+const AUTO_SERIES_SOURCE_TIMEOUT_MS = 45000;
+const DEFAULT_AUTO_SERIES_SETTINGS = Object.freeze({
+    accountId: '',
+    targetFolderId: '',
+    targetFolder: '',
+    mode: 'lazy',
+    sourcePreferences: DEFAULT_SOURCE_PREFERENCES,
+    keepCasAfterRestore: false,
+    allowHdhivePoints: false,
+    hdhiveMaxPoints: 10,
+    agentEnabled: false,
+    toolCallMode: 'auto',
+    mediaPreference: DEFAULT_MEDIA_PREFERENCE
+});
+
+function withTimeout(promise, timeoutMs, message) {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
+function normalizeHdhivePointPolicy({ allowHdhivePoints = false, hdhiveMaxPoints = 0 } = {}) {
+    const allowPoints = allowHdhivePoints === true
+        || allowHdhivePoints === 1
+        || String(allowHdhivePoints || '').trim().toLowerCase() === 'true'
+        || String(allowHdhivePoints || '').trim() === '1';
+    if (!allowPoints) {
+        return { allowPoints: false, maxPoints: 0 };
+    }
+
+    const maxPoints = Number(hdhiveMaxPoints);
+    if (!Number.isSafeInteger(maxPoints) || maxPoints < 0) {
+        throw new Error('影巢单个资源积分上限必须是大于或等于 0 的整数');
+    }
+    return { allowPoints: true, maxPoints };
+}
+
+function canUseHdhiveResource(resource, pointPolicy) {
+    if (!resource || resource.expired) return false;
+    if (resource.isUnlocked || resource.isFree) return true;
+    if (!pointPolicy?.allowPoints) return false;
+    if (resource.points === null || resource.points === undefined || resource.points === '') return false;
+
+    const points = Number(resource.points);
+    return Number.isSafeInteger(points) && points >= 0 && points <= pointPolicy.maxPoints;
+}
+
+function validateHdhiveResourceBeforeUnlock(resource, pointPolicy) {
+    if (!resource || resource.expired) {
+        return '影巢资源不存在或已失效，已取消解锁';
+    }
+    if (resource.isUnlocked || resource.isFree) return '';
+    if (!pointPolicy?.allowPoints) {
+        return '该影巢资源需要积分，当前未允许消耗积分';
+    }
+    if (resource.points === null || resource.points === undefined || resource.points === '') {
+        return '该影巢资源积分未知，为避免误扣积分已取消解锁';
+    }
+
+    const points = Number(resource.points);
+    if (!Number.isSafeInteger(points) || points < 0) {
+        return '该影巢资源积分未知，为避免误扣积分已取消解锁';
+    }
+    if (points > pointPolicy.maxPoints) {
+        return `该影巢资源需要 ${points} 积分，超过单个资源上限 ${pointPolicy.maxPoints} 积分`;
+    }
+    return '';
+}
+
+function normalizeResourceSlug(value) {
+    const normalized = String(value || '').trim();
+    try {
+        return decodeURIComponent(normalized);
+    } catch {
+        return normalized;
+    }
+}
+
+function inferAutoSeriesMediaType(title = '') {
+    return /剧场版|大电影|电影版|\b(?:the\s+movie|movie|film)\b/i.test(String(title || '')) ? 'movie' : 'tv';
+}
+
+function normalizeTmdbLookupTitle(title = '', mediaType = inferAutoSeriesMediaType(title)) {
+    const normalized = String(title || '').trim();
+    const suffix = mediaType === 'movie'
+        ? /\s*(?:剧场版|大电影|电影版|the\s+movie|movie|film)\s*$/i
+        : /\s*(?:第\s*[一二两三四五六七八九十百\d]+\s*季|S\d{1,3}|Season\s*\d{1,3})\s*$/i;
+    return normalized.replace(suffix, '').trim() || normalized;
+}
 
 function normalizeSourcePreferences(input) {
     const items = Array.isArray(input) ? input : [];
@@ -21,18 +116,46 @@ function normalizeSourcePreferences(input) {
     return normalized;
 }
 
+function normalizeAutoSeriesSettings(input = {}) {
+    const settings = input && typeof input === 'object' ? input : {};
+    const mode = String(settings.mode || DEFAULT_AUTO_SERIES_SETTINGS.mode).trim().toLowerCase();
+    const toolCallMode = String(settings.toolCallMode || DEFAULT_AUTO_SERIES_SETTINGS.toolCallMode).trim().toLowerCase();
+    const hdhiveMaxPoints = Number(settings.hdhiveMaxPoints ?? DEFAULT_AUTO_SERIES_SETTINGS.hdhiveMaxPoints);
+    if (!['lazy', 'normal', 'auto'].includes(mode)) {
+        throw new Error('自动追剧模式必须是 lazy 或 normal');
+    }
+    if (!['auto', 'native', 'json'].includes(toolCallMode)) {
+        throw new Error('工具协议必须是 auto、native 或 json');
+    }
+    if (!Number.isSafeInteger(hdhiveMaxPoints) || hdhiveMaxPoints < 0) {
+        throw new Error('影巢单个资源积分上限必须是大于或等于 0 的整数');
+    }
+    return {
+        accountId: String(settings.accountId || '').trim(),
+        targetFolderId: String(settings.targetFolderId || '').trim(),
+        targetFolder: String(settings.targetFolder || '').trim(),
+        mode: mode === 'auto' ? 'normal' : mode,
+        sourcePreferences: normalizeSourcePreferences(settings.sourcePreferences),
+        keepCasAfterRestore: settings.keepCasAfterRestore === true,
+        allowHdhivePoints: settings.allowHdhivePoints === true,
+        hdhiveMaxPoints,
+        agentEnabled: settings.agentEnabled === true,
+        toolCallMode,
+        mediaPreference: normalizeMediaPreference(settings.mediaPreference || DEFAULT_MEDIA_PREFERENCE)
+    };
+}
+
 class AutoSeriesService {
     constructor(taskService, accountRepo, lazyShareStrmService) {
         this.taskService = taskService;
         this.accountRepo = accountRepo;
         this.lazyShareStrmService = lazyShareStrmService;
         this.tmdbService = new TMDBService();
+        this.invalidResourceService = new InvalidResourceService();
     }
 
     getSourcePreferences() {
-        return normalizeSourcePreferences(
-            ConfigService.getConfigValue('task.autoCreate.sourcePreferences', DEFAULT_SOURCE_PREFERENCES)
-        );
+        return this.getSettings().sourcePreferences;
     }
 
     saveSourcePreferences(preferences) {
@@ -41,23 +164,60 @@ class AutoSeriesService {
         return normalized;
     }
 
+    getSettings() {
+        return normalizeAutoSeriesSettings(
+            ConfigService.getConfigValue('task.autoCreate', DEFAULT_AUTO_SERIES_SETTINGS)
+        );
+    }
+
+    async saveSettings(input = {}) {
+        const normalized = normalizeAutoSeriesSettings(input);
+        if (!normalized.accountId) throw new Error('请选择自动追剧默认账号');
+        if (!normalized.targetFolderId || !normalized.targetFolder) throw new Error('请选择自动追剧默认保存目录');
+        if (!normalized.sourcePreferences.some(item => item.enabled)) throw new Error('请至少启用一个自动追剧来源');
+        const account = await this.accountRepo.findOneBy({ id: Number(normalized.accountId) });
+        if (!account) throw new Error('自动追剧默认账号不存在');
+
+        const current = ConfigService.getConfigValue('task.autoCreate', {});
+        ConfigService.setConfigValue('task.autoCreate', { ...current, ...normalized });
+        return normalized;
+    }
+
     async createByTitle({
         title,
         year = '',
-        mode = 'lazy',
+        mode,
         shareLink = '',
         resourceTitle = '',
         resourceSlug = '',
         source = '',
         sources = null,
-        keepCasAfterRestore = false
+        keepCasAfterRestore,
+        allowHdhivePoints,
+        hdhiveMaxPoints,
+        accountId: requestedAccountId = null,
+        targetFolderId: requestedTargetFolderId = '',
+        targetFolder: requestedTargetFolder = '',
+        mediaPreference,
+        subscriptionResourceId = 0,
+        coverageScope = null,
+        metadataOverride = null,
+        autoSeriesIntentId = ''
     }) {
+        const autoCreateConfig = this.getSettings();
         const normalizedTitle = String(title || '').trim();
         const normalizedYear = String(year || '').trim();
-        const normalizedMode = this._normalizeMode(mode);
+        const normalizedMode = this._normalizeMode(mode ?? autoCreateConfig.mode);
         const manualShareLink = String(shareLink || '').trim();
         const manualResourceTitle = String(resourceTitle || '').trim();
-        const shouldKeepCasAfterRestore = Boolean(keepCasAfterRestore);
+        const shouldKeepCasAfterRestore = Boolean(keepCasAfterRestore ?? autoCreateConfig.keepCasAfterRestore);
+        const resolvedAllowHdhivePoints = allowHdhivePoints ?? autoCreateConfig.allowHdhivePoints;
+        const resolvedHdhiveMaxPoints = hdhiveMaxPoints ?? autoCreateConfig.hdhiveMaxPoints;
+        const resolvedMediaPreference = normalizeMediaPreference(mediaPreference || autoCreateConfig.mediaPreference);
+        const hdhivePointPolicy = normalizeHdhivePointPolicy({
+            allowHdhivePoints: resolvedAllowHdhivePoints,
+            hdhiveMaxPoints: resolvedHdhiveMaxPoints
+        });
         if (!normalizedTitle) {
             throw new Error('剧名不能为空');
         }
@@ -65,10 +225,9 @@ class AutoSeriesService {
             throw new Error('无效的自动追剧模式');
         }
 
-        const autoCreateConfig = ConfigService.getConfigValue('task.autoCreate', {});
-        const accountId = parseInt(autoCreateConfig.accountId);
-        const targetFolderId = String(autoCreateConfig.targetFolderId || '').trim();
-        const targetFolder = String(autoCreateConfig.targetFolder || '').trim();
+        const accountId = parseInt(requestedAccountId || autoCreateConfig.accountId);
+        const targetFolderId = String(requestedTargetFolderId || autoCreateConfig.targetFolderId || '').trim();
+        const targetFolder = String(requestedTargetFolder || autoCreateConfig.targetFolder || '').trim();
 
         if (!accountId) {
             throw new Error('请先在系统设置中配置自动追剧默认账号');
@@ -85,14 +244,26 @@ class AutoSeriesService {
         const tmdbInfo = await this._resolveTmdb(normalizedTitle, normalizedYear);
         let selectedShareLink = manualShareLink;
         if (!selectedShareLink && source === 'hdhive' && resourceSlug) {
-            const hdhiveSDK = require('../sdk/hdhive/sdk').default;
-            const unlocked = await hdhiveSDK.unlockResource(String(resourceSlug));
+            const unlocked = await this._unlockHdhiveResource(
+                String(resourceSlug),
+                tmdbInfo,
+                hdhivePointPolicy
+            );
             if (!unlocked?.success || !unlocked.data?.link) {
-                throw new Error(unlocked?.error || '影巢免费资源解锁失败');
+                throw new Error(unlocked?.error || '影巢资源解锁失败');
             }
             selectedShareLink = unlocked.data.link;
         }
+        if (!selectedShareLink && source === 'subscription' && Number(subscriptionResourceId) > 0) {
+            if (!AppDataSource.isInitialized) throw new Error('订阅资源库未初始化');
+            const resource = await AppDataSource.getRepository('SubscriptionResource').findOneBy({ id: Number(subscriptionResourceId) });
+            if (!resource || resource.verifyStatus !== 'valid' || !resource.shareLink) throw new Error('手动选择的订阅资源已失效');
+            selectedShareLink = String(resource.shareLink);
+        }
         if (selectedShareLink) {
+            if (await this.invalidResourceService.isInvalid(selectedShareLink, 'cloud_share')) {
+                throw new Error('该分享资源处于失效缓存中，请稍后重试或人工解除');
+            }
             return await this._createCloudTask({
                 account,
                 targetFolderId,
@@ -102,7 +273,10 @@ class AutoSeriesService {
                 taskName: this._buildTaskName(normalizedTitle, tmdbInfo),
                 tmdbInfo,
                 source: AUTO_SERIES_SOURCES.includes(source) ? source : 'manual',
-                keepCasAfterRestore: shouldKeepCasAfterRestore
+                keepCasAfterRestore: shouldKeepCasAfterRestore,
+                coverageScope,
+                metadataOverride,
+                autoSeriesIntentId
             });
         }
 
@@ -126,12 +300,23 @@ class AutoSeriesService {
                         taskName: this._buildTaskName(normalizedTitle, tmdbInfo),
                         tmdbInfo,
                         source: 'cloudsaver',
-                        keepCasAfterRestore: shouldKeepCasAfterRestore
+                        keepCasAfterRestore: shouldKeepCasAfterRestore,
+                        metadataOverride,
+                        autoSeriesIntentId
                     });
                 }
                 if (preference.source === 'hdhive') {
-                    const resource = await this._findBestHdhiveResource(normalizedTitle, normalizedYear, tmdbInfo);
-                    if (!resource?.cloudLinks?.[0]?.link) throw new Error('未找到免费或已解锁资源');
+                    const resource = await this._findBestHdhiveResource(
+                        normalizedTitle,
+                        normalizedYear,
+                        tmdbInfo,
+                        hdhivePointPolicy
+                    );
+                    if (!resource?.cloudLinks?.[0]?.link) {
+                        throw new Error(hdhivePointPolicy.allowPoints
+                            ? `未找到免费、已解锁或不超过 ${hdhivePointPolicy.maxPoints} 积分的资源`
+                            : '未找到免费或已解锁资源');
+                    }
                     return await this._createCloudTask({
                         account,
                         targetFolderId,
@@ -141,7 +326,9 @@ class AutoSeriesService {
                         taskName: this._buildTaskName(normalizedTitle, tmdbInfo),
                         tmdbInfo,
                         source: 'hdhive',
-                        keepCasAfterRestore: shouldKeepCasAfterRestore
+                        keepCasAfterRestore: shouldKeepCasAfterRestore,
+                        metadataOverride,
+                        autoSeriesIntentId
                     });
                 }
                 if (preference.source === 'pt') {
@@ -152,7 +339,11 @@ class AutoSeriesService {
                         tmdbInfo,
                         accountId: account.id,
                         targetFolderId,
-                        targetFolder
+                        targetFolder,
+                        mediaPreference: resolvedMediaPreference,
+                        filterManagedBy: 'manual',
+                        metadataTemplate: metadataOverride || buildMetadataTemplate(tmdbInfo || {}, 'template'),
+                        autoSeriesIntentId
                     });
                 }
                 if (preference.source === 'subscription') {
@@ -167,7 +358,9 @@ class AutoSeriesService {
                         taskName: this._buildTaskName(normalizedTitle, tmdbInfo),
                         tmdbInfo,
                         source: 'subscription',
-                        keepCasAfterRestore: shouldKeepCasAfterRestore
+                        keepCasAfterRestore: shouldKeepCasAfterRestore,
+                        metadataOverride,
+                        autoSeriesIntentId
                     });
                 }
             } catch (error) {
@@ -177,7 +370,10 @@ class AutoSeriesService {
         if (!activePreferences.length) {
             throw new Error('请至少启用一个自动追剧来源');
         }
-        throw new Error(`所有自动追剧来源均失败：${errors.join('；')}`);
+        throw createNoCoverageError(`所有自动追剧来源均无覆盖：${errors.join('；')}`, {
+            source: 'auto_series',
+            operation: 'search_sources'
+        });
     }
 
     _buildTaskName(title, tmdbInfo) {
@@ -186,7 +382,7 @@ class AutoSeriesService {
             : title;
     }
 
-    async _createCloudTask({ account, targetFolderId, targetFolder, mode, resource, taskName, tmdbInfo, source, keepCasAfterRestore }) {
+    async _createCloudTask({ account, targetFolderId, targetFolder, mode, resource, taskName, tmdbInfo, source, keepCasAfterRestore, coverageScope = null, metadataOverride = null, autoSeriesIntentId = '' }) {
         const totalEpisodes = Number(tmdbInfo?.totalEpisodes || 0) > 0
             ? Number(tmdbInfo.totalEpisodes)
             : (tmdbInfo?.status === 'Ended'
@@ -197,10 +393,14 @@ class AutoSeriesService {
             const result = await this._createLazySeries({
                 account,
                 targetFolderId,
+                targetFolder,
                 resource,
                 taskName,
                 tmdbInfo,
-                keepCasAfterRestore: Boolean(keepCasAfterRestore)
+                keepCasAfterRestore: Boolean(keepCasAfterRestore),
+                coverageScope,
+                metadataOverride,
+                autoSeriesIntentId
             });
             return { ...result, source };
         }
@@ -227,7 +427,10 @@ class AutoSeriesService {
             enableTaskScraper: true,
             enableLazyStrm: false,
             enableOrganizer: true,
-            keepCasAfterRestore: Boolean(keepCasAfterRestore)
+            keepCasAfterRestore: Boolean(keepCasAfterRestore),
+            coverageScope,
+            metadataOverride: metadataOverride || buildMetadataTemplate(tmdbInfo || {}, 'agent'),
+            autoSeriesIntentId
         });
 
         // createTask 内部已异步触发首次执行，这里不再阻塞等待
@@ -244,7 +447,7 @@ class AutoSeriesService {
         };
     }
 
-    async _createLazySeries({ account, targetFolderId, resource, taskName, tmdbInfo, keepCasAfterRestore = false }) {
+    async _createLazySeries({ account, targetFolderId, targetFolder = '', resource, taskName, tmdbInfo, keepCasAfterRestore = false, coverageScope = null, metadataOverride = null, autoSeriesIntentId = '' }) {
         if (!this.lazyShareStrmService) {
             throw new Error('懒转存服务未初始化');
         }
@@ -252,8 +455,7 @@ class AutoSeriesService {
             throw new Error('默认账号未配置本地STRM目录，无法执行懒转存模式');
         }
 
-        const autoCreateConfig = ConfigService.getConfigValue('task.autoCreate', {});
-        const targetFolder = String(autoCreateConfig.targetFolder || '').trim();
+        const resolvedTargetFolder = String(targetFolder || '').trim();
         const totalEpisodes = Number(tmdbInfo?.totalEpisodes || 0) > 0
             ? Number(tmdbInfo.totalEpisodes)
             : (tmdbInfo?.status === 'Ended'
@@ -265,7 +467,7 @@ class AutoSeriesService {
             shareLink: resource.cloudLinks[0].link,
             totalEpisodes,
             targetFolderId,
-            targetFolder,
+            targetFolder: resolvedTargetFolder,
             matchPattern: '',
             matchOperator: 'lt',
             matchValue: '',
@@ -282,7 +484,10 @@ class AutoSeriesService {
             enableTaskScraper: false,
             enableLazyStrm: true,
             enableOrganizer: true,
-            keepCasAfterRestore: Boolean(keepCasAfterRestore)
+            keepCasAfterRestore: Boolean(keepCasAfterRestore),
+            coverageScope,
+            metadataOverride: metadataOverride || buildMetadataTemplate(tmdbInfo || {}, 'agent'),
+            autoSeriesIntentId
         });
 
         // createTask 内部已异步触发首次执行，这里不再阻塞等待
@@ -299,14 +504,34 @@ class AutoSeriesService {
     }
 
     async _resolveTmdb(title, year) {
+        const mediaType = inferAutoSeriesMediaType(title);
+        const lookupTitle = normalizeTmdbLookupTitle(title, mediaType);
         try {
-            return await this.tmdbService.searchTV(title, year, 0);
+            const lookup = mediaType === 'movie'
+                ? this.tmdbService.searchMovie(lookupTitle, year)
+                : this.tmdbService.searchTV(lookupTitle, year, 0);
+            const resolved = await withTimeout(
+                lookup,
+                AUTO_SERIES_SOURCE_TIMEOUT_MS,
+                'TMDB 查询超时'
+            );
+            if (resolved || lookupTitle === String(title || '').trim()) return resolved;
+            const fallback = mediaType === 'movie'
+                ? this.tmdbService.searchMovie(title, year)
+                : this.tmdbService.searchTV(title, year, 0);
+            return await withTimeout(fallback, AUTO_SERIES_SOURCE_TIMEOUT_MS, 'TMDB 查询超时');
         } catch (error) {
             return null;
         }
     }
 
-    async searchResources({ title, year = '', sources = null }) {
+    async searchResources({
+        title,
+        year = '',
+        sources = null,
+        allowHdhivePoints = false,
+        hdhiveMaxPoints = 0
+    }) {
         const normalizedTitle = String(title || '').trim();
         const normalizedYear = String(year || '').trim();
         if (!normalizedTitle) {
@@ -315,6 +540,7 @@ class AutoSeriesService {
 
         const tmdbInfo = await this._resolveTmdb(normalizedTitle, normalizedYear);
         const requestedSources = this._normalizeSearchSources(sources);
+        const hdhivePointPolicy = normalizeHdhivePointPolicy({ allowHdhivePoints, hdhiveMaxPoints });
 
         const titleCandidates = [
             normalizedTitle,
@@ -338,7 +564,12 @@ class AutoSeriesService {
             .filter(item => item.shareLink));
         }
         if (requestedSources.includes('hdhive')) {
-            const hdhiveResources = await this._searchHdhiveResources(titleCandidates, targetYear, tmdbInfo).catch(() => []);
+            const hdhiveResources = await this._searchHdhiveResources(
+                titleCandidates,
+                targetYear,
+                tmdbInfo,
+                hdhivePointPolicy
+            ).catch(() => []);
             resources.push(...hdhiveResources);
         }
         if (requestedSources.includes('subscription')) {
@@ -381,13 +612,13 @@ class AutoSeriesService {
             .filter(item => item.shareLink && item.score > 0);
     }
 
-    async _searchHdhiveResources(titleCandidates, targetYear, tmdbInfo) {
+    async _searchHdhiveResources(titleCandidates, targetYear, tmdbInfo, pointPolicy = { allowPoints: false, maxPoints: 0 }) {
         if (!tmdbInfo?.id || !ConfigService.getConfigValue('hdhive.enabled')) return [];
         const hdhiveSDK = require('../sdk/hdhive/sdk').default;
         const result = await hdhiveSDK.getResources('tv', tmdbInfo.id);
         if (!result?.success) return [];
         return (Array.isArray(result.data) ? result.data : [])
-            .filter(resource => !resource.expired && (resource.isUnlocked || resource.isFree))
+            .filter(resource => canUseHdhiveResource(resource, pointPolicy))
             .map(resource => ({
                 id: resource.id,
                 slug: resource.slug || resource.id,
@@ -404,22 +635,48 @@ class AutoSeriesService {
             }));
     }
 
-    async _findBestHdhiveResource(title, year, tmdbInfo) {
+    async _findBestHdhiveResource(title, year, tmdbInfo, pointPolicy) {
         const titleCandidates = [title, tmdbInfo?.title, tmdbInfo?.originalTitle]
             .filter(Boolean).map(item => String(item).toLowerCase());
         const targetYear = year || (tmdbInfo?.releaseDate ? String(new Date(tmdbInfo.releaseDate).getFullYear()) : '');
-        const candidates = await this._searchHdhiveResources(titleCandidates, targetYear, tmdbInfo);
+        const candidates = await this._searchHdhiveResources(titleCandidates, targetYear, tmdbInfo, pointPolicy);
         for (const candidate of candidates.sort((left, right) => right.score - left.score)) {
             if (candidate.shareLink) {
                 return { title: candidate.title, cloudLinks: [{ link: candidate.shareLink }] };
             }
-            const hdhiveSDK = require('../sdk/hdhive/sdk').default;
-            const unlocked = await hdhiveSDK.unlockResource(candidate.slug);
+            const unlocked = await this._unlockHdhiveResource(candidate.slug, tmdbInfo, pointPolicy);
             if (unlocked?.success && unlocked.data?.link) {
                 return { title: candidate.title, cloudLinks: [{ link: unlocked.data.link }] };
             }
         }
         return null;
+    }
+
+    async _unlockHdhiveResource(resourceSlug, tmdbInfo, pointPolicy) {
+        if (!tmdbInfo?.id) {
+            return { success: false, error: '无法确认影巢资源积分，已取消解锁' };
+        }
+        const hdhiveSDK = require('../sdk/hdhive/sdk').default;
+        const resourcesResult = await hdhiveSDK.getResources('tv', tmdbInfo.id);
+        if (!resourcesResult?.success) {
+            return { success: false, error: resourcesResult?.error || '影巢资源信息读取失败，已取消解锁' };
+        }
+        const normalizedSlug = String(resourceSlug || '').trim();
+        const decodedSlug = normalizeResourceSlug(normalizedSlug);
+        const resource = (Array.isArray(resourcesResult.data) ? resourcesResult.data : [])
+            .find(item => {
+                const candidateSlug = String(item.slug || item.id || '').trim();
+                return candidateSlug === normalizedSlug
+                    || normalizeResourceSlug(candidateSlug) === decodedSlug;
+            });
+        if (!resource) {
+            return { success: false, error: '未找到待解锁的影巢资源，已取消解锁' };
+        }
+        const validationError = validateHdhiveResourceBeforeUnlock(resource, pointPolicy);
+        if (validationError) {
+            return { success: false, error: validationError };
+        }
+        return hdhiveSDK.unlockResource(normalizedSlug);
     }
 
     _scoreQuality(value) {
@@ -440,7 +697,21 @@ class AutoSeriesService {
             id: tmdbInfo.id || null,
             title: tmdbInfo.title || '',
             originalTitle: tmdbInfo.originalTitle || '',
-            releaseDate: tmdbInfo.releaseDate || ''
+            type: tmdbInfo.type === 'movie' ? 'movie' : 'tv',
+            releaseDate: tmdbInfo.releaseDate || '',
+            status: tmdbInfo.status || '',
+            totalSeasons: Number(tmdbInfo.totalSeasons || 0) || 0,
+            totalEpisodes: Number(tmdbInfo.totalEpisodes || 0) || 0,
+            seasons: (Array.isArray(tmdbInfo.seasons) ? tmdbInfo.seasons : [])
+                .map(season => ({
+                    seasonNumber: Number(season?.seasonNumber ?? season?.season_number ?? 0) || 0,
+                    episodeCount: Number(season?.episodeCount ?? season?.episode_count ?? 0) || 0,
+                    name: String(season?.name || '')
+                }))
+                .filter(season => season.seasonNumber > 0 && season.episodeCount > 0),
+            lastEpisodeToAir: tmdbInfo.lastEpisodeToAir
+                ? { episode_number: Number(tmdbInfo.lastEpisodeToAir.episode_number || 0) || 0 }
+                : null
         };
     }
 
@@ -460,7 +731,11 @@ class AutoSeriesService {
         const uniqueKeywords = [...new Set(searchKeywords.filter(Boolean))];
         for (const keyword of uniqueKeywords) {
             // 列表模式: 拿全部结果(含无链接的 hide 帖)
-            const result = await cloudSaverSDK.searchList(keyword);
+            const result = await withTimeout(
+                cloudSaverSDK.searchList(keyword),
+                AUTO_SERIES_SOURCE_TIMEOUT_MS,
+                'CloudSaver 搜索超时'
+            );
             if (result?.length) {
                 return result;
             }
@@ -488,9 +763,16 @@ class AutoSeriesService {
             }))
             .sort((left, right) => right._score - left._score);
 
+        const available = [];
+        for (const item of scored) {
+            const link = item.cloudLinks?.[0]?.link || '';
+            if (link && await this.invalidResourceService.isInvalid(link, 'cloud_share')) continue;
+            available.push(item);
+        }
+
         // 按评分从高到低: 有链接直接用, 没链接的调 detail 解析 (最多 5 个)
         const cloudSaverSDK = require('../sdk/cloudsaver/sdk').default;
-        for (const item of scored.slice(0, 5)) {
+        for (const item of available.slice(0, 5)) {
             if (item.cloudLinks?.length) {
                 return item;
             }
@@ -560,7 +842,12 @@ class AutoSeriesService {
         ].filter(Boolean).map(item => String(item).toLowerCase());
         const targetYear = year || (tmdbInfo?.releaseDate ? String(new Date(tmdbInfo.releaseDate).getFullYear()) : '');
 
-        const scored = resources
+        const available = [];
+        for (const resource of resources) {
+            if (resource.shareLink && await this.invalidResourceService.isInvalid(resource.shareLink, 'cloud_share')) continue;
+            available.push(resource);
+        }
+        const scored = available
             .map(resource => ({
                 resource,
                 _score: this._scoreSubscriptionResource(resource, titleCandidates, targetYear)
@@ -640,5 +927,13 @@ module.exports = {
     AutoSeriesService,
     AUTO_SERIES_SOURCES,
     DEFAULT_SOURCE_PREFERENCES,
-    normalizeSourcePreferences
+    DEFAULT_AUTO_SERIES_SETTINGS,
+    normalizeSourcePreferences,
+    normalizeAutoSeriesSettings,
+    normalizeHdhivePointPolicy,
+    canUseHdhiveResource,
+    validateHdhiveResourceBeforeUnlock,
+    inferAutoSeriesMediaType,
+    normalizeTmdbLookupTitle,
+    withTimeout
 };
